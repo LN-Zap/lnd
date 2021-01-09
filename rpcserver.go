@@ -1048,7 +1048,7 @@ func allowCORS(handler http.Handler, origins []string) http.Handler {
 // more addresses specified in the passed payment map. The payment map maps an
 // address to a specified output value to be sent to that address.
 func (r *rpcServer) sendCoinsOnChain(paymentMap map[string]int64,
-	feeRate chainfee.SatPerKWeight, minconf int32,
+	feeRate chainfee.SatPerKWeight, minConfs int32,
 	label string) (*chainhash.Hash, error) {
 
 	outputs, err := addrPairsToOutputs(paymentMap, r.cfg.ActiveNetParams.Params)
@@ -1059,7 +1059,7 @@ func (r *rpcServer) sendCoinsOnChain(paymentMap map[string]int64,
 	// We first do a dry run, to sanity check we won't spend our wallet
 	// balance below the reserved amount.
 	authoredTx, err := r.server.cc.Wallet.CreateSimpleTx(
-		outputs, feeRate, true,
+		outputs, feeRate, minConfs, true,
 	)
 	if err != nil {
 		return nil, err
@@ -1073,7 +1073,7 @@ func (r *rpcServer) sendCoinsOnChain(paymentMap map[string]int64,
 	// If that checks out, we're failry confident that creating sending to
 	// these outputs will keep the wallet balance above the reserve.
 	tx, err := r.server.cc.Wallet.SendOutputs(
-		outputs, feeRate, minconf, label,
+		outputs, feeRate, minConfs, label,
 	)
 	if err != nil {
 		return nil, err
@@ -1157,12 +1157,28 @@ func (r *rpcServer) EstimateFee(ctx context.Context,
 		return nil, err
 	}
 
+	// minConfs can be provided by the RPC request,
+	// but defaults to defaultMinConf (1).
+	var minConfs int32 = 1
+
+	switch {
+	// If min_confs was specified as non-zero in the RPC request,
+	// and spend_unconfirmed is false (the default if not provided),
+	// set minConfs to that number
+	case in.GetMinConfs() != 0 && !in.GetSpendUnconfirmed():
+		minConfs = in.GetMinConfs()
+	// If spend_unconfirmed is true, set minConfs to 0
+	// to allow for spending of unconfirmed utxos
+	case in.GetSpendUnconfirmed():
+		minConfs = 0
+	}
+
 	// We will ask the wallet to create a tx using this fee rate. We set
 	// dryRun=true to avoid inflating the change addresses in the db.
 	var tx *txauthor.AuthoredTx
 	wallet := r.server.cc.Wallet
 	err = wallet.WithCoinSelectLock(func() error {
-		tx, err = wallet.CreateSimpleTx(outputs, feePerKw, true)
+		tx, err = wallet.CreateSimpleTx(outputs, feePerKw, minConfs, true)
 		return err
 	})
 	if err != nil {
