@@ -3616,6 +3616,25 @@
         }
       }
     },
+    "lnrpcDestOutput": {
+      "type": "object",
+      "properties": {
+        "pk_script": {
+          "type": "string",
+          "title": "The pkscript in hex"
+        },
+        "amount": {
+          "type": "string",
+          "format": "int64",
+          "title": "The value of the output coin in satoshis"
+        },
+        "is_our_address": {
+          "type": "boolean",
+          "format": "boolean",
+          "title": "Denotes if the output is controlled by the internal wallet"
+        }
+      }
+    },
     "lnrpcDisconnectPeerResponse": {
       "type": "object"
     },
@@ -5926,6 +5945,13 @@
             "type": "string"
           },
           "title": "Addresses that received funds for this transaction"
+        },
+        "dest_outputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/lnrpcDestOutput"
+          },
+          "title": "Outputs that received funds for this transaction"
         },
         "raw_tx_hex": {
           "type": "string",
