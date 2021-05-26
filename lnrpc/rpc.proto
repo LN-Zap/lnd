@@ -514,6 +514,13 @@ service Lightning {
     */
     rpc ListPermissions (ListPermissionsRequest)
         returns (ListPermissionsResponse);
+
+    /*
+    IsOurAddress returns whether the provided address is controlled by the
+    node's wallet or not. It will return an error if the address is invalid or
+    for a different network.
+    */
+    rpc IsOurAddress (IsOurAddressRequest) returns (IsOurAddressResponse);
 }
 
 message Utxo {
@@ -3701,6 +3708,15 @@ message ListPermissionsResponse {
     access them.
     */
     map<string, MacaroonPermissionList> method_permissions = 1;
+}
+
+message IsOurAddressRequest {
+    // The address to check.
+    string address = 1;
+}
+message IsOurAddressResponse {
+    // Denoting if the address is controlled by the node's wallet.
+    bool is_ours = 1;
 }
 
 message Failure {
