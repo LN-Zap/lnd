@@ -5082,6 +5082,15 @@ func (r *rpcServer) SubscribeTransactions(req *lnrpc.GetTransactionsRequest,
 			for _, destAddress := range tx.DestAddresses {
 				destAddresses = append(destAddresses, destAddress.EncodeAddress())
 			}
+
+			destOutputs := make([]*lnrpc.DestOutput, 0, len(tx.DestOutputs))
+			for _, destOutput := range tx.DestOutputs {
+				destOutputs = append(destOutputs, &lnrpc.DestOutput{
+					PkScript:     hex.EncodeToString(destOutput.PkScript),
+					Amount:       int64(destOutput.Value),
+					IsOurAddress: destOutput.IsOurAddress,
+				})
+			}
 			detail := &lnrpc.Transaction{
 				TxHash:           tx.Hash.String(),
 				Amount:           int64(tx.Value),
@@ -5091,6 +5100,7 @@ func (r *rpcServer) SubscribeTransactions(req *lnrpc.GetTransactionsRequest,
 				TimeStamp:        tx.Timestamp,
 				TotalFees:        tx.TotalFees,
 				DestAddresses:    destAddresses,
+				DestOutputs:      destOutputs,
 				RawTxHex:         hex.EncodeToString(tx.RawTx),
 			}
 			if err := updateStream.Send(detail); err != nil {
@@ -5102,12 +5112,22 @@ func (r *rpcServer) SubscribeTransactions(req *lnrpc.GetTransactionsRequest,
 			for _, destAddress := range tx.DestAddresses {
 				destAddresses = append(destAddresses, destAddress.EncodeAddress())
 			}
+
+			destOutputs := make([]*lnrpc.DestOutput, 0, len(tx.DestOutputs))
+			for _, destOutput := range tx.DestOutputs {
+				destOutputs = append(destOutputs, &lnrpc.DestOutput{
+					PkScript:     hex.EncodeToString(destOutput.PkScript),
+					Amount:       int64(destOutput.Value),
+					IsOurAddress: destOutput.IsOurAddress,
+				})
+			}
 			detail := &lnrpc.Transaction{
 				TxHash:        tx.Hash.String(),
 				Amount:        int64(tx.Value),
 				TimeStamp:     tx.Timestamp,
 				TotalFees:     tx.TotalFees,
 				DestAddresses: destAddresses,
+				DestOutputs:   destOutputs,
 				RawTxHex:      hex.EncodeToString(tx.RawTx),
 			}
 			if err := updateStream.Send(detail); err != nil {
