@@ -238,6 +238,14 @@ func (r *RouterBackend) QueryRoutes(ctx context.Context,
 	if in.FinalCltvDelta != 0 {
 		finalCLTVDelta = uint16(in.FinalCltvDelta)
 	}
+
+	// Do bounds checking without block padding so we don't give routes
+	// that will leave the router in a zombie payment state.
+	err = routing.ValidateCLTVLimit(cltvLimit, finalCLTVDelta, false)
+	if err != nil {
+		return nil, err
+	}
+
 	cltvLimit -= uint32(finalCLTVDelta)
 
 	// Parse destination feature bits.
@@ -702,6 +710,7 @@ func (r *RouterBackend) extractIntentFromSendRequest(
 			payIntent.MaxParts = 1
 		}
 
+		payAddr := payReq.PaymentAddr
 		if payReq.Features.HasFeature(lnwire.AMPOptional) {
 			// Generate random SetID and root share.
 			var setID [32]byte
@@ -722,6 +731,17 @@ func (r *RouterBackend) extractIntentFromSendRequest(
 			if err != nil {
 				return nil, err
 			}
+
+			// For AMP invoices, we'll allow users to override the
+			// included payment addr to allow the invoice to be
+			// pseudo-reusable, e.g. the invoice parameters are
+			// reused (amt, cltv, hop hints, etc) even though the
+			// payments will share different payment hashes.
+			if len(rpcPayReq.PaymentAddr) > 0 {
+				var addr [32]byte
+				copy(addr[:], rpcPayReq.PaymentAddr)
+				payAddr = &addr
+			}
 		} else {
 			err = payIntent.SetPaymentHash(*payReq.PaymentHash)
 			if err != nil {
@@ -737,7 +757,7 @@ func (r *RouterBackend) extractIntentFromSendRequest(
 			payIntent.RouteHints, payReq.RouteHints...,
 		)
 		payIntent.DestFeatures = payReq.Features
-		payIntent.PaymentAddr = payReq.PaymentAddr
+		payIntent.PaymentAddr = payAddr
 		payIntent.PaymentRequest = []byte(rpcPayReq.PaymentRequest)
 	} else {
 		// Otherwise, If the payment request field was not specified
@@ -858,6 +878,15 @@ func (r *RouterBackend) extractIntentFromSendRequest(
 		}
 
 		payIntent.DestFeatures = features
+	}
+
+	// Do bounds checking with the block padding so the router isn't
+	// left with a zombie payment in case the user messes up.
+	err = routing.ValidateCLTVLimit(
+		payIntent.CltvLimit, payIntent.FinalCLTVDelta, true,
+	)
+	if err != nil {
+		return nil, err
 	}
 
 	// Check for disallowed payments to self.

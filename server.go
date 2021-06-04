@@ -33,7 +33,6 @@ import (
 	"github.com/lightningnetwork/lnd/chanbackup"
 	"github.com/lightningnetwork/lnd/chanfitness"
 	"github.com/lightningnetwork/lnd/channeldb"
-	"github.com/lightningnetwork/lnd/channeldb/kvdb"
 	"github.com/lightningnetwork/lnd/channelnotifier"
 	"github.com/lightningnetwork/lnd/clock"
 	"github.com/lightningnetwork/lnd/contractcourt"
@@ -46,6 +45,7 @@ import (
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/keychain"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lncfg"
 	"github.com/lightningnetwork/lnd/lnpeer"
 	"github.com/lightningnetwork/lnd/lnrpc"
@@ -1758,6 +1758,12 @@ func (s *server) Start() error {
 			setSeedList(
 				s.cfg.Bitcoin.DNSSeeds,
 				chainreg.BitcoinTestnetGenesis,
+			)
+		}
+		if s.cfg.Bitcoin.Active && s.cfg.Bitcoin.SigNet {
+			setSeedList(
+				s.cfg.Bitcoin.DNSSeeds,
+				chainreg.BitcoinSignetGenesis,
 			)
 		}
 		if s.cfg.Litecoin.Active && s.cfg.Litecoin.MainNet {

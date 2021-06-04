@@ -36,7 +36,6 @@ import (
 	"github.com/lightningnetwork/lnd/chanbackup"
 	"github.com/lightningnetwork/lnd/chanfitness"
 	"github.com/lightningnetwork/lnd/channeldb"
-	"github.com/lightningnetwork/lnd/channeldb/kvdb"
 	"github.com/lightningnetwork/lnd/channelnotifier"
 	"github.com/lightningnetwork/lnd/contractcourt"
 	"github.com/lightningnetwork/lnd/discovery"
@@ -47,6 +46,7 @@ import (
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/keychain"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/labels"
 	"github.com/lightningnetwork/lnd/lncfg"
 	"github.com/lightningnetwork/lnd/lnrpc"
@@ -2474,8 +2474,8 @@ func (r *rpcServer) AbandonChannel(_ context.Context,
 // GetInfo returns general information concerning the lightning node including
 // its identity pubkey, alias, the chains it is connected to, and information
 // concerning the number of open+pending channels.
-func (r *rpcServer) GetInfo(ctx context.Context,
-	in *lnrpc.GetInfoRequest) (*lnrpc.GetInfoResponse, error) {
+func (r *rpcServer) GetInfo(_ context.Context,
+	_ *lnrpc.GetInfoRequest) (*lnrpc.GetInfoResponse, error) {
 
 	serverPeers := r.server.Peers()
 
@@ -2515,16 +2515,18 @@ func (r *rpcServer) GetInfo(ctx context.Context,
 			"with current best block in the main chain: %v", err)
 	}
 
-	// The router has a lot of work to do for each block. So it might be
-	// possible that it isn't yet up to date with the most recent block,
-	// even if the wallet is. This can happen in environments with high CPU
-	// load (such as parallel itests). Since the `synced_to_chain` flag in
-	// the response of this call is used by many wallets (and also our
-	// itests) to make sure everything's up to date, we add the router's
-	// state to it. So the flag will only toggle to true once the router was
-	// also able to catch up.
-	routerHeight := r.server.chanRouter.SyncedHeight()
-	isSynced = isSynced && uint32(bestHeight) == routerHeight
+	// If the router does full channel validation, it has a lot of work to
+	// do for each block. So it might be possible that it isn't yet up to
+	// date with the most recent block, even if the wallet is. This can
+	// happen in environments with high CPU load (such as parallel itests).
+	// Since the `synced_to_chain` flag in the response of this call is used
+	// by many wallets (and also our itests) to make sure everything's up to
+	// date, we add the router's state to it. So the flag will only toggle
+	// to true once the router was also able to catch up.
+	if !r.cfg.Routing.AssumeChannelValid {
+		routerHeight := r.server.chanRouter.SyncedHeight()
+		isSynced = isSynced && uint32(bestHeight) == routerHeight
+	}
 
 	network := lncfg.NormalizeNetwork(r.cfg.ActiveNetParams.Name)
 	activeChains := make([]*lnrpc.Chain, r.cfg.registeredChains.NumActiveChains())
@@ -2533,7 +2535,6 @@ func (r *rpcServer) GetInfo(ctx context.Context,
 			Chain:   chain.String(),
 			Network: network,
 		}
-
 	}
 
 	// Check if external IP addresses were provided to lnd and use them
@@ -4406,6 +4407,15 @@ func (r *rpcServer) extractPaymentIntent(rpcPayReq *rpcPaymentRequest) (rpcPayme
 		payIntent.cltvDelta = uint16(r.cfg.Bitcoin.TimeLockDelta)
 	}
 
+	// Do bounds checking with the block padding so the router isn't left
+	// with a zombie payment in case the user messes up.
+	err = routing.ValidateCLTVLimit(
+		payIntent.cltvLimit, payIntent.cltvDelta, true,
+	)
+	if err != nil {
+		return payIntent, err
+	}
+
 	// If the user is manually specifying payment details, then the payment
 	// hash may be encoded as a string.
 	switch {
@@ -5187,9 +5197,10 @@ func (r *rpcServer) DescribeGraph(ctx context.Context,
 func marshalDbEdge(edgeInfo *channeldb.ChannelEdgeInfo,
 	c1, c2 *channeldb.ChannelEdgePolicy) *lnrpc.ChannelEdge {
 
-	// Order the edges by increasing pubkey.
-	if bytes.Compare(edgeInfo.NodeKey2Bytes[:],
-		edgeInfo.NodeKey1Bytes[:]) < 0 {
+	// Make sure the policies match the node they belong to. c1 should point
+	// to the policy for NodeKey1, and c2 for NodeKey2.
+	if c1 != nil && c1.ChannelFlags&lnwire.ChanUpdateDirection == 1 ||
+		c2 != nil && c2.ChannelFlags&lnwire.ChanUpdateDirection == 0 {
 
 		c2, c1 = c1, c2
 	}
