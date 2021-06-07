@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/wire"
-	"github.com/lightningnetwork/lnd/channeldb/kvdb"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/record"
@@ -919,7 +919,7 @@ func deserializePaymentCreationInfo(r io.Reader) (*PaymentCreationInfo, error) {
 }
 
 func serializeHTLCAttemptInfo(w io.Writer, a *HTLCAttemptInfo) error {
-	if err := WriteElements(w, a.SessionKey); err != nil {
+	if err := WriteElements(w, a.sessionKey); err != nil {
 		return err
 	}
 
@@ -945,7 +945,7 @@ func serializeHTLCAttemptInfo(w io.Writer, a *HTLCAttemptInfo) error {
 
 func deserializeHTLCAttemptInfo(r io.Reader) (*HTLCAttemptInfo, error) {
 	a := &HTLCAttemptInfo{}
-	err := ReadElements(r, &a.SessionKey)
+	err := ReadElements(r, &a.sessionKey)
 	if err != nil {
 		return nil, err
 	}

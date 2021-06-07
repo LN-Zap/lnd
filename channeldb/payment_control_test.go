@@ -12,7 +12,7 @@ import (
 
 	"github.com/btcsuite/btcwallet/walletdb"
 	"github.com/davecgh/go-spew/spew"
-	"github.com/lightningnetwork/lnd/channeldb/kvdb"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/record"
 	"github.com/stretchr/testify/assert"
@@ -37,17 +37,15 @@ func genInfo() (*PaymentCreationInfo, *HTLCAttemptInfo,
 	}
 
 	rhash := sha256.Sum256(preimage[:])
+	attempt := NewHtlcAttemptInfo(
+		0, priv, *testRoute.Copy(), time.Time{}, nil,
+	)
 	return &PaymentCreationInfo{
-			PaymentIdentifier: rhash,
-			Value:             testRoute.ReceiverAmt(),
-			CreationTime:      time.Unix(time.Now().Unix(), 0),
-			PaymentRequest:    []byte("hola"),
-		},
-		&HTLCAttemptInfo{
-			AttemptID:  0,
-			SessionKey: priv,
-			Route:      *testRoute.Copy(),
-		}, preimage, nil
+		PaymentIdentifier: rhash,
+		Value:             testRoute.ReceiverAmt(),
+		CreationTime:      time.Unix(time.Now().Unix(), 0),
+		PaymentRequest:    []byte("hola"),
+	}, attempt, preimage, nil
 }
 
 // TestPaymentControlSwitchFail checks that payment status returns to Failed
