@@ -2370,13 +2370,15 @@ func abandonChanFromGraph(chanGraph *channeldb.ChannelGraph,
 func (r *rpcServer) AbandonChannel(_ context.Context,
 	in *lnrpc.AbandonChannelRequest) (*lnrpc.AbandonChannelResponse, error) {
 
-	// If this isn't the dev build, then we won't allow the RPC to be
-	// executed, as it's an advanced feature and won't be activated in
-	// regular production/release builds except for the explicit case of
-	// externally funded channels that are still pending.
-	if !in.PendingFundingShimOnly && !build.IsDevBuild() {
-		return nil, fmt.Errorf("AbandonChannel RPC call only " +
-			"available in dev builds")
+	// If this isn't the dev build, then only allow the RPC to be executed
+	// by also confirming the remote pubkey of the channel; or for the
+	// explicit case of externally funded channels that are still pending.
+	if in.ConfirmRemotePubkey == "" && !in.PendingFundingShimOnly &&
+		!build.IsDevBuild() {
+
+		return nil, fmt.Errorf("WARNING: AbandonChannel RPC was " +
+			"called in non-development mode without ConfirmRemotePubkey " +
+			"provided. Make sure you really know what you are doing")
 	}
 
 	// We'll parse out the arguments to we can obtain the chanPoint of the
@@ -2418,6 +2420,31 @@ func (r *rpcServer) AbandonChannel(_ context.Context,
 		if in.PendingFundingShimOnly && !isPendingShimFunded {
 			return nil, fmt.Errorf("channel %v is not externally "+
 				"funded or not pending", chanPoint)
+		}
+
+		// If the user provided the remote pubkey of the channel it must
+		// be checked as a safety measure.
+		if in.ConfirmRemotePubkey != "" {
+			confirmRemoteByte, err := hex.DecodeString(in.ConfirmRemotePubkey)
+			if err != nil {
+				return nil, fmt.Errorf(
+					"provided remote pubkey '%v' is not a "+
+						"valid hex string",
+					in.ConfirmRemotePubkey,
+				)
+			}
+
+			confirmRemotePubkey, err := btcec.ParsePubKey(confirmRemoteByte, btcec.S256())
+			if err != nil || !dbChan.IdentityPub.IsEqual(confirmRemotePubkey) {
+				return nil, fmt.Errorf(
+					"provided remote pubkey '%v' is not "+
+						"the same as for the channel "+
+						"'%v:%v'",
+					in.ConfirmRemotePubkey,
+					txid.String(),
+					index,
+				)
+			}
 		}
 
 		// We'll mark the channel as borked before we remove the state

@@ -3370,6 +3370,8 @@ message AbandonChannelRequest {
     ChannelPoint channel_point = 1;
 
     bool pending_funding_shim_only = 2;
+
+    string confirm_remote_pubkey = 3;
 }
 
 message AbandonChannelResponse {
