@@ -80,13 +80,6 @@ type Utxo struct {
 	wire.OutPoint
 }
 
-// DestOutput contains additional information on a destination address.
-type DestOutput struct {
-	PkScript     []byte
-	Value        btcutil.Amount
-	IsOurAddress bool
-}
-
 // TransactionDetail describes a transaction with either inputs which belong to
 // the wallet, or has outputs that pay to the wallet.
 type TransactionDetail struct {
@@ -123,10 +116,6 @@ type TransactionDetail struct {
 
 	// DestAddresses are the destinations for a transaction
 	DestAddresses []btcutil.Address
-
-	// DestOutputs contains output data for each destination address, such
-	// as the output script and amount.
-	DestOutputs []DestOutput
 
 	// RawTx returns the raw serialized transaction.
 	RawTx []byte

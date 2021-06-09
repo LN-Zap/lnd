@@ -923,19 +923,8 @@ func minedTransactionsToDetails(
 			return nil, err
 		}
 
-		// isOurAddress is a map containing the output indices
-		// controlled by the wallet.
-		// Note: We make use of the information in `MyOutputs` provided
-		// by the `wallet.TransactionSummary` structure that holds
-		// information only if the output is controlled by the wallet.
-		isOurAddress := make(map[int]bool, len(tx.MyOutputs))
-		for _, o := range tx.MyOutputs {
-			isOurAddress[int(o.Index)] = true
-		}
-
 		var destAddresses []btcutil.Address
-		var destOutputs []lnwallet.DestOutput
-		for i, txOut := range wireTx.TxOut {
+		for _, txOut := range wireTx.TxOut {
 			_, outAddresses, _, err := txscript.ExtractPkScriptAddrs(
 				txOut.PkScript, chainParams,
 			)
@@ -946,11 +935,6 @@ func minedTransactionsToDetails(
 			}
 
 			destAddresses = append(destAddresses, outAddresses...)
-			destOutputs = append(destOutputs, lnwallet.DestOutput{
-				PkScript:     txOut.PkScript,
-				Value:        btcutil.Amount(txOut.Value),
-				IsOurAddress: isOurAddress[i],
-			})
 		}
 
 		txDetail := &lnwallet.TransactionDetail{
@@ -961,7 +945,6 @@ func minedTransactionsToDetails(
 			Timestamp:        block.Timestamp,
 			TotalFees:        int64(tx.Fee),
 			DestAddresses:    destAddresses,
-			DestOutputs:      destOutputs,
 			RawTx:            tx.Transaction,
 			Label:            tx.Label,
 		}
@@ -992,19 +975,8 @@ func unminedTransactionsToDetail(
 		return nil, err
 	}
 
-	// isOurAddress is a map containing the output indices controlled by
-	// the wallet.
-	// Note: We make use of the information in `MyOutputs` provided
-	// by the `wallet.TransactionSummary` structure that holds information
-	// only if the output is controlled by the wallet.
-	isOurAddress := make(map[int]bool, len(summary.MyOutputs))
-	for _, o := range summary.MyOutputs {
-		isOurAddress[int(o.Index)] = true
-	}
-
 	var destAddresses []btcutil.Address
-	var destOutputs []lnwallet.DestOutput
-	for i, txOut := range wireTx.TxOut {
+	for _, txOut := range wireTx.TxOut {
 		_, outAddresses, _, err :=
 			txscript.ExtractPkScriptAddrs(txOut.PkScript, chainParams)
 		if err != nil {
@@ -1014,11 +986,6 @@ func unminedTransactionsToDetail(
 		}
 
 		destAddresses = append(destAddresses, outAddresses...)
-		destOutputs = append(destOutputs, lnwallet.DestOutput{
-			PkScript:     txOut.PkScript,
-			Value:        btcutil.Amount(txOut.Value),
-			IsOurAddress: isOurAddress[i],
-		})
 	}
 
 	txDetail := &lnwallet.TransactionDetail{
@@ -1026,7 +993,6 @@ func unminedTransactionsToDetail(
 		TotalFees:     int64(summary.Fee),
 		Timestamp:     summary.Timestamp,
 		DestAddresses: destAddresses,
-		DestOutputs:   destOutputs,
 		RawTx:         summary.Transaction,
 		Label:         summary.Label,
 	}

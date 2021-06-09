@@ -21,16 +21,6 @@ func RPCTransactionDetails(txns []*lnwallet.TransactionDetail) *TransactionDetai
 			destAddresses = append(destAddresses, destAddress.EncodeAddress())
 		}
 
-		// Re-package destination output information.
-		var destOutputs []*DestOutput
-		for _, o := range tx.DestOutputs {
-			destOutputs = append(destOutputs, &DestOutput{
-				PkScript:     hex.EncodeToString(o.PkScript),
-				Amount:       int64(o.Value),
-				IsOurAddress: o.IsOurAddress,
-			})
-		}
-
 		// We also get unconfirmed transactions, so BlockHash can be
 		// nil.
 		blockHash := ""
@@ -47,7 +37,6 @@ func RPCTransactionDetails(txns []*lnwallet.TransactionDetail) *TransactionDetai
 			TimeStamp:        tx.Timestamp,
 			TotalFees:        tx.TotalFees,
 			DestAddresses:    destAddresses,
-			DestOutputs:      destOutputs,
 			RawTxHex:         hex.EncodeToString(tx.RawTx),
 			Label:            tx.Label,
 		}
