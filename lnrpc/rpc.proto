@@ -543,6 +543,17 @@ message Utxo {
     int64 confirmations = 6;
 }
 
+message DestOutput {
+    // The pkscript in hex
+    string pk_script = 1;
+
+    // The value of the output coin in satoshis
+    int64 amount = 2;
+
+    // Denotes if the output is controlled by the internal wallet
+    bool is_our_address = 3;
+}
+
 message Transaction {
     // The transaction hash
     string tx_hash = 1;
@@ -567,6 +578,9 @@ message Transaction {
 
     // Addresses that received funds for this transaction
     repeated string dest_addresses = 8;
+
+    // Outputs that received funds for this transaction
+    repeated DestOutput dest_outputs = 11;
 
     // The raw transaction hex.
     string raw_tx_hex = 9;
