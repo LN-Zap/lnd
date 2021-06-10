@@ -26,6 +26,7 @@ func RPCTransactionDetails(txns []*lnwallet.TransactionDetail) *TransactionDetai
 		for _, o := range tx.DestOutputs {
 			destOutputs = append(destOutputs, &DestOutput{
 				PkScript:     hex.EncodeToString(o.PkScript),
+				OutputIndex:  int64(o.OutputIndex),
 				Amount:       int64(o.Value),
 				IsOurAddress: o.IsOurAddress,
 			})
