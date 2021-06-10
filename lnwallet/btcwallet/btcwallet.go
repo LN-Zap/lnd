@@ -948,6 +948,7 @@ func minedTransactionsToDetails(
 			destAddresses = append(destAddresses, outAddresses...)
 			destOutputs = append(destOutputs, lnwallet.DestOutput{
 				PkScript:     txOut.PkScript,
+				OutputIndex:  i,
 				Value:        btcutil.Amount(txOut.Value),
 				IsOurAddress: isOurAddress[i],
 			})
@@ -1016,6 +1017,7 @@ func unminedTransactionsToDetail(
 		destAddresses = append(destAddresses, outAddresses...)
 		destOutputs = append(destOutputs, lnwallet.DestOutput{
 			PkScript:     txOut.PkScript,
+			OutputIndex:  i,
 			Value:        btcutil.Amount(txOut.Value),
 			IsOurAddress: isOurAddress[i],
 		})

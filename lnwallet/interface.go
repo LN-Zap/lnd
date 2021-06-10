@@ -83,6 +83,7 @@ type Utxo struct {
 // DestOutput contains additional information on a destination address.
 type DestOutput struct {
 	PkScript     []byte
+	OutputIndex  int
 	Value        btcutil.Amount
 	IsOurAddress bool
 }

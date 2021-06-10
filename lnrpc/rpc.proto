@@ -547,11 +547,14 @@ message DestOutput {
     // The pkscript in hex
     string pk_script = 1;
 
+    // The output index used in the raw transaction
+    int64 output_index = 2;
+
     // The value of the output coin in satoshis
-    int64 amount = 2;
+    int64 amount = 3;
 
     // Denotes if the output is controlled by the internal wallet
-    bool is_our_address = 3;
+    bool is_our_address = 4;
 }
 
 message Transaction {

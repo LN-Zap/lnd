@@ -5087,6 +5087,7 @@ func (r *rpcServer) SubscribeTransactions(req *lnrpc.GetTransactionsRequest,
 			for _, destOutput := range tx.DestOutputs {
 				destOutputs = append(destOutputs, &lnrpc.DestOutput{
 					PkScript:     hex.EncodeToString(destOutput.PkScript),
+					OutputIndex:  int64(destOutput.OutputIndex),
 					Amount:       int64(destOutput.Value),
 					IsOurAddress: destOutput.IsOurAddress,
 				})
@@ -5117,6 +5118,7 @@ func (r *rpcServer) SubscribeTransactions(req *lnrpc.GetTransactionsRequest,
 			for _, destOutput := range tx.DestOutputs {
 				destOutputs = append(destOutputs, &lnrpc.DestOutput{
 					PkScript:     hex.EncodeToString(destOutput.PkScript),
+					OutputIndex:  int64(destOutput.OutputIndex),
 					Amount:       int64(destOutput.Value),
 					IsOurAddress: destOutput.IsOurAddress,
 				})
