@@ -660,6 +660,11 @@
           "type": "string",
           "title": "The pkscript in hex"
         },
+        "output_index": {
+          "type": "string",
+          "format": "int64",
+          "title": "The output index used in the raw transaction"
+        },
         "amount": {
           "type": "string",
           "format": "int64",
