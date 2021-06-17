@@ -48,7 +48,16 @@ const (
 
 	// AppPreRelease MUST only contain characters from semanticAlphabet
 	// per the semantic versioning spec.
-	AppPreRelease = "beta.rc5"
+	AppPreRelease = "beta"
+
+	// StrikeMajor defines the major version for LND-Strike
+	StrikeMajor uint = 1
+
+	// StrikeMinor defines the minor version for LND-Strike
+	StrikeMinor uint = 0
+
+	// StrikePatch defines the patch version for LND-Strike
+	StrikePatch uint = 1
 )
 
 func init() {
@@ -76,6 +85,25 @@ func Version() string {
 	if AppPreRelease != "" {
 		version = fmt.Sprintf("%s-%s", version, AppPreRelease)
 	}
+
+	return version
+}
+
+// VersionStrike returns the LND-Strike version as a properly formed string per
+// the semantic versioning 2.0.0 spec (http://semver.org/).
+func StrikeVersion() string {
+	// Start with the major, minor, and patch versions.
+	version := fmt.Sprintf("%d.%d.%d", StrikeMajor, StrikeMinor, StrikePatch)
+
+	// Append pre-release version if there is one. The hyphen called for by
+	// the semantic versioning spec is automatically appended and should not
+	// be contained in the pre-release string.
+	StrikePreRelease := fmt.Sprintf("lnd.%d.%d.%d", AppMajor, AppMinor, AppPatch)
+	if AppPreRelease != "" {
+		StrikePreRelease = fmt.Sprintf("%s.%s", StrikePreRelease, AppPreRelease)
+	}
+
+	version = fmt.Sprintf("%s-%s", version, StrikePreRelease)
 
 	return version
 }

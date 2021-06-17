@@ -212,7 +212,8 @@ var (
 // See LoadConfig for further details regarding the configuration
 // loading+parsing process.
 type Config struct {
-	ShowVersion bool `short:"V" long:"version" description:"Display version information and exit"`
+	ShowVersion       bool `short:"V" long:"version" description:"Display version information and exit"`
+	ShowStrikeVersion bool `long:"strike-version" description:"Display LND-Strike version information and exit"`
 
 	LndDir       string `long:"lnddir" description:"The base directory that contains lnd's data, logs, configuration file, etc."`
 	ConfigFile   string `short:"C" long:"configfile" description:"Path to configuration file"`
@@ -582,6 +583,13 @@ func LoadConfig(interceptor signal.Interceptor) (*Config, error) {
 	if preCfg.ShowVersion {
 		fmt.Println(appName, "version", build.Version(),
 			"commit="+build.Commit)
+		os.Exit(0)
+	}
+
+	// Show the LND-Strike version and exit if the strike-version flag was
+	// specified.
+	if preCfg.ShowStrikeVersion {
+		fmt.Println("lnd-strike", "version", build.StrikeVersion())
 		os.Exit(0)
 	}
 
