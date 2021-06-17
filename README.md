@@ -6,6 +6,18 @@
 
 TODO
 
+## Versioning
+
+LND-Strike uses [semantic versioning](https://semver.org/) and incorporates the LND version it is based on via the _pre-release_ label. However, each time the LND version is increased it also results in a major, minor or patch level increase of LND-Strike (and the pre-release tag is therefore considered as informational only).
+
+This allows updating LND-Strike as a dependency and knowing exactly what kind of changes are introduced (breaking changes, features or fixes).
+
+LND-Strike is currently being supported in two distinct versions:
+ * `0.1.0-lnd.0.12.1.beta` following LND 0.12.1 and
+ * `1.0.0-lnd.0.13.0.beta.rc5` following LND 0.13.0-rc5
+
+The changes in each can be obtained from their releases.
+
 ## Branch Structure
 
 ### The Main Branches
