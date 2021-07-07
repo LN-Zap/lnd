@@ -197,12 +197,6 @@
             "required": false,
             "type": "boolean",
             "format": "boolean"
-          },
-          {
-            "name": "confirm_remote_pubkey",
-            "in": "query",
-            "required": false,
-            "type": "string"
           }
         ],
         "tags": [

@@ -1118,16 +1118,11 @@ var abandonChannelCommand = cli.Command{
 	summary. This method can be used to get rid of permanently unusable
 	channels due to bugs fixed in newer versions of lnd.
 
+	Only available when lnd is built in debug mode.
+
 	To view which funding_txids/output_indexes can be used for this command,
 	see the channel_point values within the listchannels command output.
-	The format for a channel_point is 'funding_txid:output_index'.
-	
-	WARNING:
-	Do not use this command if you are not perfectly sure of what it is doing!
-
-	When called in non-development mode the channel's remote pubkey must be 
-	additionally specified. This is to make sure this command is not called by 
-	mistake.`,
+	The format for a channel_point is 'funding_txid:output_index'.`,
 	ArgsUsage: "funding_txid [output_index]",
 	Flags: []cli.Flag{
 		cli.StringFlag{
@@ -1138,12 +1133,6 @@ var abandonChannelCommand = cli.Command{
 			Name: "output_index",
 			Usage: "the output index for the funding output of the funding " +
 				"transaction",
-		},
-		cli.StringFlag{
-			Name: "confirm_remote_pubkey",
-			Usage: "the remote pubkey of the channel to be checked as an " +
-				"additional precaution. When called in non-development mode " +
-				"this option must be set",
 		},
 	},
 	Action: actionDecorator(abandonChannel),
@@ -1166,8 +1155,7 @@ func abandonChannel(ctx *cli.Context) error {
 	}
 
 	req := &lnrpc.AbandonChannelRequest{
-		ChannelPoint:        channelPoint,
-		ConfirmRemotePubkey: ctx.String("confirm_remote_pubkey"),
+		ChannelPoint: channelPoint,
 	}
 
 	resp, err := client.AbandonChannel(ctxc, req)
