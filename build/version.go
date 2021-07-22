@@ -57,7 +57,7 @@ const (
 	StrikeMinor uint = 0
 
 	// StrikePatch defines the patch version for LND-Strike
-	StrikePatch uint = 1
+	StrikePatch uint = 2
 )
 
 func init() {
