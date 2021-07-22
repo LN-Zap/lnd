@@ -917,14 +917,19 @@ func testForceClose(t *testing.T, testCase *forceCloseTestCase) {
 		}
 
 		// Check the pre-confirmation resolutions.
-		resList, err := aliceChannel.NewAnchorResolutions()
+		res, err := aliceChannel.NewAnchorResolutions()
 		if err != nil {
 			t.Fatalf("pre-confirmation resolution error: %v", err)
 		}
 
-		if len(resList) != 2 {
-			t.Fatal("expected two resolutions")
-		}
+		// Check we have the expected anchor resolutions.
+		require.NotNil(t, res.Local, "expected local anchor resolution")
+		require.NotNil(t,
+			res.Remote, "expected remote anchor resolution",
+		)
+		require.Nil(t,
+			res.RemotePending, "expected no anchor resolution",
+		)
 	}
 
 	// The SelfOutputSignDesc should be non-nil since the output to-self is
@@ -9642,4 +9647,25 @@ func TestChannelSignedAckRegression(t *testing.T) {
 	// Alice should receive the new commitment without hiccups.
 	err = aliceChannel.ReceiveNewCommitment(bobSig, bobHtlcSigs)
 	require.NoError(t, err)
+}
+
+// TestMayAddOutgoingHtlcZeroValue tests that if the minHTLC value of the
+// channel is zero, then the MayAddOutgoingHtlc doesn't exit early due to
+// running into a zero valued HTLC.
+func TestMayAddOutgoingHtlcZeroValue(t *testing.T) {
+	t.Parallel()
+
+	// The default channel created as a part of the test fixture already
+	// has a MinHTLC value of zero, so we don't need to do anything here
+	// other than create it.
+	aliceChannel, bobChannel, cleanUp, err := CreateTestChannels(
+		channeldb.SingleFunderTweaklessBit,
+	)
+	require.NoError(t, err)
+	defer cleanUp()
+
+	// The channels start out with a 50/50 balance, so both sides should be
+	// able to add an outgoing HTLC.
+	require.NoError(t, aliceChannel.MayAddOutgoingHtlc())
+	require.NoError(t, bobChannel.MayAddOutgoingHtlc())
 }
