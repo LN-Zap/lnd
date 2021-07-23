@@ -44,7 +44,7 @@ const (
 	AppMinor uint = 13
 
 	// AppPatch defines the application patch for this binary.
-	AppPatch uint = 0
+	AppPatch uint = 1
 
 	// AppPreRelease MUST only contain characters from semanticAlphabet
 	// per the semantic versioning spec.
@@ -57,7 +57,7 @@ const (
 	StrikeMinor uint = 0
 
 	// StrikePatch defines the patch version for LND-Strike
-	StrikePatch uint = 1
+	StrikePatch uint = 2
 )
 
 func init() {
