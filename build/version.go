@@ -54,10 +54,10 @@ const (
 	StrikeMajor uint = 1
 
 	// StrikeMinor defines the minor version for LND-Strike
-	StrikeMinor uint = 0
+	StrikeMinor uint = 99
 
 	// StrikePatch defines the patch version for LND-Strike
-	StrikePatch uint = 2
+	StrikePatch uint = 99
 )
 
 func init() {
