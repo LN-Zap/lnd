@@ -1700,6 +1700,47 @@
         ]
       }
     },
+    "/v1/payment": {
+      "delete": {
+        "summary": "DeletePayment deletes an outgoing payment from DB. Note that it will not\nattempt to delete an In-Flight payment, since that would be unsafe.",
+        "operationId": "DeletePayment",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/lnrpcDeletePaymentResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response",
+            "schema": {
+              "$ref": "#/definitions/runtimeError"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "payment_hash",
+            "description": "Payment hash to delete.",
+            "in": "query",
+            "required": false,
+            "type": "string",
+            "format": "byte"
+          },
+          {
+            "name": "failed_htlcs_only",
+            "description": "Only delete failed HTLCs from the payment, not the payment itself.",
+            "in": "query",
+            "required": false,
+            "type": "boolean",
+            "format": "boolean"
+          }
+        ],
+        "tags": [
+          "Lightning"
+        ]
+      }
+    },
     "/v1/payments": {
       "get": {
         "summary": "lncli: `listpayments`\nListPayments returns a list of all outgoing payments.",
@@ -1757,7 +1798,7 @@
         ]
       },
       "delete": {
-        "summary": "DeleteAllPayments deletes all outgoing payments from DB.",
+        "summary": "DeleteAllPayments deletes all outgoing payments from DB. Note that it will\nnot attempt to delete In-Flight payments, since that would be unsafe.",
         "operationId": "DeleteAllPayments",
         "responses": {
           "200": {
@@ -3617,6 +3658,9 @@
           "description": "A boolean indicates that the deletion is successful."
         }
       }
+    },
+    "lnrpcDeletePaymentResponse": {
+      "type": "object"
     },
     "lnrpcDestOutput": {
       "type": "object",
