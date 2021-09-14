@@ -1175,7 +1175,7 @@ func (x Failure_FailureCode) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use Failure_FailureCode.Descriptor instead.
 func (Failure_FailureCode) EnumDescriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{164, 0}
+	return file_rpc_proto_rawDescGZIP(), []int{166, 0}
 }
 
 type Utxo struct {
@@ -11713,6 +11713,64 @@ func (x *ListPaymentsResponse) GetLastIndexOffset() uint64 {
 	return 0
 }
 
+type DeletePaymentRequest struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	// Payment hash to delete.
+	PaymentHash []byte `protobuf:"bytes,1,opt,name=payment_hash,json=paymentHash,proto3" json:"payment_hash,omitempty"`
+	//
+	//Only delete failed HTLCs from the payment, not the payment itself.
+	FailedHtlcsOnly bool `protobuf:"varint,2,opt,name=failed_htlcs_only,json=failedHtlcsOnly,proto3" json:"failed_htlcs_only,omitempty"`
+}
+
+func (x *DeletePaymentRequest) Reset() {
+	*x = DeletePaymentRequest{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_rpc_proto_msgTypes[125]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *DeletePaymentRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeletePaymentRequest) ProtoMessage() {}
+
+func (x *DeletePaymentRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_rpc_proto_msgTypes[125]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeletePaymentRequest.ProtoReflect.Descriptor instead.
+func (*DeletePaymentRequest) Descriptor() ([]byte, []int) {
+	return file_rpc_proto_rawDescGZIP(), []int{125}
+}
+
+func (x *DeletePaymentRequest) GetPaymentHash() []byte {
+	if x != nil {
+		return x.PaymentHash
+	}
+	return nil
+}
+
+func (x *DeletePaymentRequest) GetFailedHtlcsOnly() bool {
+	if x != nil {
+		return x.FailedHtlcsOnly
+	}
+	return false
+}
+
 type DeleteAllPaymentsRequest struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -11728,7 +11786,7 @@ type DeleteAllPaymentsRequest struct {
 func (x *DeleteAllPaymentsRequest) Reset() {
 	*x = DeleteAllPaymentsRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[125]
+		mi := &file_rpc_proto_msgTypes[126]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -11741,7 +11799,7 @@ func (x *DeleteAllPaymentsRequest) String() string {
 func (*DeleteAllPaymentsRequest) ProtoMessage() {}
 
 func (x *DeleteAllPaymentsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[125]
+	mi := &file_rpc_proto_msgTypes[126]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11754,7 +11812,7 @@ func (x *DeleteAllPaymentsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteAllPaymentsRequest.ProtoReflect.Descriptor instead.
 func (*DeleteAllPaymentsRequest) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{125}
+	return file_rpc_proto_rawDescGZIP(), []int{126}
 }
 
 func (x *DeleteAllPaymentsRequest) GetFailedPaymentsOnly() bool {
@@ -11771,6 +11829,44 @@ func (x *DeleteAllPaymentsRequest) GetFailedHtlcsOnly() bool {
 	return false
 }
 
+type DeletePaymentResponse struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+}
+
+func (x *DeletePaymentResponse) Reset() {
+	*x = DeletePaymentResponse{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_rpc_proto_msgTypes[127]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *DeletePaymentResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeletePaymentResponse) ProtoMessage() {}
+
+func (x *DeletePaymentResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_rpc_proto_msgTypes[127]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeletePaymentResponse.ProtoReflect.Descriptor instead.
+func (*DeletePaymentResponse) Descriptor() ([]byte, []int) {
+	return file_rpc_proto_rawDescGZIP(), []int{127}
+}
+
 type DeleteAllPaymentsResponse struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -11780,7 +11876,7 @@ type DeleteAllPaymentsResponse struct {
 func (x *DeleteAllPaymentsResponse) Reset() {
 	*x = DeleteAllPaymentsResponse{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[126]
+		mi := &file_rpc_proto_msgTypes[128]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -11793,7 +11889,7 @@ func (x *DeleteAllPaymentsResponse) String() string {
 func (*DeleteAllPaymentsResponse) ProtoMessage() {}
 
 func (x *DeleteAllPaymentsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[126]
+	mi := &file_rpc_proto_msgTypes[128]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11806,7 +11902,7 @@ func (x *DeleteAllPaymentsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteAllPaymentsResponse.ProtoReflect.Descriptor instead.
 func (*DeleteAllPaymentsResponse) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{126}
+	return file_rpc_proto_rawDescGZIP(), []int{128}
 }
 
 type AbandonChannelRequest struct {
@@ -11826,7 +11922,7 @@ type AbandonChannelRequest struct {
 func (x *AbandonChannelRequest) Reset() {
 	*x = AbandonChannelRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[127]
+		mi := &file_rpc_proto_msgTypes[129]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -11839,7 +11935,7 @@ func (x *AbandonChannelRequest) String() string {
 func (*AbandonChannelRequest) ProtoMessage() {}
 
 func (x *AbandonChannelRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[127]
+	mi := &file_rpc_proto_msgTypes[129]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11852,7 +11948,7 @@ func (x *AbandonChannelRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AbandonChannelRequest.ProtoReflect.Descriptor instead.
 func (*AbandonChannelRequest) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{127}
+	return file_rpc_proto_rawDescGZIP(), []int{129}
 }
 
 func (x *AbandonChannelRequest) GetChannelPoint() *ChannelPoint {
@@ -11885,7 +11981,7 @@ type AbandonChannelResponse struct {
 func (x *AbandonChannelResponse) Reset() {
 	*x = AbandonChannelResponse{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[128]
+		mi := &file_rpc_proto_msgTypes[130]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -11898,7 +11994,7 @@ func (x *AbandonChannelResponse) String() string {
 func (*AbandonChannelResponse) ProtoMessage() {}
 
 func (x *AbandonChannelResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[128]
+	mi := &file_rpc_proto_msgTypes[130]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11911,7 +12007,7 @@ func (x *AbandonChannelResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AbandonChannelResponse.ProtoReflect.Descriptor instead.
 func (*AbandonChannelResponse) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{128}
+	return file_rpc_proto_rawDescGZIP(), []int{130}
 }
 
 type DebugLevelRequest struct {
@@ -11926,7 +12022,7 @@ type DebugLevelRequest struct {
 func (x *DebugLevelRequest) Reset() {
 	*x = DebugLevelRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[129]
+		mi := &file_rpc_proto_msgTypes[131]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -11939,7 +12035,7 @@ func (x *DebugLevelRequest) String() string {
 func (*DebugLevelRequest) ProtoMessage() {}
 
 func (x *DebugLevelRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[129]
+	mi := &file_rpc_proto_msgTypes[131]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -11952,7 +12048,7 @@ func (x *DebugLevelRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DebugLevelRequest.ProtoReflect.Descriptor instead.
 func (*DebugLevelRequest) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{129}
+	return file_rpc_proto_rawDescGZIP(), []int{131}
 }
 
 func (x *DebugLevelRequest) GetShow() bool {
@@ -11980,7 +12076,7 @@ type DebugLevelResponse struct {
 func (x *DebugLevelResponse) Reset() {
 	*x = DebugLevelResponse{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[130]
+		mi := &file_rpc_proto_msgTypes[132]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -11993,7 +12089,7 @@ func (x *DebugLevelResponse) String() string {
 func (*DebugLevelResponse) ProtoMessage() {}
 
 func (x *DebugLevelResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[130]
+	mi := &file_rpc_proto_msgTypes[132]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12006,7 +12102,7 @@ func (x *DebugLevelResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DebugLevelResponse.ProtoReflect.Descriptor instead.
 func (*DebugLevelResponse) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{130}
+	return file_rpc_proto_rawDescGZIP(), []int{132}
 }
 
 func (x *DebugLevelResponse) GetSubSystems() string {
@@ -12028,7 +12124,7 @@ type PayReqString struct {
 func (x *PayReqString) Reset() {
 	*x = PayReqString{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[131]
+		mi := &file_rpc_proto_msgTypes[133]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -12041,7 +12137,7 @@ func (x *PayReqString) String() string {
 func (*PayReqString) ProtoMessage() {}
 
 func (x *PayReqString) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[131]
+	mi := &file_rpc_proto_msgTypes[133]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12054,7 +12150,7 @@ func (x *PayReqString) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PayReqString.ProtoReflect.Descriptor instead.
 func (*PayReqString) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{131}
+	return file_rpc_proto_rawDescGZIP(), []int{133}
 }
 
 func (x *PayReqString) GetPayReq() string {
@@ -12087,7 +12183,7 @@ type PayReq struct {
 func (x *PayReq) Reset() {
 	*x = PayReq{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[132]
+		mi := &file_rpc_proto_msgTypes[134]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -12100,7 +12196,7 @@ func (x *PayReq) String() string {
 func (*PayReq) ProtoMessage() {}
 
 func (x *PayReq) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[132]
+	mi := &file_rpc_proto_msgTypes[134]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12113,7 +12209,7 @@ func (x *PayReq) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PayReq.ProtoReflect.Descriptor instead.
 func (*PayReq) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{132}
+	return file_rpc_proto_rawDescGZIP(), []int{134}
 }
 
 func (x *PayReq) GetDestination() string {
@@ -12220,7 +12316,7 @@ type Feature struct {
 func (x *Feature) Reset() {
 	*x = Feature{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[133]
+		mi := &file_rpc_proto_msgTypes[135]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -12233,7 +12329,7 @@ func (x *Feature) String() string {
 func (*Feature) ProtoMessage() {}
 
 func (x *Feature) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[133]
+	mi := &file_rpc_proto_msgTypes[135]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12246,7 +12342,7 @@ func (x *Feature) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Feature.ProtoReflect.Descriptor instead.
 func (*Feature) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{133}
+	return file_rpc_proto_rawDescGZIP(), []int{135}
 }
 
 func (x *Feature) GetName() string {
@@ -12279,7 +12375,7 @@ type FeeReportRequest struct {
 func (x *FeeReportRequest) Reset() {
 	*x = FeeReportRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[134]
+		mi := &file_rpc_proto_msgTypes[136]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -12292,7 +12388,7 @@ func (x *FeeReportRequest) String() string {
 func (*FeeReportRequest) ProtoMessage() {}
 
 func (x *FeeReportRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[134]
+	mi := &file_rpc_proto_msgTypes[136]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12305,7 +12401,7 @@ func (x *FeeReportRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FeeReportRequest.ProtoReflect.Descriptor instead.
 func (*FeeReportRequest) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{134}
+	return file_rpc_proto_rawDescGZIP(), []int{136}
 }
 
 type ChannelFeeReport struct {
@@ -12330,7 +12426,7 @@ type ChannelFeeReport struct {
 func (x *ChannelFeeReport) Reset() {
 	*x = ChannelFeeReport{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[135]
+		mi := &file_rpc_proto_msgTypes[137]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -12343,7 +12439,7 @@ func (x *ChannelFeeReport) String() string {
 func (*ChannelFeeReport) ProtoMessage() {}
 
 func (x *ChannelFeeReport) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[135]
+	mi := &file_rpc_proto_msgTypes[137]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12356,7 +12452,7 @@ func (x *ChannelFeeReport) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChannelFeeReport.ProtoReflect.Descriptor instead.
 func (*ChannelFeeReport) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{135}
+	return file_rpc_proto_rawDescGZIP(), []int{137}
 }
 
 func (x *ChannelFeeReport) GetChanId() uint64 {
@@ -12416,7 +12512,7 @@ type FeeReportResponse struct {
 func (x *FeeReportResponse) Reset() {
 	*x = FeeReportResponse{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[136]
+		mi := &file_rpc_proto_msgTypes[138]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -12429,7 +12525,7 @@ func (x *FeeReportResponse) String() string {
 func (*FeeReportResponse) ProtoMessage() {}
 
 func (x *FeeReportResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[136]
+	mi := &file_rpc_proto_msgTypes[138]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12442,7 +12538,7 @@ func (x *FeeReportResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FeeReportResponse.ProtoReflect.Descriptor instead.
 func (*FeeReportResponse) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{136}
+	return file_rpc_proto_rawDescGZIP(), []int{138}
 }
 
 func (x *FeeReportResponse) GetChannelFees() []*ChannelFeeReport {
@@ -12502,7 +12598,7 @@ type PolicyUpdateRequest struct {
 func (x *PolicyUpdateRequest) Reset() {
 	*x = PolicyUpdateRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[137]
+		mi := &file_rpc_proto_msgTypes[139]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -12515,7 +12611,7 @@ func (x *PolicyUpdateRequest) String() string {
 func (*PolicyUpdateRequest) ProtoMessage() {}
 
 func (x *PolicyUpdateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[137]
+	mi := &file_rpc_proto_msgTypes[139]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12528,7 +12624,7 @@ func (x *PolicyUpdateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PolicyUpdateRequest.ProtoReflect.Descriptor instead.
 func (*PolicyUpdateRequest) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{137}
+	return file_rpc_proto_rawDescGZIP(), []int{139}
 }
 
 func (m *PolicyUpdateRequest) GetScope() isPolicyUpdateRequest_Scope {
@@ -12621,7 +12717,7 @@ type PolicyUpdateResponse struct {
 func (x *PolicyUpdateResponse) Reset() {
 	*x = PolicyUpdateResponse{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[138]
+		mi := &file_rpc_proto_msgTypes[140]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -12634,7 +12730,7 @@ func (x *PolicyUpdateResponse) String() string {
 func (*PolicyUpdateResponse) ProtoMessage() {}
 
 func (x *PolicyUpdateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[138]
+	mi := &file_rpc_proto_msgTypes[140]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12647,7 +12743,7 @@ func (x *PolicyUpdateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PolicyUpdateResponse.ProtoReflect.Descriptor instead.
 func (*PolicyUpdateResponse) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{138}
+	return file_rpc_proto_rawDescGZIP(), []int{140}
 }
 
 type ForwardingHistoryRequest struct {
@@ -12674,7 +12770,7 @@ type ForwardingHistoryRequest struct {
 func (x *ForwardingHistoryRequest) Reset() {
 	*x = ForwardingHistoryRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[139]
+		mi := &file_rpc_proto_msgTypes[141]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -12687,7 +12783,7 @@ func (x *ForwardingHistoryRequest) String() string {
 func (*ForwardingHistoryRequest) ProtoMessage() {}
 
 func (x *ForwardingHistoryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[139]
+	mi := &file_rpc_proto_msgTypes[141]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12700,7 +12796,7 @@ func (x *ForwardingHistoryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ForwardingHistoryRequest.ProtoReflect.Descriptor instead.
 func (*ForwardingHistoryRequest) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{139}
+	return file_rpc_proto_rawDescGZIP(), []int{141}
 }
 
 func (x *ForwardingHistoryRequest) GetStartTime() uint64 {
@@ -12770,7 +12866,7 @@ type ForwardingEvent struct {
 func (x *ForwardingEvent) Reset() {
 	*x = ForwardingEvent{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[140]
+		mi := &file_rpc_proto_msgTypes[142]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -12783,7 +12879,7 @@ func (x *ForwardingEvent) String() string {
 func (*ForwardingEvent) ProtoMessage() {}
 
 func (x *ForwardingEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[140]
+	mi := &file_rpc_proto_msgTypes[142]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12796,7 +12892,7 @@ func (x *ForwardingEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ForwardingEvent.ProtoReflect.Descriptor instead.
 func (*ForwardingEvent) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{140}
+	return file_rpc_proto_rawDescGZIP(), []int{142}
 }
 
 // Deprecated: Do not use.
@@ -12886,7 +12982,7 @@ type ForwardingHistoryResponse struct {
 func (x *ForwardingHistoryResponse) Reset() {
 	*x = ForwardingHistoryResponse{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[141]
+		mi := &file_rpc_proto_msgTypes[143]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -12899,7 +12995,7 @@ func (x *ForwardingHistoryResponse) String() string {
 func (*ForwardingHistoryResponse) ProtoMessage() {}
 
 func (x *ForwardingHistoryResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[141]
+	mi := &file_rpc_proto_msgTypes[143]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12912,7 +13008,7 @@ func (x *ForwardingHistoryResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ForwardingHistoryResponse.ProtoReflect.Descriptor instead.
 func (*ForwardingHistoryResponse) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{141}
+	return file_rpc_proto_rawDescGZIP(), []int{143}
 }
 
 func (x *ForwardingHistoryResponse) GetForwardingEvents() []*ForwardingEvent {
@@ -12941,7 +13037,7 @@ type ExportChannelBackupRequest struct {
 func (x *ExportChannelBackupRequest) Reset() {
 	*x = ExportChannelBackupRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[142]
+		mi := &file_rpc_proto_msgTypes[144]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -12954,7 +13050,7 @@ func (x *ExportChannelBackupRequest) String() string {
 func (*ExportChannelBackupRequest) ProtoMessage() {}
 
 func (x *ExportChannelBackupRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[142]
+	mi := &file_rpc_proto_msgTypes[144]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -12967,7 +13063,7 @@ func (x *ExportChannelBackupRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExportChannelBackupRequest.ProtoReflect.Descriptor instead.
 func (*ExportChannelBackupRequest) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{142}
+	return file_rpc_proto_rawDescGZIP(), []int{144}
 }
 
 func (x *ExportChannelBackupRequest) GetChanPoint() *ChannelPoint {
@@ -12996,7 +13092,7 @@ type ChannelBackup struct {
 func (x *ChannelBackup) Reset() {
 	*x = ChannelBackup{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[143]
+		mi := &file_rpc_proto_msgTypes[145]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -13009,7 +13105,7 @@ func (x *ChannelBackup) String() string {
 func (*ChannelBackup) ProtoMessage() {}
 
 func (x *ChannelBackup) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[143]
+	mi := &file_rpc_proto_msgTypes[145]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13022,7 +13118,7 @@ func (x *ChannelBackup) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChannelBackup.ProtoReflect.Descriptor instead.
 func (*ChannelBackup) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{143}
+	return file_rpc_proto_rawDescGZIP(), []int{145}
 }
 
 func (x *ChannelBackup) GetChanPoint() *ChannelPoint {
@@ -13058,7 +13154,7 @@ type MultiChanBackup struct {
 func (x *MultiChanBackup) Reset() {
 	*x = MultiChanBackup{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[144]
+		mi := &file_rpc_proto_msgTypes[146]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -13071,7 +13167,7 @@ func (x *MultiChanBackup) String() string {
 func (*MultiChanBackup) ProtoMessage() {}
 
 func (x *MultiChanBackup) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[144]
+	mi := &file_rpc_proto_msgTypes[146]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13084,7 +13180,7 @@ func (x *MultiChanBackup) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MultiChanBackup.ProtoReflect.Descriptor instead.
 func (*MultiChanBackup) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{144}
+	return file_rpc_proto_rawDescGZIP(), []int{146}
 }
 
 func (x *MultiChanBackup) GetChanPoints() []*ChannelPoint {
@@ -13110,7 +13206,7 @@ type ChanBackupExportRequest struct {
 func (x *ChanBackupExportRequest) Reset() {
 	*x = ChanBackupExportRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[145]
+		mi := &file_rpc_proto_msgTypes[147]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -13123,7 +13219,7 @@ func (x *ChanBackupExportRequest) String() string {
 func (*ChanBackupExportRequest) ProtoMessage() {}
 
 func (x *ChanBackupExportRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[145]
+	mi := &file_rpc_proto_msgTypes[147]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13136,7 +13232,7 @@ func (x *ChanBackupExportRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChanBackupExportRequest.ProtoReflect.Descriptor instead.
 func (*ChanBackupExportRequest) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{145}
+	return file_rpc_proto_rawDescGZIP(), []int{147}
 }
 
 type ChanBackupSnapshot struct {
@@ -13157,7 +13253,7 @@ type ChanBackupSnapshot struct {
 func (x *ChanBackupSnapshot) Reset() {
 	*x = ChanBackupSnapshot{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[146]
+		mi := &file_rpc_proto_msgTypes[148]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -13170,7 +13266,7 @@ func (x *ChanBackupSnapshot) String() string {
 func (*ChanBackupSnapshot) ProtoMessage() {}
 
 func (x *ChanBackupSnapshot) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[146]
+	mi := &file_rpc_proto_msgTypes[148]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13183,7 +13279,7 @@ func (x *ChanBackupSnapshot) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChanBackupSnapshot.ProtoReflect.Descriptor instead.
 func (*ChanBackupSnapshot) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{146}
+	return file_rpc_proto_rawDescGZIP(), []int{148}
 }
 
 func (x *ChanBackupSnapshot) GetSingleChanBackups() *ChannelBackups {
@@ -13213,7 +13309,7 @@ type ChannelBackups struct {
 func (x *ChannelBackups) Reset() {
 	*x = ChannelBackups{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[147]
+		mi := &file_rpc_proto_msgTypes[149]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -13226,7 +13322,7 @@ func (x *ChannelBackups) String() string {
 func (*ChannelBackups) ProtoMessage() {}
 
 func (x *ChannelBackups) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[147]
+	mi := &file_rpc_proto_msgTypes[149]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13239,7 +13335,7 @@ func (x *ChannelBackups) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChannelBackups.ProtoReflect.Descriptor instead.
 func (*ChannelBackups) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{147}
+	return file_rpc_proto_rawDescGZIP(), []int{149}
 }
 
 func (x *ChannelBackups) GetChanBackups() []*ChannelBackup {
@@ -13263,7 +13359,7 @@ type RestoreChanBackupRequest struct {
 func (x *RestoreChanBackupRequest) Reset() {
 	*x = RestoreChanBackupRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[148]
+		mi := &file_rpc_proto_msgTypes[150]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -13276,7 +13372,7 @@ func (x *RestoreChanBackupRequest) String() string {
 func (*RestoreChanBackupRequest) ProtoMessage() {}
 
 func (x *RestoreChanBackupRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[148]
+	mi := &file_rpc_proto_msgTypes[150]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13289,7 +13385,7 @@ func (x *RestoreChanBackupRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RestoreChanBackupRequest.ProtoReflect.Descriptor instead.
 func (*RestoreChanBackupRequest) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{148}
+	return file_rpc_proto_rawDescGZIP(), []int{150}
 }
 
 func (m *RestoreChanBackupRequest) GetBackup() isRestoreChanBackupRequest_Backup {
@@ -13343,7 +13439,7 @@ type RestoreBackupResponse struct {
 func (x *RestoreBackupResponse) Reset() {
 	*x = RestoreBackupResponse{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[149]
+		mi := &file_rpc_proto_msgTypes[151]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -13356,7 +13452,7 @@ func (x *RestoreBackupResponse) String() string {
 func (*RestoreBackupResponse) ProtoMessage() {}
 
 func (x *RestoreBackupResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[149]
+	mi := &file_rpc_proto_msgTypes[151]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13369,7 +13465,7 @@ func (x *RestoreBackupResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RestoreBackupResponse.ProtoReflect.Descriptor instead.
 func (*RestoreBackupResponse) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{149}
+	return file_rpc_proto_rawDescGZIP(), []int{151}
 }
 
 type ChannelBackupSubscription struct {
@@ -13381,7 +13477,7 @@ type ChannelBackupSubscription struct {
 func (x *ChannelBackupSubscription) Reset() {
 	*x = ChannelBackupSubscription{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[150]
+		mi := &file_rpc_proto_msgTypes[152]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -13394,7 +13490,7 @@ func (x *ChannelBackupSubscription) String() string {
 func (*ChannelBackupSubscription) ProtoMessage() {}
 
 func (x *ChannelBackupSubscription) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[150]
+	mi := &file_rpc_proto_msgTypes[152]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13407,7 +13503,7 @@ func (x *ChannelBackupSubscription) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChannelBackupSubscription.ProtoReflect.Descriptor instead.
 func (*ChannelBackupSubscription) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{150}
+	return file_rpc_proto_rawDescGZIP(), []int{152}
 }
 
 type VerifyChanBackupResponse struct {
@@ -13419,7 +13515,7 @@ type VerifyChanBackupResponse struct {
 func (x *VerifyChanBackupResponse) Reset() {
 	*x = VerifyChanBackupResponse{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[151]
+		mi := &file_rpc_proto_msgTypes[153]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -13432,7 +13528,7 @@ func (x *VerifyChanBackupResponse) String() string {
 func (*VerifyChanBackupResponse) ProtoMessage() {}
 
 func (x *VerifyChanBackupResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[151]
+	mi := &file_rpc_proto_msgTypes[153]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13445,7 +13541,7 @@ func (x *VerifyChanBackupResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerifyChanBackupResponse.ProtoReflect.Descriptor instead.
 func (*VerifyChanBackupResponse) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{151}
+	return file_rpc_proto_rawDescGZIP(), []int{153}
 }
 
 type MacaroonPermission struct {
@@ -13462,7 +13558,7 @@ type MacaroonPermission struct {
 func (x *MacaroonPermission) Reset() {
 	*x = MacaroonPermission{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[152]
+		mi := &file_rpc_proto_msgTypes[154]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -13475,7 +13571,7 @@ func (x *MacaroonPermission) String() string {
 func (*MacaroonPermission) ProtoMessage() {}
 
 func (x *MacaroonPermission) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[152]
+	mi := &file_rpc_proto_msgTypes[154]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13488,7 +13584,7 @@ func (x *MacaroonPermission) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MacaroonPermission.ProtoReflect.Descriptor instead.
 func (*MacaroonPermission) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{152}
+	return file_rpc_proto_rawDescGZIP(), []int{154}
 }
 
 func (x *MacaroonPermission) GetEntity() string {
@@ -13519,7 +13615,7 @@ type BakeMacaroonRequest struct {
 func (x *BakeMacaroonRequest) Reset() {
 	*x = BakeMacaroonRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[153]
+		mi := &file_rpc_proto_msgTypes[155]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -13532,7 +13628,7 @@ func (x *BakeMacaroonRequest) String() string {
 func (*BakeMacaroonRequest) ProtoMessage() {}
 
 func (x *BakeMacaroonRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[153]
+	mi := &file_rpc_proto_msgTypes[155]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13545,7 +13641,7 @@ func (x *BakeMacaroonRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BakeMacaroonRequest.ProtoReflect.Descriptor instead.
 func (*BakeMacaroonRequest) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{153}
+	return file_rpc_proto_rawDescGZIP(), []int{155}
 }
 
 func (x *BakeMacaroonRequest) GetPermissions() []*MacaroonPermission {
@@ -13574,7 +13670,7 @@ type BakeMacaroonResponse struct {
 func (x *BakeMacaroonResponse) Reset() {
 	*x = BakeMacaroonResponse{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[154]
+		mi := &file_rpc_proto_msgTypes[156]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -13587,7 +13683,7 @@ func (x *BakeMacaroonResponse) String() string {
 func (*BakeMacaroonResponse) ProtoMessage() {}
 
 func (x *BakeMacaroonResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[154]
+	mi := &file_rpc_proto_msgTypes[156]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13600,7 +13696,7 @@ func (x *BakeMacaroonResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BakeMacaroonResponse.ProtoReflect.Descriptor instead.
 func (*BakeMacaroonResponse) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{154}
+	return file_rpc_proto_rawDescGZIP(), []int{156}
 }
 
 func (x *BakeMacaroonResponse) GetMacaroon() string {
@@ -13619,7 +13715,7 @@ type ListMacaroonIDsRequest struct {
 func (x *ListMacaroonIDsRequest) Reset() {
 	*x = ListMacaroonIDsRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[155]
+		mi := &file_rpc_proto_msgTypes[157]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -13632,7 +13728,7 @@ func (x *ListMacaroonIDsRequest) String() string {
 func (*ListMacaroonIDsRequest) ProtoMessage() {}
 
 func (x *ListMacaroonIDsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[155]
+	mi := &file_rpc_proto_msgTypes[157]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13645,7 +13741,7 @@ func (x *ListMacaroonIDsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListMacaroonIDsRequest.ProtoReflect.Descriptor instead.
 func (*ListMacaroonIDsRequest) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{155}
+	return file_rpc_proto_rawDescGZIP(), []int{157}
 }
 
 type ListMacaroonIDsResponse struct {
@@ -13660,7 +13756,7 @@ type ListMacaroonIDsResponse struct {
 func (x *ListMacaroonIDsResponse) Reset() {
 	*x = ListMacaroonIDsResponse{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[156]
+		mi := &file_rpc_proto_msgTypes[158]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -13673,7 +13769,7 @@ func (x *ListMacaroonIDsResponse) String() string {
 func (*ListMacaroonIDsResponse) ProtoMessage() {}
 
 func (x *ListMacaroonIDsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[156]
+	mi := &file_rpc_proto_msgTypes[158]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13686,7 +13782,7 @@ func (x *ListMacaroonIDsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListMacaroonIDsResponse.ProtoReflect.Descriptor instead.
 func (*ListMacaroonIDsResponse) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{156}
+	return file_rpc_proto_rawDescGZIP(), []int{158}
 }
 
 func (x *ListMacaroonIDsResponse) GetRootKeyIds() []uint64 {
@@ -13708,7 +13804,7 @@ type DeleteMacaroonIDRequest struct {
 func (x *DeleteMacaroonIDRequest) Reset() {
 	*x = DeleteMacaroonIDRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[157]
+		mi := &file_rpc_proto_msgTypes[159]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -13721,7 +13817,7 @@ func (x *DeleteMacaroonIDRequest) String() string {
 func (*DeleteMacaroonIDRequest) ProtoMessage() {}
 
 func (x *DeleteMacaroonIDRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[157]
+	mi := &file_rpc_proto_msgTypes[159]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13734,7 +13830,7 @@ func (x *DeleteMacaroonIDRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteMacaroonIDRequest.ProtoReflect.Descriptor instead.
 func (*DeleteMacaroonIDRequest) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{157}
+	return file_rpc_proto_rawDescGZIP(), []int{159}
 }
 
 func (x *DeleteMacaroonIDRequest) GetRootKeyId() uint64 {
@@ -13756,7 +13852,7 @@ type DeleteMacaroonIDResponse struct {
 func (x *DeleteMacaroonIDResponse) Reset() {
 	*x = DeleteMacaroonIDResponse{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[158]
+		mi := &file_rpc_proto_msgTypes[160]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -13769,7 +13865,7 @@ func (x *DeleteMacaroonIDResponse) String() string {
 func (*DeleteMacaroonIDResponse) ProtoMessage() {}
 
 func (x *DeleteMacaroonIDResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[158]
+	mi := &file_rpc_proto_msgTypes[160]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13782,7 +13878,7 @@ func (x *DeleteMacaroonIDResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DeleteMacaroonIDResponse.ProtoReflect.Descriptor instead.
 func (*DeleteMacaroonIDResponse) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{158}
+	return file_rpc_proto_rawDescGZIP(), []int{160}
 }
 
 func (x *DeleteMacaroonIDResponse) GetDeleted() bool {
@@ -13804,7 +13900,7 @@ type MacaroonPermissionList struct {
 func (x *MacaroonPermissionList) Reset() {
 	*x = MacaroonPermissionList{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[159]
+		mi := &file_rpc_proto_msgTypes[161]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -13817,7 +13913,7 @@ func (x *MacaroonPermissionList) String() string {
 func (*MacaroonPermissionList) ProtoMessage() {}
 
 func (x *MacaroonPermissionList) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[159]
+	mi := &file_rpc_proto_msgTypes[161]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13830,7 +13926,7 @@ func (x *MacaroonPermissionList) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MacaroonPermissionList.ProtoReflect.Descriptor instead.
 func (*MacaroonPermissionList) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{159}
+	return file_rpc_proto_rawDescGZIP(), []int{161}
 }
 
 func (x *MacaroonPermissionList) GetPermissions() []*MacaroonPermission {
@@ -13849,7 +13945,7 @@ type ListPermissionsRequest struct {
 func (x *ListPermissionsRequest) Reset() {
 	*x = ListPermissionsRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[160]
+		mi := &file_rpc_proto_msgTypes[162]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -13862,7 +13958,7 @@ func (x *ListPermissionsRequest) String() string {
 func (*ListPermissionsRequest) ProtoMessage() {}
 
 func (x *ListPermissionsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[160]
+	mi := &file_rpc_proto_msgTypes[162]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13875,7 +13971,7 @@ func (x *ListPermissionsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPermissionsRequest.ProtoReflect.Descriptor instead.
 func (*ListPermissionsRequest) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{160}
+	return file_rpc_proto_rawDescGZIP(), []int{162}
 }
 
 type ListPermissionsResponse struct {
@@ -13892,7 +13988,7 @@ type ListPermissionsResponse struct {
 func (x *ListPermissionsResponse) Reset() {
 	*x = ListPermissionsResponse{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[161]
+		mi := &file_rpc_proto_msgTypes[163]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -13905,7 +14001,7 @@ func (x *ListPermissionsResponse) String() string {
 func (*ListPermissionsResponse) ProtoMessage() {}
 
 func (x *ListPermissionsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[161]
+	mi := &file_rpc_proto_msgTypes[163]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13918,7 +14014,7 @@ func (x *ListPermissionsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPermissionsResponse.ProtoReflect.Descriptor instead.
 func (*ListPermissionsResponse) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{161}
+	return file_rpc_proto_rawDescGZIP(), []int{163}
 }
 
 func (x *ListPermissionsResponse) GetMethodPermissions() map[string]*MacaroonPermissionList {
@@ -13940,7 +14036,7 @@ type IsOurAddressRequest struct {
 func (x *IsOurAddressRequest) Reset() {
 	*x = IsOurAddressRequest{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[162]
+		mi := &file_rpc_proto_msgTypes[164]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -13953,7 +14049,7 @@ func (x *IsOurAddressRequest) String() string {
 func (*IsOurAddressRequest) ProtoMessage() {}
 
 func (x *IsOurAddressRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[162]
+	mi := &file_rpc_proto_msgTypes[164]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -13966,7 +14062,7 @@ func (x *IsOurAddressRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IsOurAddressRequest.ProtoReflect.Descriptor instead.
 func (*IsOurAddressRequest) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{162}
+	return file_rpc_proto_rawDescGZIP(), []int{164}
 }
 
 func (x *IsOurAddressRequest) GetAddress() string {
@@ -13988,7 +14084,7 @@ type IsOurAddressResponse struct {
 func (x *IsOurAddressResponse) Reset() {
 	*x = IsOurAddressResponse{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[163]
+		mi := &file_rpc_proto_msgTypes[165]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -14001,7 +14097,7 @@ func (x *IsOurAddressResponse) String() string {
 func (*IsOurAddressResponse) ProtoMessage() {}
 
 func (x *IsOurAddressResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[163]
+	mi := &file_rpc_proto_msgTypes[165]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14014,7 +14110,7 @@ func (x *IsOurAddressResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IsOurAddressResponse.ProtoReflect.Descriptor instead.
 func (*IsOurAddressResponse) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{163}
+	return file_rpc_proto_rawDescGZIP(), []int{165}
 }
 
 func (x *IsOurAddressResponse) GetIsOurs() bool {
@@ -14052,7 +14148,7 @@ type Failure struct {
 func (x *Failure) Reset() {
 	*x = Failure{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[164]
+		mi := &file_rpc_proto_msgTypes[166]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -14065,7 +14161,7 @@ func (x *Failure) String() string {
 func (*Failure) ProtoMessage() {}
 
 func (x *Failure) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[164]
+	mi := &file_rpc_proto_msgTypes[166]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14078,7 +14174,7 @@ func (x *Failure) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Failure.ProtoReflect.Descriptor instead.
 func (*Failure) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{164}
+	return file_rpc_proto_rawDescGZIP(), []int{166}
 }
 
 func (x *Failure) GetCode() Failure_FailureCode {
@@ -14204,7 +14300,7 @@ type ChannelUpdate struct {
 func (x *ChannelUpdate) Reset() {
 	*x = ChannelUpdate{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[165]
+		mi := &file_rpc_proto_msgTypes[167]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -14217,7 +14313,7 @@ func (x *ChannelUpdate) String() string {
 func (*ChannelUpdate) ProtoMessage() {}
 
 func (x *ChannelUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[165]
+	mi := &file_rpc_proto_msgTypes[167]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14230,7 +14326,7 @@ func (x *ChannelUpdate) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ChannelUpdate.ProtoReflect.Descriptor instead.
 func (*ChannelUpdate) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{165}
+	return file_rpc_proto_rawDescGZIP(), []int{167}
 }
 
 func (x *ChannelUpdate) GetSignature() []byte {
@@ -14330,7 +14426,7 @@ type MacaroonId struct {
 func (x *MacaroonId) Reset() {
 	*x = MacaroonId{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[166]
+		mi := &file_rpc_proto_msgTypes[168]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -14343,7 +14439,7 @@ func (x *MacaroonId) String() string {
 func (*MacaroonId) ProtoMessage() {}
 
 func (x *MacaroonId) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[166]
+	mi := &file_rpc_proto_msgTypes[168]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14356,7 +14452,7 @@ func (x *MacaroonId) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MacaroonId.ProtoReflect.Descriptor instead.
 func (*MacaroonId) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{166}
+	return file_rpc_proto_rawDescGZIP(), []int{168}
 }
 
 func (x *MacaroonId) GetNonce() []byte {
@@ -14392,7 +14488,7 @@ type Op struct {
 func (x *Op) Reset() {
 	*x = Op{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[167]
+		mi := &file_rpc_proto_msgTypes[169]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -14405,7 +14501,7 @@ func (x *Op) String() string {
 func (*Op) ProtoMessage() {}
 
 func (x *Op) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[167]
+	mi := &file_rpc_proto_msgTypes[169]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14418,7 +14514,7 @@ func (x *Op) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Op.ProtoReflect.Descriptor instead.
 func (*Op) Descriptor() ([]byte, []int) {
-	return file_rpc_proto_rawDescGZIP(), []int{167}
+	return file_rpc_proto_rawDescGZIP(), []int{169}
 }
 
 func (x *Op) GetEntity() string {
@@ -14461,7 +14557,7 @@ type PendingChannelsResponse_PendingChannel struct {
 func (x *PendingChannelsResponse_PendingChannel) Reset() {
 	*x = PendingChannelsResponse_PendingChannel{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[173]
+		mi := &file_rpc_proto_msgTypes[175]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -14474,7 +14570,7 @@ func (x *PendingChannelsResponse_PendingChannel) String() string {
 func (*PendingChannelsResponse_PendingChannel) ProtoMessage() {}
 
 func (x *PendingChannelsResponse_PendingChannel) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[173]
+	mi := &file_rpc_proto_msgTypes[175]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14581,7 +14677,7 @@ type PendingChannelsResponse_PendingOpenChannel struct {
 func (x *PendingChannelsResponse_PendingOpenChannel) Reset() {
 	*x = PendingChannelsResponse_PendingOpenChannel{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[174]
+		mi := &file_rpc_proto_msgTypes[176]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -14594,7 +14690,7 @@ func (x *PendingChannelsResponse_PendingOpenChannel) String() string {
 func (*PendingChannelsResponse_PendingOpenChannel) ProtoMessage() {}
 
 func (x *PendingChannelsResponse_PendingOpenChannel) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[174]
+	mi := &file_rpc_proto_msgTypes[176]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14663,7 +14759,7 @@ type PendingChannelsResponse_WaitingCloseChannel struct {
 func (x *PendingChannelsResponse_WaitingCloseChannel) Reset() {
 	*x = PendingChannelsResponse_WaitingCloseChannel{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[175]
+		mi := &file_rpc_proto_msgTypes[177]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -14676,7 +14772,7 @@ func (x *PendingChannelsResponse_WaitingCloseChannel) String() string {
 func (*PendingChannelsResponse_WaitingCloseChannel) ProtoMessage() {}
 
 func (x *PendingChannelsResponse_WaitingCloseChannel) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[175]
+	mi := &file_rpc_proto_msgTypes[177]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14741,7 +14837,7 @@ type PendingChannelsResponse_Commitments struct {
 func (x *PendingChannelsResponse_Commitments) Reset() {
 	*x = PendingChannelsResponse_Commitments{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[176]
+		mi := &file_rpc_proto_msgTypes[178]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -14754,7 +14850,7 @@ func (x *PendingChannelsResponse_Commitments) String() string {
 func (*PendingChannelsResponse_Commitments) ProtoMessage() {}
 
 func (x *PendingChannelsResponse_Commitments) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[176]
+	mi := &file_rpc_proto_msgTypes[178]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14826,7 +14922,7 @@ type PendingChannelsResponse_ClosedChannel struct {
 func (x *PendingChannelsResponse_ClosedChannel) Reset() {
 	*x = PendingChannelsResponse_ClosedChannel{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[177]
+		mi := &file_rpc_proto_msgTypes[179]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -14839,7 +14935,7 @@ func (x *PendingChannelsResponse_ClosedChannel) String() string {
 func (*PendingChannelsResponse_ClosedChannel) ProtoMessage() {}
 
 func (x *PendingChannelsResponse_ClosedChannel) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[177]
+	mi := &file_rpc_proto_msgTypes[179]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -14896,7 +14992,7 @@ type PendingChannelsResponse_ForceClosedChannel struct {
 func (x *PendingChannelsResponse_ForceClosedChannel) Reset() {
 	*x = PendingChannelsResponse_ForceClosedChannel{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_rpc_proto_msgTypes[178]
+		mi := &file_rpc_proto_msgTypes[180]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -14909,7 +15005,7 @@ func (x *PendingChannelsResponse_ForceClosedChannel) String() string {
 func (*PendingChannelsResponse_ForceClosedChannel) ProtoMessage() {}
 
 func (x *PendingChannelsResponse_ForceClosedChannel) ProtoReflect() protoreflect.Message {
-	mi := &file_rpc_proto_msgTypes[178]
+	mi := &file_rpc_proto_msgTypes[180]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -16678,14 +16774,22 @@ var file_rpc_proto_rawDesc = []byte{
 	0x4f, 0x66, 0x66, 0x73, 0x65, 0x74, 0x12, 0x2a, 0x0a, 0x11, 0x6c, 0x61, 0x73, 0x74, 0x5f, 0x69,
 	0x6e, 0x64, 0x65, 0x78, 0x5f, 0x6f, 0x66, 0x66, 0x73, 0x65, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28,
 	0x04, 0x52, 0x0f, 0x6c, 0x61, 0x73, 0x74, 0x49, 0x6e, 0x64, 0x65, 0x78, 0x4f, 0x66, 0x66, 0x73,
-	0x65, 0x74, 0x22, 0x78, 0x0a, 0x18, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x41, 0x6c, 0x6c, 0x50,
-	0x61, 0x79, 0x6d, 0x65, 0x6e, 0x74, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x30,
-	0x0a, 0x14, 0x66, 0x61, 0x69, 0x6c, 0x65, 0x64, 0x5f, 0x70, 0x61, 0x79, 0x6d, 0x65, 0x6e, 0x74,
-	0x73, 0x5f, 0x6f, 0x6e, 0x6c, 0x79, 0x18, 0x01, 0x20, 0x01, 0x28, 0x08, 0x52, 0x12, 0x66, 0x61,
-	0x69, 0x6c, 0x65, 0x64, 0x50, 0x61, 0x79, 0x6d, 0x65, 0x6e, 0x74, 0x73, 0x4f, 0x6e, 0x6c, 0x79,
-	0x12, 0x2a, 0x0a, 0x11, 0x66, 0x61, 0x69, 0x6c, 0x65, 0x64, 0x5f, 0x68, 0x74, 0x6c, 0x63, 0x73,
-	0x5f, 0x6f, 0x6e, 0x6c, 0x79, 0x18, 0x02, 0x20, 0x01, 0x28, 0x08, 0x52, 0x0f, 0x66, 0x61, 0x69,
-	0x6c, 0x65, 0x64, 0x48, 0x74, 0x6c, 0x63, 0x73, 0x4f, 0x6e, 0x6c, 0x79, 0x22, 0x1b, 0x0a, 0x19,
+	0x65, 0x74, 0x22, 0x65, 0x0a, 0x14, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x50, 0x61, 0x79, 0x6d,
+	0x65, 0x6e, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x21, 0x0a, 0x0c, 0x70, 0x61,
+	0x79, 0x6d, 0x65, 0x6e, 0x74, 0x5f, 0x68, 0x61, 0x73, 0x68, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0c,
+	0x52, 0x0b, 0x70, 0x61, 0x79, 0x6d, 0x65, 0x6e, 0x74, 0x48, 0x61, 0x73, 0x68, 0x12, 0x2a, 0x0a,
+	0x11, 0x66, 0x61, 0x69, 0x6c, 0x65, 0x64, 0x5f, 0x68, 0x74, 0x6c, 0x63, 0x73, 0x5f, 0x6f, 0x6e,
+	0x6c, 0x79, 0x18, 0x02, 0x20, 0x01, 0x28, 0x08, 0x52, 0x0f, 0x66, 0x61, 0x69, 0x6c, 0x65, 0x64,
+	0x48, 0x74, 0x6c, 0x63, 0x73, 0x4f, 0x6e, 0x6c, 0x79, 0x22, 0x78, 0x0a, 0x18, 0x44, 0x65, 0x6c,
+	0x65, 0x74, 0x65, 0x41, 0x6c, 0x6c, 0x50, 0x61, 0x79, 0x6d, 0x65, 0x6e, 0x74, 0x73, 0x52, 0x65,
+	0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x30, 0x0a, 0x14, 0x66, 0x61, 0x69, 0x6c, 0x65, 0x64, 0x5f,
+	0x70, 0x61, 0x79, 0x6d, 0x65, 0x6e, 0x74, 0x73, 0x5f, 0x6f, 0x6e, 0x6c, 0x79, 0x18, 0x01, 0x20,
+	0x01, 0x28, 0x08, 0x52, 0x12, 0x66, 0x61, 0x69, 0x6c, 0x65, 0x64, 0x50, 0x61, 0x79, 0x6d, 0x65,
+	0x6e, 0x74, 0x73, 0x4f, 0x6e, 0x6c, 0x79, 0x12, 0x2a, 0x0a, 0x11, 0x66, 0x61, 0x69, 0x6c, 0x65,
+	0x64, 0x5f, 0x68, 0x74, 0x6c, 0x63, 0x73, 0x5f, 0x6f, 0x6e, 0x6c, 0x79, 0x18, 0x02, 0x20, 0x01,
+	0x28, 0x08, 0x52, 0x0f, 0x66, 0x61, 0x69, 0x6c, 0x65, 0x64, 0x48, 0x74, 0x6c, 0x63, 0x73, 0x4f,
+	0x6e, 0x6c, 0x79, 0x22, 0x17, 0x0a, 0x15, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x50, 0x61, 0x79,
+	0x6d, 0x65, 0x6e, 0x74, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0x1b, 0x0a, 0x19,
 	0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x41, 0x6c, 0x6c, 0x50, 0x61, 0x79, 0x6d, 0x65, 0x6e, 0x74,
 	0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x22, 0xbf, 0x01, 0x0a, 0x15, 0x41, 0x62,
 	0x61, 0x6e, 0x64, 0x6f, 0x6e, 0x43, 0x68, 0x61, 0x6e, 0x6e, 0x65, 0x6c, 0x52, 0x65, 0x71, 0x75,
@@ -17138,7 +17242,7 @@ var file_rpc_proto_rawDesc = []byte{
 	0x52, 0x45, 0x51, 0x10, 0x16, 0x12, 0x1d, 0x0a, 0x19, 0x41, 0x4e, 0x43, 0x48, 0x4f, 0x52, 0x53,
 	0x5f, 0x5a, 0x45, 0x52, 0x4f, 0x5f, 0x46, 0x45, 0x45, 0x5f, 0x48, 0x54, 0x4c, 0x43, 0x5f, 0x4f,
 	0x50, 0x54, 0x10, 0x17, 0x12, 0x0b, 0x0a, 0x07, 0x41, 0x4d, 0x50, 0x5f, 0x52, 0x45, 0x51, 0x10,
-	0x1e, 0x12, 0x0b, 0x0a, 0x07, 0x41, 0x4d, 0x50, 0x5f, 0x4f, 0x50, 0x54, 0x10, 0x1f, 0x32, 0x92,
+	0x1e, 0x12, 0x0b, 0x0a, 0x07, 0x41, 0x4d, 0x50, 0x5f, 0x4f, 0x50, 0x54, 0x10, 0x1f, 0x32, 0xde,
 	0x22, 0x0a, 0x09, 0x4c, 0x69, 0x67, 0x68, 0x74, 0x6e, 0x69, 0x6e, 0x67, 0x12, 0x4a, 0x0a, 0x0d,
 	0x57, 0x61, 0x6c, 0x6c, 0x65, 0x74, 0x42, 0x61, 0x6c, 0x61, 0x6e, 0x63, 0x65, 0x12, 0x1b, 0x2e,
 	0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x57, 0x61, 0x6c, 0x6c, 0x65, 0x74, 0x42, 0x61, 0x6c, 0x61,
@@ -17303,119 +17407,123 @@ var file_rpc_proto_rawDesc = []byte{
 	0x1a, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x50, 0x61, 0x79, 0x6d,
 	0x65, 0x6e, 0x74, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x1b, 0x2e, 0x6c, 0x6e,
 	0x72, 0x70, 0x63, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x50, 0x61, 0x79, 0x6d, 0x65, 0x6e, 0x74, 0x73,
-	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x56, 0x0a, 0x11, 0x44, 0x65, 0x6c, 0x65,
-	0x74, 0x65, 0x41, 0x6c, 0x6c, 0x50, 0x61, 0x79, 0x6d, 0x65, 0x6e, 0x74, 0x73, 0x12, 0x1f, 0x2e,
-	0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x41, 0x6c, 0x6c, 0x50,
-	0x61, 0x79, 0x6d, 0x65, 0x6e, 0x74, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x20,
-	0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x41, 0x6c, 0x6c,
-	0x50, 0x61, 0x79, 0x6d, 0x65, 0x6e, 0x74, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
-	0x12, 0x40, 0x0a, 0x0d, 0x44, 0x65, 0x73, 0x63, 0x72, 0x69, 0x62, 0x65, 0x47, 0x72, 0x61, 0x70,
-	0x68, 0x12, 0x1a, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x43, 0x68, 0x61, 0x6e, 0x6e, 0x65,
-	0x6c, 0x47, 0x72, 0x61, 0x70, 0x68, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e,
+	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x4a, 0x0a, 0x0d, 0x44, 0x65, 0x6c, 0x65,
+	0x74, 0x65, 0x50, 0x61, 0x79, 0x6d, 0x65, 0x6e, 0x74, 0x12, 0x1b, 0x2e, 0x6c, 0x6e, 0x72, 0x70,
+	0x63, 0x2e, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x50, 0x61, 0x79, 0x6d, 0x65, 0x6e, 0x74, 0x52,
+	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x1c, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x44,
+	0x65, 0x6c, 0x65, 0x74, 0x65, 0x50, 0x61, 0x79, 0x6d, 0x65, 0x6e, 0x74, 0x52, 0x65, 0x73, 0x70,
+	0x6f, 0x6e, 0x73, 0x65, 0x12, 0x56, 0x0a, 0x11, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x41, 0x6c,
+	0x6c, 0x50, 0x61, 0x79, 0x6d, 0x65, 0x6e, 0x74, 0x73, 0x12, 0x1f, 0x2e, 0x6c, 0x6e, 0x72, 0x70,
+	0x63, 0x2e, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x41, 0x6c, 0x6c, 0x50, 0x61, 0x79, 0x6d, 0x65,
+	0x6e, 0x74, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x20, 0x2e, 0x6c, 0x6e, 0x72,
+	0x70, 0x63, 0x2e, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x41, 0x6c, 0x6c, 0x50, 0x61, 0x79, 0x6d,
+	0x65, 0x6e, 0x74, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x40, 0x0a, 0x0d,
+	0x44, 0x65, 0x73, 0x63, 0x72, 0x69, 0x62, 0x65, 0x47, 0x72, 0x61, 0x70, 0x68, 0x12, 0x1a, 0x2e,
 	0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x43, 0x68, 0x61, 0x6e, 0x6e, 0x65, 0x6c, 0x47, 0x72, 0x61,
-	0x70, 0x68, 0x12, 0x47, 0x0a, 0x0e, 0x47, 0x65, 0x74, 0x4e, 0x6f, 0x64, 0x65, 0x4d, 0x65, 0x74,
-	0x72, 0x69, 0x63, 0x73, 0x12, 0x19, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x4e, 0x6f, 0x64,
-	0x65, 0x4d, 0x65, 0x74, 0x72, 0x69, 0x63, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a,
-	0x1a, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x4e, 0x6f, 0x64, 0x65, 0x4d, 0x65, 0x74, 0x72,
-	0x69, 0x63, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x39, 0x0a, 0x0b, 0x47,
-	0x65, 0x74, 0x43, 0x68, 0x61, 0x6e, 0x49, 0x6e, 0x66, 0x6f, 0x12, 0x16, 0x2e, 0x6c, 0x6e, 0x72,
-	0x70, 0x63, 0x2e, 0x43, 0x68, 0x61, 0x6e, 0x49, 0x6e, 0x66, 0x6f, 0x52, 0x65, 0x71, 0x75, 0x65,
-	0x73, 0x74, 0x1a, 0x12, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x43, 0x68, 0x61, 0x6e, 0x6e,
-	0x65, 0x6c, 0x45, 0x64, 0x67, 0x65, 0x12, 0x36, 0x0a, 0x0b, 0x47, 0x65, 0x74, 0x4e, 0x6f, 0x64,
-	0x65, 0x49, 0x6e, 0x66, 0x6f, 0x12, 0x16, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x4e, 0x6f,
-	0x64, 0x65, 0x49, 0x6e, 0x66, 0x6f, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x0f, 0x2e,
-	0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x4e, 0x6f, 0x64, 0x65, 0x49, 0x6e, 0x66, 0x6f, 0x12, 0x44,
-	0x0a, 0x0b, 0x51, 0x75, 0x65, 0x72, 0x79, 0x52, 0x6f, 0x75, 0x74, 0x65, 0x73, 0x12, 0x19, 0x2e,
-	0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x52, 0x6f, 0x75, 0x74, 0x65,
-	0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x1a, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63,
-	0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x52, 0x6f, 0x75, 0x74, 0x65, 0x73, 0x52, 0x65, 0x73, 0x70,
-	0x6f, 0x6e, 0x73, 0x65, 0x12, 0x3f, 0x0a, 0x0e, 0x47, 0x65, 0x74, 0x4e, 0x65, 0x74, 0x77, 0x6f,
-	0x72, 0x6b, 0x49, 0x6e, 0x66, 0x6f, 0x12, 0x19, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x4e,
-	0x65, 0x74, 0x77, 0x6f, 0x72, 0x6b, 0x49, 0x6e, 0x66, 0x6f, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73,
-	0x74, 0x1a, 0x12, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x4e, 0x65, 0x74, 0x77, 0x6f, 0x72,
-	0x6b, 0x49, 0x6e, 0x66, 0x6f, 0x12, 0x35, 0x0a, 0x0a, 0x53, 0x74, 0x6f, 0x70, 0x44, 0x61, 0x65,
-	0x6d, 0x6f, 0x6e, 0x12, 0x12, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x53, 0x74, 0x6f, 0x70,
-	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e,
-	0x53, 0x74, 0x6f, 0x70, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x57, 0x0a, 0x15,
-	0x53, 0x75, 0x62, 0x73, 0x63, 0x72, 0x69, 0x62, 0x65, 0x43, 0x68, 0x61, 0x6e, 0x6e, 0x65, 0x6c,
-	0x47, 0x72, 0x61, 0x70, 0x68, 0x12, 0x20, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x47, 0x72,
-	0x61, 0x70, 0x68, 0x54, 0x6f, 0x70, 0x6f, 0x6c, 0x6f, 0x67, 0x79, 0x53, 0x75, 0x62, 0x73, 0x63,
-	0x72, 0x69, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x1a, 0x1a, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e,
-	0x47, 0x72, 0x61, 0x70, 0x68, 0x54, 0x6f, 0x70, 0x6f, 0x6c, 0x6f, 0x67, 0x79, 0x55, 0x70, 0x64,
-	0x61, 0x74, 0x65, 0x30, 0x01, 0x12, 0x41, 0x0a, 0x0a, 0x44, 0x65, 0x62, 0x75, 0x67, 0x4c, 0x65,
-	0x76, 0x65, 0x6c, 0x12, 0x18, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x44, 0x65, 0x62, 0x75,
-	0x67, 0x4c, 0x65, 0x76, 0x65, 0x6c, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x19, 0x2e,
-	0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x44, 0x65, 0x62, 0x75, 0x67, 0x4c, 0x65, 0x76, 0x65, 0x6c,
-	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x3e, 0x0a, 0x09, 0x46, 0x65, 0x65, 0x52,
-	0x65, 0x70, 0x6f, 0x72, 0x74, 0x12, 0x17, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x46, 0x65,
-	0x65, 0x52, 0x65, 0x70, 0x6f, 0x72, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x18,
-	0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x46, 0x65, 0x65, 0x52, 0x65, 0x70, 0x6f, 0x72, 0x74,
-	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x4e, 0x0a, 0x13, 0x55, 0x70, 0x64, 0x61,
-	0x74, 0x65, 0x43, 0x68, 0x61, 0x6e, 0x6e, 0x65, 0x6c, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x12,
-	0x1a, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x55, 0x70,
-	0x64, 0x61, 0x74, 0x65, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x1b, 0x2e, 0x6c, 0x6e,
+	0x70, 0x68, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x6c, 0x6e, 0x72, 0x70,
+	0x63, 0x2e, 0x43, 0x68, 0x61, 0x6e, 0x6e, 0x65, 0x6c, 0x47, 0x72, 0x61, 0x70, 0x68, 0x12, 0x47,
+	0x0a, 0x0e, 0x47, 0x65, 0x74, 0x4e, 0x6f, 0x64, 0x65, 0x4d, 0x65, 0x74, 0x72, 0x69, 0x63, 0x73,
+	0x12, 0x19, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x4e, 0x6f, 0x64, 0x65, 0x4d, 0x65, 0x74,
+	0x72, 0x69, 0x63, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x1a, 0x2e, 0x6c, 0x6e,
+	0x72, 0x70, 0x63, 0x2e, 0x4e, 0x6f, 0x64, 0x65, 0x4d, 0x65, 0x74, 0x72, 0x69, 0x63, 0x73, 0x52,
+	0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x39, 0x0a, 0x0b, 0x47, 0x65, 0x74, 0x43, 0x68,
+	0x61, 0x6e, 0x49, 0x6e, 0x66, 0x6f, 0x12, 0x16, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x43,
+	0x68, 0x61, 0x6e, 0x49, 0x6e, 0x66, 0x6f, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x12,
+	0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x43, 0x68, 0x61, 0x6e, 0x6e, 0x65, 0x6c, 0x45, 0x64,
+	0x67, 0x65, 0x12, 0x36, 0x0a, 0x0b, 0x47, 0x65, 0x74, 0x4e, 0x6f, 0x64, 0x65, 0x49, 0x6e, 0x66,
+	0x6f, 0x12, 0x16, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x4e, 0x6f, 0x64, 0x65, 0x49, 0x6e,
+	0x66, 0x6f, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x0f, 0x2e, 0x6c, 0x6e, 0x72, 0x70,
+	0x63, 0x2e, 0x4e, 0x6f, 0x64, 0x65, 0x49, 0x6e, 0x66, 0x6f, 0x12, 0x44, 0x0a, 0x0b, 0x51, 0x75,
+	0x65, 0x72, 0x79, 0x52, 0x6f, 0x75, 0x74, 0x65, 0x73, 0x12, 0x19, 0x2e, 0x6c, 0x6e, 0x72, 0x70,
+	0x63, 0x2e, 0x51, 0x75, 0x65, 0x72, 0x79, 0x52, 0x6f, 0x75, 0x74, 0x65, 0x73, 0x52, 0x65, 0x71,
+	0x75, 0x65, 0x73, 0x74, 0x1a, 0x1a, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x51, 0x75, 0x65,
+	0x72, 0x79, 0x52, 0x6f, 0x75, 0x74, 0x65, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
+	0x12, 0x3f, 0x0a, 0x0e, 0x47, 0x65, 0x74, 0x4e, 0x65, 0x74, 0x77, 0x6f, 0x72, 0x6b, 0x49, 0x6e,
+	0x66, 0x6f, 0x12, 0x19, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x4e, 0x65, 0x74, 0x77, 0x6f,
+	0x72, 0x6b, 0x49, 0x6e, 0x66, 0x6f, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x12, 0x2e,
+	0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x4e, 0x65, 0x74, 0x77, 0x6f, 0x72, 0x6b, 0x49, 0x6e, 0x66,
+	0x6f, 0x12, 0x35, 0x0a, 0x0a, 0x53, 0x74, 0x6f, 0x70, 0x44, 0x61, 0x65, 0x6d, 0x6f, 0x6e, 0x12,
+	0x12, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x53, 0x74, 0x6f, 0x70, 0x52, 0x65, 0x71, 0x75,
+	0x65, 0x73, 0x74, 0x1a, 0x13, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x53, 0x74, 0x6f, 0x70,
+	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x57, 0x0a, 0x15, 0x53, 0x75, 0x62, 0x73,
+	0x63, 0x72, 0x69, 0x62, 0x65, 0x43, 0x68, 0x61, 0x6e, 0x6e, 0x65, 0x6c, 0x47, 0x72, 0x61, 0x70,
+	0x68, 0x12, 0x20, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x47, 0x72, 0x61, 0x70, 0x68, 0x54,
+	0x6f, 0x70, 0x6f, 0x6c, 0x6f, 0x67, 0x79, 0x53, 0x75, 0x62, 0x73, 0x63, 0x72, 0x69, 0x70, 0x74,
+	0x69, 0x6f, 0x6e, 0x1a, 0x1a, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x47, 0x72, 0x61, 0x70,
+	0x68, 0x54, 0x6f, 0x70, 0x6f, 0x6c, 0x6f, 0x67, 0x79, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x30,
+	0x01, 0x12, 0x41, 0x0a, 0x0a, 0x44, 0x65, 0x62, 0x75, 0x67, 0x4c, 0x65, 0x76, 0x65, 0x6c, 0x12,
+	0x18, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x44, 0x65, 0x62, 0x75, 0x67, 0x4c, 0x65, 0x76,
+	0x65, 0x6c, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x19, 0x2e, 0x6c, 0x6e, 0x72, 0x70,
+	0x63, 0x2e, 0x44, 0x65, 0x62, 0x75, 0x67, 0x4c, 0x65, 0x76, 0x65, 0x6c, 0x52, 0x65, 0x73, 0x70,
+	0x6f, 0x6e, 0x73, 0x65, 0x12, 0x3e, 0x0a, 0x09, 0x46, 0x65, 0x65, 0x52, 0x65, 0x70, 0x6f, 0x72,
+	0x74, 0x12, 0x17, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x46, 0x65, 0x65, 0x52, 0x65, 0x70,
+	0x6f, 0x72, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x18, 0x2e, 0x6c, 0x6e, 0x72,
+	0x70, 0x63, 0x2e, 0x46, 0x65, 0x65, 0x52, 0x65, 0x70, 0x6f, 0x72, 0x74, 0x52, 0x65, 0x73, 0x70,
+	0x6f, 0x6e, 0x73, 0x65, 0x12, 0x4e, 0x0a, 0x13, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x43, 0x68,
+	0x61, 0x6e, 0x6e, 0x65, 0x6c, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x12, 0x1a, 0x2e, 0x6c, 0x6e,
 	0x72, 0x70, 0x63, 0x2e, 0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65,
-	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x56, 0x0a, 0x11, 0x46, 0x6f, 0x72, 0x77,
-	0x61, 0x72, 0x64, 0x69, 0x6e, 0x67, 0x48, 0x69, 0x73, 0x74, 0x6f, 0x72, 0x79, 0x12, 0x1f, 0x2e,
-	0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x46, 0x6f, 0x72, 0x77, 0x61, 0x72, 0x64, 0x69, 0x6e, 0x67,
-	0x48, 0x69, 0x73, 0x74, 0x6f, 0x72, 0x79, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x20,
-	0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x46, 0x6f, 0x72, 0x77, 0x61, 0x72, 0x64, 0x69, 0x6e,
-	0x67, 0x48, 0x69, 0x73, 0x74, 0x6f, 0x72, 0x79, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65,
-	0x12, 0x4e, 0x0a, 0x13, 0x45, 0x78, 0x70, 0x6f, 0x72, 0x74, 0x43, 0x68, 0x61, 0x6e, 0x6e, 0x65,
-	0x6c, 0x42, 0x61, 0x63, 0x6b, 0x75, 0x70, 0x12, 0x21, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e,
+	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x1b, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e,
+	0x50, 0x6f, 0x6c, 0x69, 0x63, 0x79, 0x55, 0x70, 0x64, 0x61, 0x74, 0x65, 0x52, 0x65, 0x73, 0x70,
+	0x6f, 0x6e, 0x73, 0x65, 0x12, 0x56, 0x0a, 0x11, 0x46, 0x6f, 0x72, 0x77, 0x61, 0x72, 0x64, 0x69,
+	0x6e, 0x67, 0x48, 0x69, 0x73, 0x74, 0x6f, 0x72, 0x79, 0x12, 0x1f, 0x2e, 0x6c, 0x6e, 0x72, 0x70,
+	0x63, 0x2e, 0x46, 0x6f, 0x72, 0x77, 0x61, 0x72, 0x64, 0x69, 0x6e, 0x67, 0x48, 0x69, 0x73, 0x74,
+	0x6f, 0x72, 0x79, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x20, 0x2e, 0x6c, 0x6e, 0x72,
+	0x70, 0x63, 0x2e, 0x46, 0x6f, 0x72, 0x77, 0x61, 0x72, 0x64, 0x69, 0x6e, 0x67, 0x48, 0x69, 0x73,
+	0x74, 0x6f, 0x72, 0x79, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x4e, 0x0a, 0x13,
 	0x45, 0x78, 0x70, 0x6f, 0x72, 0x74, 0x43, 0x68, 0x61, 0x6e, 0x6e, 0x65, 0x6c, 0x42, 0x61, 0x63,
-	0x6b, 0x75, 0x70, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x14, 0x2e, 0x6c, 0x6e, 0x72,
-	0x70, 0x63, 0x2e, 0x43, 0x68, 0x61, 0x6e, 0x6e, 0x65, 0x6c, 0x42, 0x61, 0x63, 0x6b, 0x75, 0x70,
-	0x12, 0x54, 0x0a, 0x17, 0x45, 0x78, 0x70, 0x6f, 0x72, 0x74, 0x41, 0x6c, 0x6c, 0x43, 0x68, 0x61,
-	0x6e, 0x6e, 0x65, 0x6c, 0x42, 0x61, 0x63, 0x6b, 0x75, 0x70, 0x73, 0x12, 0x1e, 0x2e, 0x6c, 0x6e,
-	0x72, 0x70, 0x63, 0x2e, 0x43, 0x68, 0x61, 0x6e, 0x42, 0x61, 0x63, 0x6b, 0x75, 0x70, 0x45, 0x78,
-	0x70, 0x6f, 0x72, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x19, 0x2e, 0x6c, 0x6e,
-	0x72, 0x70, 0x63, 0x2e, 0x43, 0x68, 0x61, 0x6e, 0x42, 0x61, 0x63, 0x6b, 0x75, 0x70, 0x53, 0x6e,
-	0x61, 0x70, 0x73, 0x68, 0x6f, 0x74, 0x12, 0x4e, 0x0a, 0x10, 0x56, 0x65, 0x72, 0x69, 0x66, 0x79,
-	0x43, 0x68, 0x61, 0x6e, 0x42, 0x61, 0x63, 0x6b, 0x75, 0x70, 0x12, 0x19, 0x2e, 0x6c, 0x6e, 0x72,
-	0x70, 0x63, 0x2e, 0x43, 0x68, 0x61, 0x6e, 0x42, 0x61, 0x63, 0x6b, 0x75, 0x70, 0x53, 0x6e, 0x61,
-	0x70, 0x73, 0x68, 0x6f, 0x74, 0x1a, 0x1f, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x56, 0x65,
-	0x72, 0x69, 0x66, 0x79, 0x43, 0x68, 0x61, 0x6e, 0x42, 0x61, 0x63, 0x6b, 0x75, 0x70, 0x52, 0x65,
-	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x56, 0x0a, 0x15, 0x52, 0x65, 0x73, 0x74, 0x6f, 0x72,
-	0x65, 0x43, 0x68, 0x61, 0x6e, 0x6e, 0x65, 0x6c, 0x42, 0x61, 0x63, 0x6b, 0x75, 0x70, 0x73, 0x12,
-	0x1f, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x52, 0x65, 0x73, 0x74, 0x6f, 0x72, 0x65, 0x43,
-	0x68, 0x61, 0x6e, 0x42, 0x61, 0x63, 0x6b, 0x75, 0x70, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
-	0x1a, 0x1c, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x52, 0x65, 0x73, 0x74, 0x6f, 0x72, 0x65,
-	0x42, 0x61, 0x63, 0x6b, 0x75, 0x70, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x58,
-	0x0a, 0x17, 0x53, 0x75, 0x62, 0x73, 0x63, 0x72, 0x69, 0x62, 0x65, 0x43, 0x68, 0x61, 0x6e, 0x6e,
-	0x65, 0x6c, 0x42, 0x61, 0x63, 0x6b, 0x75, 0x70, 0x73, 0x12, 0x20, 0x2e, 0x6c, 0x6e, 0x72, 0x70,
-	0x63, 0x2e, 0x43, 0x68, 0x61, 0x6e, 0x6e, 0x65, 0x6c, 0x42, 0x61, 0x63, 0x6b, 0x75, 0x70, 0x53,
-	0x75, 0x62, 0x73, 0x63, 0x72, 0x69, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x1a, 0x19, 0x2e, 0x6c, 0x6e,
-	0x72, 0x70, 0x63, 0x2e, 0x43, 0x68, 0x61, 0x6e, 0x42, 0x61, 0x63, 0x6b, 0x75, 0x70, 0x53, 0x6e,
-	0x61, 0x70, 0x73, 0x68, 0x6f, 0x74, 0x30, 0x01, 0x12, 0x47, 0x0a, 0x0c, 0x42, 0x61, 0x6b, 0x65,
-	0x4d, 0x61, 0x63, 0x61, 0x72, 0x6f, 0x6f, 0x6e, 0x12, 0x1a, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63,
-	0x2e, 0x42, 0x61, 0x6b, 0x65, 0x4d, 0x61, 0x63, 0x61, 0x72, 0x6f, 0x6f, 0x6e, 0x52, 0x65, 0x71,
-	0x75, 0x65, 0x73, 0x74, 0x1a, 0x1b, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x42, 0x61, 0x6b,
-	0x65, 0x4d, 0x61, 0x63, 0x61, 0x72, 0x6f, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73,
-	0x65, 0x12, 0x50, 0x0a, 0x0f, 0x4c, 0x69, 0x73, 0x74, 0x4d, 0x61, 0x63, 0x61, 0x72, 0x6f, 0x6f,
-	0x6e, 0x49, 0x44, 0x73, 0x12, 0x1d, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x4c, 0x69, 0x73,
-	0x74, 0x4d, 0x61, 0x63, 0x61, 0x72, 0x6f, 0x6f, 0x6e, 0x49, 0x44, 0x73, 0x52, 0x65, 0x71, 0x75,
-	0x65, 0x73, 0x74, 0x1a, 0x1e, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x4c, 0x69, 0x73, 0x74,
-	0x4d, 0x61, 0x63, 0x61, 0x72, 0x6f, 0x6f, 0x6e, 0x49, 0x44, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f,
-	0x6e, 0x73, 0x65, 0x12, 0x53, 0x0a, 0x10, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x4d, 0x61, 0x63,
-	0x61, 0x72, 0x6f, 0x6f, 0x6e, 0x49, 0x44, 0x12, 0x1e, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e,
-	0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x4d, 0x61, 0x63, 0x61, 0x72, 0x6f, 0x6f, 0x6e, 0x49, 0x44,
-	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x1f, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e,
-	0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x4d, 0x61, 0x63, 0x61, 0x72, 0x6f, 0x6f, 0x6e, 0x49, 0x44,
-	0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x50, 0x0a, 0x0f, 0x4c, 0x69, 0x73, 0x74,
-	0x50, 0x65, 0x72, 0x6d, 0x69, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x73, 0x12, 0x1d, 0x2e, 0x6c, 0x6e,
-	0x72, 0x70, 0x63, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x50, 0x65, 0x72, 0x6d, 0x69, 0x73, 0x73, 0x69,
-	0x6f, 0x6e, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x1e, 0x2e, 0x6c, 0x6e, 0x72,
-	0x70, 0x63, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x50, 0x65, 0x72, 0x6d, 0x69, 0x73, 0x73, 0x69, 0x6f,
-	0x6e, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x47, 0x0a, 0x0c, 0x49, 0x73,
-	0x4f, 0x75, 0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12, 0x1a, 0x2e, 0x6c, 0x6e, 0x72,
-	0x70, 0x63, 0x2e, 0x49, 0x73, 0x4f, 0x75, 0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x52,
-	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x1b, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x49,
-	0x73, 0x4f, 0x75, 0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f,
-	0x6e, 0x73, 0x65, 0x42, 0x27, 0x5a, 0x25, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f,
-	0x6d, 0x2f, 0x6c, 0x69, 0x67, 0x68, 0x74, 0x6e, 0x69, 0x6e, 0x67, 0x6e, 0x65, 0x74, 0x77, 0x6f,
-	0x72, 0x6b, 0x2f, 0x6c, 0x6e, 0x64, 0x2f, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x62, 0x06, 0x70, 0x72,
-	0x6f, 0x74, 0x6f, 0x33,
+	0x6b, 0x75, 0x70, 0x12, 0x21, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x45, 0x78, 0x70, 0x6f,
+	0x72, 0x74, 0x43, 0x68, 0x61, 0x6e, 0x6e, 0x65, 0x6c, 0x42, 0x61, 0x63, 0x6b, 0x75, 0x70, 0x52,
+	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x14, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x43,
+	0x68, 0x61, 0x6e, 0x6e, 0x65, 0x6c, 0x42, 0x61, 0x63, 0x6b, 0x75, 0x70, 0x12, 0x54, 0x0a, 0x17,
+	0x45, 0x78, 0x70, 0x6f, 0x72, 0x74, 0x41, 0x6c, 0x6c, 0x43, 0x68, 0x61, 0x6e, 0x6e, 0x65, 0x6c,
+	0x42, 0x61, 0x63, 0x6b, 0x75, 0x70, 0x73, 0x12, 0x1e, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e,
+	0x43, 0x68, 0x61, 0x6e, 0x42, 0x61, 0x63, 0x6b, 0x75, 0x70, 0x45, 0x78, 0x70, 0x6f, 0x72, 0x74,
+	0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x19, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e,
+	0x43, 0x68, 0x61, 0x6e, 0x42, 0x61, 0x63, 0x6b, 0x75, 0x70, 0x53, 0x6e, 0x61, 0x70, 0x73, 0x68,
+	0x6f, 0x74, 0x12, 0x4e, 0x0a, 0x10, 0x56, 0x65, 0x72, 0x69, 0x66, 0x79, 0x43, 0x68, 0x61, 0x6e,
+	0x42, 0x61, 0x63, 0x6b, 0x75, 0x70, 0x12, 0x19, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x43,
+	0x68, 0x61, 0x6e, 0x42, 0x61, 0x63, 0x6b, 0x75, 0x70, 0x53, 0x6e, 0x61, 0x70, 0x73, 0x68, 0x6f,
+	0x74, 0x1a, 0x1f, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x56, 0x65, 0x72, 0x69, 0x66, 0x79,
+	0x43, 0x68, 0x61, 0x6e, 0x42, 0x61, 0x63, 0x6b, 0x75, 0x70, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e,
+	0x73, 0x65, 0x12, 0x56, 0x0a, 0x15, 0x52, 0x65, 0x73, 0x74, 0x6f, 0x72, 0x65, 0x43, 0x68, 0x61,
+	0x6e, 0x6e, 0x65, 0x6c, 0x42, 0x61, 0x63, 0x6b, 0x75, 0x70, 0x73, 0x12, 0x1f, 0x2e, 0x6c, 0x6e,
+	0x72, 0x70, 0x63, 0x2e, 0x52, 0x65, 0x73, 0x74, 0x6f, 0x72, 0x65, 0x43, 0x68, 0x61, 0x6e, 0x42,
+	0x61, 0x63, 0x6b, 0x75, 0x70, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x1c, 0x2e, 0x6c,
+	0x6e, 0x72, 0x70, 0x63, 0x2e, 0x52, 0x65, 0x73, 0x74, 0x6f, 0x72, 0x65, 0x42, 0x61, 0x63, 0x6b,
+	0x75, 0x70, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x58, 0x0a, 0x17, 0x53, 0x75,
+	0x62, 0x73, 0x63, 0x72, 0x69, 0x62, 0x65, 0x43, 0x68, 0x61, 0x6e, 0x6e, 0x65, 0x6c, 0x42, 0x61,
+	0x63, 0x6b, 0x75, 0x70, 0x73, 0x12, 0x20, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x43, 0x68,
+	0x61, 0x6e, 0x6e, 0x65, 0x6c, 0x42, 0x61, 0x63, 0x6b, 0x75, 0x70, 0x53, 0x75, 0x62, 0x73, 0x63,
+	0x72, 0x69, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x1a, 0x19, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e,
+	0x43, 0x68, 0x61, 0x6e, 0x42, 0x61, 0x63, 0x6b, 0x75, 0x70, 0x53, 0x6e, 0x61, 0x70, 0x73, 0x68,
+	0x6f, 0x74, 0x30, 0x01, 0x12, 0x47, 0x0a, 0x0c, 0x42, 0x61, 0x6b, 0x65, 0x4d, 0x61, 0x63, 0x61,
+	0x72, 0x6f, 0x6f, 0x6e, 0x12, 0x1a, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x42, 0x61, 0x6b,
+	0x65, 0x4d, 0x61, 0x63, 0x61, 0x72, 0x6f, 0x6f, 0x6e, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
+	0x1a, 0x1b, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x42, 0x61, 0x6b, 0x65, 0x4d, 0x61, 0x63,
+	0x61, 0x72, 0x6f, 0x6f, 0x6e, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x50, 0x0a,
+	0x0f, 0x4c, 0x69, 0x73, 0x74, 0x4d, 0x61, 0x63, 0x61, 0x72, 0x6f, 0x6f, 0x6e, 0x49, 0x44, 0x73,
+	0x12, 0x1d, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x4d, 0x61, 0x63,
+	0x61, 0x72, 0x6f, 0x6f, 0x6e, 0x49, 0x44, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a,
+	0x1e, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x4c, 0x69, 0x73, 0x74, 0x4d, 0x61, 0x63, 0x61,
+	0x72, 0x6f, 0x6f, 0x6e, 0x49, 0x44, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12,
+	0x53, 0x0a, 0x10, 0x44, 0x65, 0x6c, 0x65, 0x74, 0x65, 0x4d, 0x61, 0x63, 0x61, 0x72, 0x6f, 0x6f,
+	0x6e, 0x49, 0x44, 0x12, 0x1e, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x44, 0x65, 0x6c, 0x65,
+	0x74, 0x65, 0x4d, 0x61, 0x63, 0x61, 0x72, 0x6f, 0x6f, 0x6e, 0x49, 0x44, 0x52, 0x65, 0x71, 0x75,
+	0x65, 0x73, 0x74, 0x1a, 0x1f, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x44, 0x65, 0x6c, 0x65,
+	0x74, 0x65, 0x4d, 0x61, 0x63, 0x61, 0x72, 0x6f, 0x6f, 0x6e, 0x49, 0x44, 0x52, 0x65, 0x73, 0x70,
+	0x6f, 0x6e, 0x73, 0x65, 0x12, 0x50, 0x0a, 0x0f, 0x4c, 0x69, 0x73, 0x74, 0x50, 0x65, 0x72, 0x6d,
+	0x69, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x73, 0x12, 0x1d, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e,
+	0x4c, 0x69, 0x73, 0x74, 0x50, 0x65, 0x72, 0x6d, 0x69, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x73, 0x52,
+	0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x1a, 0x1e, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x4c,
+	0x69, 0x73, 0x74, 0x50, 0x65, 0x72, 0x6d, 0x69, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x73, 0x52, 0x65,
+	0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x12, 0x47, 0x0a, 0x0c, 0x49, 0x73, 0x4f, 0x75, 0x72, 0x41,
+	0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12, 0x1a, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x49,
+	0x73, 0x4f, 0x75, 0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x52, 0x65, 0x71, 0x75, 0x65,
+	0x73, 0x74, 0x1a, 0x1b, 0x2e, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x2e, 0x49, 0x73, 0x4f, 0x75, 0x72,
+	0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x52, 0x65, 0x73, 0x70, 0x6f, 0x6e, 0x73, 0x65, 0x42,
+	0x27, 0x5a, 0x25, 0x67, 0x69, 0x74, 0x68, 0x75, 0x62, 0x2e, 0x63, 0x6f, 0x6d, 0x2f, 0x6c, 0x69,
+	0x67, 0x68, 0x74, 0x6e, 0x69, 0x6e, 0x67, 0x6e, 0x65, 0x74, 0x77, 0x6f, 0x72, 0x6b, 0x2f, 0x6c,
+	0x6e, 0x64, 0x2f, 0x6c, 0x6e, 0x72, 0x70, 0x63, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -17431,7 +17539,7 @@ func file_rpc_proto_rawDescGZIP() []byte {
 }
 
 var file_rpc_proto_enumTypes = make([]protoimpl.EnumInfo, 18)
-var file_rpc_proto_msgTypes = make([]protoimpl.MessageInfo, 189)
+var file_rpc_proto_msgTypes = make([]protoimpl.MessageInfo, 191)
 var file_rpc_proto_goTypes = []interface{}{
 	(AddressType)(0),                     // 0: lnrpc.AddressType
 	(CommitmentType)(0),                  // 1: lnrpc.CommitmentType
@@ -17576,70 +17684,72 @@ var file_rpc_proto_goTypes = []interface{}{
 	(*HTLCAttempt)(nil),                                         // 140: lnrpc.HTLCAttempt
 	(*ListPaymentsRequest)(nil),                                 // 141: lnrpc.ListPaymentsRequest
 	(*ListPaymentsResponse)(nil),                                // 142: lnrpc.ListPaymentsResponse
-	(*DeleteAllPaymentsRequest)(nil),                            // 143: lnrpc.DeleteAllPaymentsRequest
-	(*DeleteAllPaymentsResponse)(nil),                           // 144: lnrpc.DeleteAllPaymentsResponse
-	(*AbandonChannelRequest)(nil),                               // 145: lnrpc.AbandonChannelRequest
-	(*AbandonChannelResponse)(nil),                              // 146: lnrpc.AbandonChannelResponse
-	(*DebugLevelRequest)(nil),                                   // 147: lnrpc.DebugLevelRequest
-	(*DebugLevelResponse)(nil),                                  // 148: lnrpc.DebugLevelResponse
-	(*PayReqString)(nil),                                        // 149: lnrpc.PayReqString
-	(*PayReq)(nil),                                              // 150: lnrpc.PayReq
-	(*Feature)(nil),                                             // 151: lnrpc.Feature
-	(*FeeReportRequest)(nil),                                    // 152: lnrpc.FeeReportRequest
-	(*ChannelFeeReport)(nil),                                    // 153: lnrpc.ChannelFeeReport
-	(*FeeReportResponse)(nil),                                   // 154: lnrpc.FeeReportResponse
-	(*PolicyUpdateRequest)(nil),                                 // 155: lnrpc.PolicyUpdateRequest
-	(*PolicyUpdateResponse)(nil),                                // 156: lnrpc.PolicyUpdateResponse
-	(*ForwardingHistoryRequest)(nil),                            // 157: lnrpc.ForwardingHistoryRequest
-	(*ForwardingEvent)(nil),                                     // 158: lnrpc.ForwardingEvent
-	(*ForwardingHistoryResponse)(nil),                           // 159: lnrpc.ForwardingHistoryResponse
-	(*ExportChannelBackupRequest)(nil),                          // 160: lnrpc.ExportChannelBackupRequest
-	(*ChannelBackup)(nil),                                       // 161: lnrpc.ChannelBackup
-	(*MultiChanBackup)(nil),                                     // 162: lnrpc.MultiChanBackup
-	(*ChanBackupExportRequest)(nil),                             // 163: lnrpc.ChanBackupExportRequest
-	(*ChanBackupSnapshot)(nil),                                  // 164: lnrpc.ChanBackupSnapshot
-	(*ChannelBackups)(nil),                                      // 165: lnrpc.ChannelBackups
-	(*RestoreChanBackupRequest)(nil),                            // 166: lnrpc.RestoreChanBackupRequest
-	(*RestoreBackupResponse)(nil),                               // 167: lnrpc.RestoreBackupResponse
-	(*ChannelBackupSubscription)(nil),                           // 168: lnrpc.ChannelBackupSubscription
-	(*VerifyChanBackupResponse)(nil),                            // 169: lnrpc.VerifyChanBackupResponse
-	(*MacaroonPermission)(nil),                                  // 170: lnrpc.MacaroonPermission
-	(*BakeMacaroonRequest)(nil),                                 // 171: lnrpc.BakeMacaroonRequest
-	(*BakeMacaroonResponse)(nil),                                // 172: lnrpc.BakeMacaroonResponse
-	(*ListMacaroonIDsRequest)(nil),                              // 173: lnrpc.ListMacaroonIDsRequest
-	(*ListMacaroonIDsResponse)(nil),                             // 174: lnrpc.ListMacaroonIDsResponse
-	(*DeleteMacaroonIDRequest)(nil),                             // 175: lnrpc.DeleteMacaroonIDRequest
-	(*DeleteMacaroonIDResponse)(nil),                            // 176: lnrpc.DeleteMacaroonIDResponse
-	(*MacaroonPermissionList)(nil),                              // 177: lnrpc.MacaroonPermissionList
-	(*ListPermissionsRequest)(nil),                              // 178: lnrpc.ListPermissionsRequest
-	(*ListPermissionsResponse)(nil),                             // 179: lnrpc.ListPermissionsResponse
-	(*IsOurAddressRequest)(nil),                                 // 180: lnrpc.IsOurAddressRequest
-	(*IsOurAddressResponse)(nil),                                // 181: lnrpc.IsOurAddressResponse
-	(*Failure)(nil),                                             // 182: lnrpc.Failure
-	(*ChannelUpdate)(nil),                                       // 183: lnrpc.ChannelUpdate
-	(*MacaroonId)(nil),                                          // 184: lnrpc.MacaroonId
-	(*Op)(nil),                                                  // 185: lnrpc.Op
-	nil,                                                         // 186: lnrpc.SendRequest.DestCustomRecordsEntry
-	nil,                                                         // 187: lnrpc.EstimateFeeRequest.AddrToAmountEntry
-	nil,                                                         // 188: lnrpc.SendManyRequest.AddrToAmountEntry
-	nil,                                                         // 189: lnrpc.Peer.FeaturesEntry
-	nil,                                                         // 190: lnrpc.GetInfoResponse.FeaturesEntry
-	(*PendingChannelsResponse_PendingChannel)(nil),              // 191: lnrpc.PendingChannelsResponse.PendingChannel
-	(*PendingChannelsResponse_PendingOpenChannel)(nil),          // 192: lnrpc.PendingChannelsResponse.PendingOpenChannel
-	(*PendingChannelsResponse_WaitingCloseChannel)(nil),         // 193: lnrpc.PendingChannelsResponse.WaitingCloseChannel
-	(*PendingChannelsResponse_Commitments)(nil),                 // 194: lnrpc.PendingChannelsResponse.Commitments
-	(*PendingChannelsResponse_ClosedChannel)(nil),               // 195: lnrpc.PendingChannelsResponse.ClosedChannel
-	(*PendingChannelsResponse_ForceClosedChannel)(nil),          // 196: lnrpc.PendingChannelsResponse.ForceClosedChannel
-	nil, // 197: lnrpc.WalletBalanceResponse.AccountBalanceEntry
-	nil, // 198: lnrpc.QueryRoutesRequest.DestCustomRecordsEntry
-	nil, // 199: lnrpc.Hop.CustomRecordsEntry
-	nil, // 200: lnrpc.LightningNode.FeaturesEntry
-	nil, // 201: lnrpc.NodeMetricsResponse.BetweennessCentralityEntry
-	nil, // 202: lnrpc.NodeUpdate.FeaturesEntry
-	nil, // 203: lnrpc.Invoice.FeaturesEntry
-	nil, // 204: lnrpc.InvoiceHTLC.CustomRecordsEntry
-	nil, // 205: lnrpc.PayReq.FeaturesEntry
-	nil, // 206: lnrpc.ListPermissionsResponse.MethodPermissionsEntry
+	(*DeletePaymentRequest)(nil),                                // 143: lnrpc.DeletePaymentRequest
+	(*DeleteAllPaymentsRequest)(nil),                            // 144: lnrpc.DeleteAllPaymentsRequest
+	(*DeletePaymentResponse)(nil),                               // 145: lnrpc.DeletePaymentResponse
+	(*DeleteAllPaymentsResponse)(nil),                           // 146: lnrpc.DeleteAllPaymentsResponse
+	(*AbandonChannelRequest)(nil),                               // 147: lnrpc.AbandonChannelRequest
+	(*AbandonChannelResponse)(nil),                              // 148: lnrpc.AbandonChannelResponse
+	(*DebugLevelRequest)(nil),                                   // 149: lnrpc.DebugLevelRequest
+	(*DebugLevelResponse)(nil),                                  // 150: lnrpc.DebugLevelResponse
+	(*PayReqString)(nil),                                        // 151: lnrpc.PayReqString
+	(*PayReq)(nil),                                              // 152: lnrpc.PayReq
+	(*Feature)(nil),                                             // 153: lnrpc.Feature
+	(*FeeReportRequest)(nil),                                    // 154: lnrpc.FeeReportRequest
+	(*ChannelFeeReport)(nil),                                    // 155: lnrpc.ChannelFeeReport
+	(*FeeReportResponse)(nil),                                   // 156: lnrpc.FeeReportResponse
+	(*PolicyUpdateRequest)(nil),                                 // 157: lnrpc.PolicyUpdateRequest
+	(*PolicyUpdateResponse)(nil),                                // 158: lnrpc.PolicyUpdateResponse
+	(*ForwardingHistoryRequest)(nil),                            // 159: lnrpc.ForwardingHistoryRequest
+	(*ForwardingEvent)(nil),                                     // 160: lnrpc.ForwardingEvent
+	(*ForwardingHistoryResponse)(nil),                           // 161: lnrpc.ForwardingHistoryResponse
+	(*ExportChannelBackupRequest)(nil),                          // 162: lnrpc.ExportChannelBackupRequest
+	(*ChannelBackup)(nil),                                       // 163: lnrpc.ChannelBackup
+	(*MultiChanBackup)(nil),                                     // 164: lnrpc.MultiChanBackup
+	(*ChanBackupExportRequest)(nil),                             // 165: lnrpc.ChanBackupExportRequest
+	(*ChanBackupSnapshot)(nil),                                  // 166: lnrpc.ChanBackupSnapshot
+	(*ChannelBackups)(nil),                                      // 167: lnrpc.ChannelBackups
+	(*RestoreChanBackupRequest)(nil),                            // 168: lnrpc.RestoreChanBackupRequest
+	(*RestoreBackupResponse)(nil),                               // 169: lnrpc.RestoreBackupResponse
+	(*ChannelBackupSubscription)(nil),                           // 170: lnrpc.ChannelBackupSubscription
+	(*VerifyChanBackupResponse)(nil),                            // 171: lnrpc.VerifyChanBackupResponse
+	(*MacaroonPermission)(nil),                                  // 172: lnrpc.MacaroonPermission
+	(*BakeMacaroonRequest)(nil),                                 // 173: lnrpc.BakeMacaroonRequest
+	(*BakeMacaroonResponse)(nil),                                // 174: lnrpc.BakeMacaroonResponse
+	(*ListMacaroonIDsRequest)(nil),                              // 175: lnrpc.ListMacaroonIDsRequest
+	(*ListMacaroonIDsResponse)(nil),                             // 176: lnrpc.ListMacaroonIDsResponse
+	(*DeleteMacaroonIDRequest)(nil),                             // 177: lnrpc.DeleteMacaroonIDRequest
+	(*DeleteMacaroonIDResponse)(nil),                            // 178: lnrpc.DeleteMacaroonIDResponse
+	(*MacaroonPermissionList)(nil),                              // 179: lnrpc.MacaroonPermissionList
+	(*ListPermissionsRequest)(nil),                              // 180: lnrpc.ListPermissionsRequest
+	(*ListPermissionsResponse)(nil),                             // 181: lnrpc.ListPermissionsResponse
+	(*IsOurAddressRequest)(nil),                                 // 182: lnrpc.IsOurAddressRequest
+	(*IsOurAddressResponse)(nil),                                // 183: lnrpc.IsOurAddressResponse
+	(*Failure)(nil),                                             // 184: lnrpc.Failure
+	(*ChannelUpdate)(nil),                                       // 185: lnrpc.ChannelUpdate
+	(*MacaroonId)(nil),                                          // 186: lnrpc.MacaroonId
+	(*Op)(nil),                                                  // 187: lnrpc.Op
+	nil,                                                         // 188: lnrpc.SendRequest.DestCustomRecordsEntry
+	nil,                                                         // 189: lnrpc.EstimateFeeRequest.AddrToAmountEntry
+	nil,                                                         // 190: lnrpc.SendManyRequest.AddrToAmountEntry
+	nil,                                                         // 191: lnrpc.Peer.FeaturesEntry
+	nil,                                                         // 192: lnrpc.GetInfoResponse.FeaturesEntry
+	(*PendingChannelsResponse_PendingChannel)(nil),              // 193: lnrpc.PendingChannelsResponse.PendingChannel
+	(*PendingChannelsResponse_PendingOpenChannel)(nil),          // 194: lnrpc.PendingChannelsResponse.PendingOpenChannel
+	(*PendingChannelsResponse_WaitingCloseChannel)(nil),         // 195: lnrpc.PendingChannelsResponse.WaitingCloseChannel
+	(*PendingChannelsResponse_Commitments)(nil),                 // 196: lnrpc.PendingChannelsResponse.Commitments
+	(*PendingChannelsResponse_ClosedChannel)(nil),               // 197: lnrpc.PendingChannelsResponse.ClosedChannel
+	(*PendingChannelsResponse_ForceClosedChannel)(nil),          // 198: lnrpc.PendingChannelsResponse.ForceClosedChannel
+	nil, // 199: lnrpc.WalletBalanceResponse.AccountBalanceEntry
+	nil, // 200: lnrpc.QueryRoutesRequest.DestCustomRecordsEntry
+	nil, // 201: lnrpc.Hop.CustomRecordsEntry
+	nil, // 202: lnrpc.LightningNode.FeaturesEntry
+	nil, // 203: lnrpc.NodeMetricsResponse.BetweennessCentralityEntry
+	nil, // 204: lnrpc.NodeUpdate.FeaturesEntry
+	nil, // 205: lnrpc.Invoice.FeaturesEntry
+	nil, // 206: lnrpc.InvoiceHTLC.CustomRecordsEntry
+	nil, // 207: lnrpc.PayReq.FeaturesEntry
+	nil, // 208: lnrpc.ListPermissionsResponse.MethodPermissionsEntry
 }
 var file_rpc_proto_depIdxs = []int32{
 	0,   // 0: lnrpc.Utxo.address_type:type_name -> lnrpc.AddressType
@@ -17647,12 +17757,12 @@ var file_rpc_proto_depIdxs = []int32{
 	19,  // 2: lnrpc.Transaction.dest_outputs:type_name -> lnrpc.DestOutput
 	20,  // 3: lnrpc.TransactionDetails.transactions:type_name -> lnrpc.Transaction
 	23,  // 4: lnrpc.SendRequest.fee_limit:type_name -> lnrpc.FeeLimit
-	186, // 5: lnrpc.SendRequest.dest_custom_records:type_name -> lnrpc.SendRequest.DestCustomRecordsEntry
+	188, // 5: lnrpc.SendRequest.dest_custom_records:type_name -> lnrpc.SendRequest.DestCustomRecordsEntry
 	8,   // 6: lnrpc.SendRequest.dest_features:type_name -> lnrpc.FeatureBit
 	107, // 7: lnrpc.SendResponse.payment_route:type_name -> lnrpc.Route
 	107, // 8: lnrpc.SendToRouteRequest.route:type_name -> lnrpc.Route
-	187, // 9: lnrpc.EstimateFeeRequest.AddrToAmount:type_name -> lnrpc.EstimateFeeRequest.AddrToAmountEntry
-	188, // 10: lnrpc.SendManyRequest.AddrToAmount:type_name -> lnrpc.SendManyRequest.AddrToAmountEntry
+	189, // 9: lnrpc.EstimateFeeRequest.AddrToAmount:type_name -> lnrpc.EstimateFeeRequest.AddrToAmountEntry
+	190, // 10: lnrpc.SendManyRequest.AddrToAmount:type_name -> lnrpc.SendManyRequest.AddrToAmountEntry
 	18,  // 11: lnrpc.ListUnspentResponse.utxos:type_name -> lnrpc.Utxo
 	0,   // 12: lnrpc.NewAddressRequest.type:type_name -> lnrpc.AddressType
 	31,  // 13: lnrpc.ConnectPeerRequest.addr:type_name -> lnrpc.LightningAddress
@@ -17670,12 +17780,12 @@ var file_rpc_proto_depIdxs = []int32{
 	30,  // 25: lnrpc.Resolution.outpoint:type_name -> lnrpc.OutPoint
 	55,  // 26: lnrpc.ClosedChannelsResponse.channels:type_name -> lnrpc.ChannelCloseSummary
 	10,  // 27: lnrpc.Peer.sync_type:type_name -> lnrpc.Peer.SyncType
-	189, // 28: lnrpc.Peer.features:type_name -> lnrpc.Peer.FeaturesEntry
+	191, // 28: lnrpc.Peer.features:type_name -> lnrpc.Peer.FeaturesEntry
 	60,  // 29: lnrpc.Peer.errors:type_name -> lnrpc.TimestampedError
 	59,  // 30: lnrpc.ListPeersResponse.peers:type_name -> lnrpc.Peer
 	11,  // 31: lnrpc.PeerEvent.type:type_name -> lnrpc.PeerEvent.EventType
 	69,  // 32: lnrpc.GetInfoResponse.chains:type_name -> lnrpc.Chain
-	190, // 33: lnrpc.GetInfoResponse.features:type_name -> lnrpc.GetInfoResponse.FeaturesEntry
+	192, // 33: lnrpc.GetInfoResponse.features:type_name -> lnrpc.GetInfoResponse.FeaturesEntry
 	29,  // 34: lnrpc.ChannelOpenUpdate.channel_point:type_name -> lnrpc.ChannelPoint
 	29,  // 35: lnrpc.CloseChannelRequest.channel_point:type_name -> lnrpc.ChannelPoint
 	75,  // 36: lnrpc.CloseStatusUpdate.close_pending:type_name -> lnrpc.PendingUpdate
@@ -17693,17 +17803,17 @@ var file_rpc_proto_depIdxs = []int32{
 	84,  // 48: lnrpc.FundingTransitionMsg.shim_cancel:type_name -> lnrpc.FundingShimCancel
 	85,  // 49: lnrpc.FundingTransitionMsg.psbt_verify:type_name -> lnrpc.FundingPsbtVerify
 	86,  // 50: lnrpc.FundingTransitionMsg.psbt_finalize:type_name -> lnrpc.FundingPsbtFinalize
-	192, // 51: lnrpc.PendingChannelsResponse.pending_open_channels:type_name -> lnrpc.PendingChannelsResponse.PendingOpenChannel
-	195, // 52: lnrpc.PendingChannelsResponse.pending_closing_channels:type_name -> lnrpc.PendingChannelsResponse.ClosedChannel
-	196, // 53: lnrpc.PendingChannelsResponse.pending_force_closing_channels:type_name -> lnrpc.PendingChannelsResponse.ForceClosedChannel
-	193, // 54: lnrpc.PendingChannelsResponse.waiting_close_channels:type_name -> lnrpc.PendingChannelsResponse.WaitingCloseChannel
+	194, // 51: lnrpc.PendingChannelsResponse.pending_open_channels:type_name -> lnrpc.PendingChannelsResponse.PendingOpenChannel
+	197, // 52: lnrpc.PendingChannelsResponse.pending_closing_channels:type_name -> lnrpc.PendingChannelsResponse.ClosedChannel
+	198, // 53: lnrpc.PendingChannelsResponse.pending_force_closing_channels:type_name -> lnrpc.PendingChannelsResponse.ForceClosedChannel
+	195, // 54: lnrpc.PendingChannelsResponse.waiting_close_channels:type_name -> lnrpc.PendingChannelsResponse.WaitingCloseChannel
 	52,  // 55: lnrpc.ChannelEventUpdate.open_channel:type_name -> lnrpc.Channel
 	55,  // 56: lnrpc.ChannelEventUpdate.closed_channel:type_name -> lnrpc.ChannelCloseSummary
 	29,  // 57: lnrpc.ChannelEventUpdate.active_channel:type_name -> lnrpc.ChannelPoint
 	29,  // 58: lnrpc.ChannelEventUpdate.inactive_channel:type_name -> lnrpc.ChannelPoint
 	75,  // 59: lnrpc.ChannelEventUpdate.pending_open_channel:type_name -> lnrpc.PendingUpdate
 	13,  // 60: lnrpc.ChannelEventUpdate.type:type_name -> lnrpc.ChannelEventUpdate.UpdateType
-	197, // 61: lnrpc.WalletBalanceResponse.account_balance:type_name -> lnrpc.WalletBalanceResponse.AccountBalanceEntry
+	199, // 61: lnrpc.WalletBalanceResponse.account_balance:type_name -> lnrpc.WalletBalanceResponse.AccountBalanceEntry
 	97,  // 62: lnrpc.ChannelBalanceResponse.local_balance:type_name -> lnrpc.Amount
 	97,  // 63: lnrpc.ChannelBalanceResponse.remote_balance:type_name -> lnrpc.Amount
 	97,  // 64: lnrpc.ChannelBalanceResponse.unsettled_local_balance:type_name -> lnrpc.Amount
@@ -17713,29 +17823,29 @@ var file_rpc_proto_depIdxs = []int32{
 	23,  // 68: lnrpc.QueryRoutesRequest.fee_limit:type_name -> lnrpc.FeeLimit
 	102, // 69: lnrpc.QueryRoutesRequest.ignored_edges:type_name -> lnrpc.EdgeLocator
 	101, // 70: lnrpc.QueryRoutesRequest.ignored_pairs:type_name -> lnrpc.NodePair
-	198, // 71: lnrpc.QueryRoutesRequest.dest_custom_records:type_name -> lnrpc.QueryRoutesRequest.DestCustomRecordsEntry
+	200, // 71: lnrpc.QueryRoutesRequest.dest_custom_records:type_name -> lnrpc.QueryRoutesRequest.DestCustomRecordsEntry
 	130, // 72: lnrpc.QueryRoutesRequest.route_hints:type_name -> lnrpc.RouteHint
 	8,   // 73: lnrpc.QueryRoutesRequest.dest_features:type_name -> lnrpc.FeatureBit
 	107, // 74: lnrpc.QueryRoutesResponse.routes:type_name -> lnrpc.Route
 	105, // 75: lnrpc.Hop.mpp_record:type_name -> lnrpc.MPPRecord
 	106, // 76: lnrpc.Hop.amp_record:type_name -> lnrpc.AMPRecord
-	199, // 77: lnrpc.Hop.custom_records:type_name -> lnrpc.Hop.CustomRecordsEntry
+	201, // 77: lnrpc.Hop.custom_records:type_name -> lnrpc.Hop.CustomRecordsEntry
 	104, // 78: lnrpc.Route.hops:type_name -> lnrpc.Hop
 	110, // 79: lnrpc.NodeInfo.node:type_name -> lnrpc.LightningNode
 	113, // 80: lnrpc.NodeInfo.channels:type_name -> lnrpc.ChannelEdge
 	111, // 81: lnrpc.LightningNode.addresses:type_name -> lnrpc.NodeAddress
-	200, // 82: lnrpc.LightningNode.features:type_name -> lnrpc.LightningNode.FeaturesEntry
+	202, // 82: lnrpc.LightningNode.features:type_name -> lnrpc.LightningNode.FeaturesEntry
 	112, // 83: lnrpc.ChannelEdge.node1_policy:type_name -> lnrpc.RoutingPolicy
 	112, // 84: lnrpc.ChannelEdge.node2_policy:type_name -> lnrpc.RoutingPolicy
 	110, // 85: lnrpc.ChannelGraph.nodes:type_name -> lnrpc.LightningNode
 	113, // 86: lnrpc.ChannelGraph.edges:type_name -> lnrpc.ChannelEdge
 	5,   // 87: lnrpc.NodeMetricsRequest.types:type_name -> lnrpc.NodeMetricType
-	201, // 88: lnrpc.NodeMetricsResponse.betweenness_centrality:type_name -> lnrpc.NodeMetricsResponse.BetweennessCentralityEntry
+	203, // 88: lnrpc.NodeMetricsResponse.betweenness_centrality:type_name -> lnrpc.NodeMetricsResponse.BetweennessCentralityEntry
 	126, // 89: lnrpc.GraphTopologyUpdate.node_updates:type_name -> lnrpc.NodeUpdate
 	127, // 90: lnrpc.GraphTopologyUpdate.channel_updates:type_name -> lnrpc.ChannelEdgeUpdate
 	128, // 91: lnrpc.GraphTopologyUpdate.closed_chans:type_name -> lnrpc.ClosedChannelUpdate
 	111, // 92: lnrpc.NodeUpdate.node_addresses:type_name -> lnrpc.NodeAddress
-	202, // 93: lnrpc.NodeUpdate.features:type_name -> lnrpc.NodeUpdate.FeaturesEntry
+	204, // 93: lnrpc.NodeUpdate.features:type_name -> lnrpc.NodeUpdate.FeaturesEntry
 	29,  // 94: lnrpc.ChannelEdgeUpdate.chan_point:type_name -> lnrpc.ChannelPoint
 	112, // 95: lnrpc.ChannelEdgeUpdate.routing_policy:type_name -> lnrpc.RoutingPolicy
 	29,  // 96: lnrpc.ClosedChannelUpdate.chan_point:type_name -> lnrpc.ChannelPoint
@@ -17743,9 +17853,9 @@ var file_rpc_proto_depIdxs = []int32{
 	130, // 98: lnrpc.Invoice.route_hints:type_name -> lnrpc.RouteHint
 	14,  // 99: lnrpc.Invoice.state:type_name -> lnrpc.Invoice.InvoiceState
 	132, // 100: lnrpc.Invoice.htlcs:type_name -> lnrpc.InvoiceHTLC
-	203, // 101: lnrpc.Invoice.features:type_name -> lnrpc.Invoice.FeaturesEntry
+	205, // 101: lnrpc.Invoice.features:type_name -> lnrpc.Invoice.FeaturesEntry
 	6,   // 102: lnrpc.InvoiceHTLC.state:type_name -> lnrpc.InvoiceHTLCState
-	204, // 103: lnrpc.InvoiceHTLC.custom_records:type_name -> lnrpc.InvoiceHTLC.CustomRecordsEntry
+	206, // 103: lnrpc.InvoiceHTLC.custom_records:type_name -> lnrpc.InvoiceHTLC.CustomRecordsEntry
 	133, // 104: lnrpc.InvoiceHTLC.amp:type_name -> lnrpc.AMP
 	131, // 105: lnrpc.ListInvoiceResponse.invoices:type_name -> lnrpc.Invoice
 	15,  // 106: lnrpc.Payment.status:type_name -> lnrpc.Payment.PaymentStatus
@@ -17753,45 +17863,45 @@ var file_rpc_proto_depIdxs = []int32{
 	7,   // 108: lnrpc.Payment.failure_reason:type_name -> lnrpc.PaymentFailureReason
 	16,  // 109: lnrpc.HTLCAttempt.status:type_name -> lnrpc.HTLCAttempt.HTLCStatus
 	107, // 110: lnrpc.HTLCAttempt.route:type_name -> lnrpc.Route
-	182, // 111: lnrpc.HTLCAttempt.failure:type_name -> lnrpc.Failure
+	184, // 111: lnrpc.HTLCAttempt.failure:type_name -> lnrpc.Failure
 	139, // 112: lnrpc.ListPaymentsResponse.payments:type_name -> lnrpc.Payment
 	29,  // 113: lnrpc.AbandonChannelRequest.channel_point:type_name -> lnrpc.ChannelPoint
 	130, // 114: lnrpc.PayReq.route_hints:type_name -> lnrpc.RouteHint
-	205, // 115: lnrpc.PayReq.features:type_name -> lnrpc.PayReq.FeaturesEntry
-	153, // 116: lnrpc.FeeReportResponse.channel_fees:type_name -> lnrpc.ChannelFeeReport
+	207, // 115: lnrpc.PayReq.features:type_name -> lnrpc.PayReq.FeaturesEntry
+	155, // 116: lnrpc.FeeReportResponse.channel_fees:type_name -> lnrpc.ChannelFeeReport
 	29,  // 117: lnrpc.PolicyUpdateRequest.chan_point:type_name -> lnrpc.ChannelPoint
-	158, // 118: lnrpc.ForwardingHistoryResponse.forwarding_events:type_name -> lnrpc.ForwardingEvent
+	160, // 118: lnrpc.ForwardingHistoryResponse.forwarding_events:type_name -> lnrpc.ForwardingEvent
 	29,  // 119: lnrpc.ExportChannelBackupRequest.chan_point:type_name -> lnrpc.ChannelPoint
 	29,  // 120: lnrpc.ChannelBackup.chan_point:type_name -> lnrpc.ChannelPoint
 	29,  // 121: lnrpc.MultiChanBackup.chan_points:type_name -> lnrpc.ChannelPoint
-	165, // 122: lnrpc.ChanBackupSnapshot.single_chan_backups:type_name -> lnrpc.ChannelBackups
-	162, // 123: lnrpc.ChanBackupSnapshot.multi_chan_backup:type_name -> lnrpc.MultiChanBackup
-	161, // 124: lnrpc.ChannelBackups.chan_backups:type_name -> lnrpc.ChannelBackup
-	165, // 125: lnrpc.RestoreChanBackupRequest.chan_backups:type_name -> lnrpc.ChannelBackups
-	170, // 126: lnrpc.BakeMacaroonRequest.permissions:type_name -> lnrpc.MacaroonPermission
-	170, // 127: lnrpc.MacaroonPermissionList.permissions:type_name -> lnrpc.MacaroonPermission
-	206, // 128: lnrpc.ListPermissionsResponse.method_permissions:type_name -> lnrpc.ListPermissionsResponse.MethodPermissionsEntry
+	167, // 122: lnrpc.ChanBackupSnapshot.single_chan_backups:type_name -> lnrpc.ChannelBackups
+	164, // 123: lnrpc.ChanBackupSnapshot.multi_chan_backup:type_name -> lnrpc.MultiChanBackup
+	163, // 124: lnrpc.ChannelBackups.chan_backups:type_name -> lnrpc.ChannelBackup
+	167, // 125: lnrpc.RestoreChanBackupRequest.chan_backups:type_name -> lnrpc.ChannelBackups
+	172, // 126: lnrpc.BakeMacaroonRequest.permissions:type_name -> lnrpc.MacaroonPermission
+	172, // 127: lnrpc.MacaroonPermissionList.permissions:type_name -> lnrpc.MacaroonPermission
+	208, // 128: lnrpc.ListPermissionsResponse.method_permissions:type_name -> lnrpc.ListPermissionsResponse.MethodPermissionsEntry
 	17,  // 129: lnrpc.Failure.code:type_name -> lnrpc.Failure.FailureCode
-	183, // 130: lnrpc.Failure.channel_update:type_name -> lnrpc.ChannelUpdate
-	185, // 131: lnrpc.MacaroonId.ops:type_name -> lnrpc.Op
-	151, // 132: lnrpc.Peer.FeaturesEntry.value:type_name -> lnrpc.Feature
-	151, // 133: lnrpc.GetInfoResponse.FeaturesEntry.value:type_name -> lnrpc.Feature
+	185, // 130: lnrpc.Failure.channel_update:type_name -> lnrpc.ChannelUpdate
+	187, // 131: lnrpc.MacaroonId.ops:type_name -> lnrpc.Op
+	153, // 132: lnrpc.Peer.FeaturesEntry.value:type_name -> lnrpc.Feature
+	153, // 133: lnrpc.GetInfoResponse.FeaturesEntry.value:type_name -> lnrpc.Feature
 	2,   // 134: lnrpc.PendingChannelsResponse.PendingChannel.initiator:type_name -> lnrpc.Initiator
 	1,   // 135: lnrpc.PendingChannelsResponse.PendingChannel.commitment_type:type_name -> lnrpc.CommitmentType
-	191, // 136: lnrpc.PendingChannelsResponse.PendingOpenChannel.channel:type_name -> lnrpc.PendingChannelsResponse.PendingChannel
-	191, // 137: lnrpc.PendingChannelsResponse.WaitingCloseChannel.channel:type_name -> lnrpc.PendingChannelsResponse.PendingChannel
-	194, // 138: lnrpc.PendingChannelsResponse.WaitingCloseChannel.commitments:type_name -> lnrpc.PendingChannelsResponse.Commitments
-	191, // 139: lnrpc.PendingChannelsResponse.ClosedChannel.channel:type_name -> lnrpc.PendingChannelsResponse.PendingChannel
-	191, // 140: lnrpc.PendingChannelsResponse.ForceClosedChannel.channel:type_name -> lnrpc.PendingChannelsResponse.PendingChannel
+	193, // 136: lnrpc.PendingChannelsResponse.PendingOpenChannel.channel:type_name -> lnrpc.PendingChannelsResponse.PendingChannel
+	193, // 137: lnrpc.PendingChannelsResponse.WaitingCloseChannel.channel:type_name -> lnrpc.PendingChannelsResponse.PendingChannel
+	196, // 138: lnrpc.PendingChannelsResponse.WaitingCloseChannel.commitments:type_name -> lnrpc.PendingChannelsResponse.Commitments
+	193, // 139: lnrpc.PendingChannelsResponse.ClosedChannel.channel:type_name -> lnrpc.PendingChannelsResponse.PendingChannel
+	193, // 140: lnrpc.PendingChannelsResponse.ForceClosedChannel.channel:type_name -> lnrpc.PendingChannelsResponse.PendingChannel
 	89,  // 141: lnrpc.PendingChannelsResponse.ForceClosedChannel.pending_htlcs:type_name -> lnrpc.PendingHTLC
 	12,  // 142: lnrpc.PendingChannelsResponse.ForceClosedChannel.anchor:type_name -> lnrpc.PendingChannelsResponse.ForceClosedChannel.AnchorState
 	94,  // 143: lnrpc.WalletBalanceResponse.AccountBalanceEntry.value:type_name -> lnrpc.WalletAccountBalance
-	151, // 144: lnrpc.LightningNode.FeaturesEntry.value:type_name -> lnrpc.Feature
+	153, // 144: lnrpc.LightningNode.FeaturesEntry.value:type_name -> lnrpc.Feature
 	118, // 145: lnrpc.NodeMetricsResponse.BetweennessCentralityEntry.value:type_name -> lnrpc.FloatMetric
-	151, // 146: lnrpc.NodeUpdate.FeaturesEntry.value:type_name -> lnrpc.Feature
-	151, // 147: lnrpc.Invoice.FeaturesEntry.value:type_name -> lnrpc.Feature
-	151, // 148: lnrpc.PayReq.FeaturesEntry.value:type_name -> lnrpc.Feature
-	177, // 149: lnrpc.ListPermissionsResponse.MethodPermissionsEntry.value:type_name -> lnrpc.MacaroonPermissionList
+	153, // 146: lnrpc.NodeUpdate.FeaturesEntry.value:type_name -> lnrpc.Feature
+	153, // 147: lnrpc.Invoice.FeaturesEntry.value:type_name -> lnrpc.Feature
+	153, // 148: lnrpc.PayReq.FeaturesEntry.value:type_name -> lnrpc.Feature
+	179, // 149: lnrpc.ListPermissionsResponse.MethodPermissionsEntry.value:type_name -> lnrpc.MacaroonPermissionList
 	95,  // 150: lnrpc.Lightning.WalletBalance:input_type -> lnrpc.WalletBalanceRequest
 	98,  // 151: lnrpc.Lightning.ChannelBalance:input_type -> lnrpc.ChannelBalanceRequest
 	21,  // 152: lnrpc.Lightning.GetTransactions:input_type -> lnrpc.GetTransactionsRequest
@@ -17818,7 +17928,7 @@ var file_rpc_proto_depIdxs = []int32{
 	87,  // 173: lnrpc.Lightning.FundingStateStep:input_type -> lnrpc.FundingTransitionMsg
 	28,  // 174: lnrpc.Lightning.ChannelAcceptor:input_type -> lnrpc.ChannelAcceptResponse
 	73,  // 175: lnrpc.Lightning.CloseChannel:input_type -> lnrpc.CloseChannelRequest
-	145, // 176: lnrpc.Lightning.AbandonChannel:input_type -> lnrpc.AbandonChannelRequest
+	147, // 176: lnrpc.Lightning.AbandonChannel:input_type -> lnrpc.AbandonChannelRequest
 	24,  // 177: lnrpc.Lightning.SendPayment:input_type -> lnrpc.SendRequest
 	24,  // 178: lnrpc.Lightning.SendPaymentSync:input_type -> lnrpc.SendRequest
 	26,  // 179: lnrpc.Lightning.SendToRoute:input_type -> lnrpc.SendToRouteRequest
@@ -17827,93 +17937,95 @@ var file_rpc_proto_depIdxs = []int32{
 	136, // 182: lnrpc.Lightning.ListInvoices:input_type -> lnrpc.ListInvoiceRequest
 	135, // 183: lnrpc.Lightning.LookupInvoice:input_type -> lnrpc.PaymentHash
 	138, // 184: lnrpc.Lightning.SubscribeInvoices:input_type -> lnrpc.InvoiceSubscription
-	149, // 185: lnrpc.Lightning.DecodePayReq:input_type -> lnrpc.PayReqString
+	151, // 185: lnrpc.Lightning.DecodePayReq:input_type -> lnrpc.PayReqString
 	141, // 186: lnrpc.Lightning.ListPayments:input_type -> lnrpc.ListPaymentsRequest
-	143, // 187: lnrpc.Lightning.DeleteAllPayments:input_type -> lnrpc.DeleteAllPaymentsRequest
-	114, // 188: lnrpc.Lightning.DescribeGraph:input_type -> lnrpc.ChannelGraphRequest
-	116, // 189: lnrpc.Lightning.GetNodeMetrics:input_type -> lnrpc.NodeMetricsRequest
-	119, // 190: lnrpc.Lightning.GetChanInfo:input_type -> lnrpc.ChanInfoRequest
-	108, // 191: lnrpc.Lightning.GetNodeInfo:input_type -> lnrpc.NodeInfoRequest
-	100, // 192: lnrpc.Lightning.QueryRoutes:input_type -> lnrpc.QueryRoutesRequest
-	120, // 193: lnrpc.Lightning.GetNetworkInfo:input_type -> lnrpc.NetworkInfoRequest
-	122, // 194: lnrpc.Lightning.StopDaemon:input_type -> lnrpc.StopRequest
-	124, // 195: lnrpc.Lightning.SubscribeChannelGraph:input_type -> lnrpc.GraphTopologySubscription
-	147, // 196: lnrpc.Lightning.DebugLevel:input_type -> lnrpc.DebugLevelRequest
-	152, // 197: lnrpc.Lightning.FeeReport:input_type -> lnrpc.FeeReportRequest
-	155, // 198: lnrpc.Lightning.UpdateChannelPolicy:input_type -> lnrpc.PolicyUpdateRequest
-	157, // 199: lnrpc.Lightning.ForwardingHistory:input_type -> lnrpc.ForwardingHistoryRequest
-	160, // 200: lnrpc.Lightning.ExportChannelBackup:input_type -> lnrpc.ExportChannelBackupRequest
-	163, // 201: lnrpc.Lightning.ExportAllChannelBackups:input_type -> lnrpc.ChanBackupExportRequest
-	164, // 202: lnrpc.Lightning.VerifyChanBackup:input_type -> lnrpc.ChanBackupSnapshot
-	166, // 203: lnrpc.Lightning.RestoreChannelBackups:input_type -> lnrpc.RestoreChanBackupRequest
-	168, // 204: lnrpc.Lightning.SubscribeChannelBackups:input_type -> lnrpc.ChannelBackupSubscription
-	171, // 205: lnrpc.Lightning.BakeMacaroon:input_type -> lnrpc.BakeMacaroonRequest
-	173, // 206: lnrpc.Lightning.ListMacaroonIDs:input_type -> lnrpc.ListMacaroonIDsRequest
-	175, // 207: lnrpc.Lightning.DeleteMacaroonID:input_type -> lnrpc.DeleteMacaroonIDRequest
-	178, // 208: lnrpc.Lightning.ListPermissions:input_type -> lnrpc.ListPermissionsRequest
-	180, // 209: lnrpc.Lightning.IsOurAddress:input_type -> lnrpc.IsOurAddressRequest
-	96,  // 210: lnrpc.Lightning.WalletBalance:output_type -> lnrpc.WalletBalanceResponse
-	99,  // 211: lnrpc.Lightning.ChannelBalance:output_type -> lnrpc.ChannelBalanceResponse
-	22,  // 212: lnrpc.Lightning.GetTransactions:output_type -> lnrpc.TransactionDetails
-	33,  // 213: lnrpc.Lightning.EstimateFee:output_type -> lnrpc.EstimateFeeResponse
-	37,  // 214: lnrpc.Lightning.SendCoins:output_type -> lnrpc.SendCoinsResponse
-	39,  // 215: lnrpc.Lightning.ListUnspent:output_type -> lnrpc.ListUnspentResponse
-	20,  // 216: lnrpc.Lightning.SubscribeTransactions:output_type -> lnrpc.Transaction
-	35,  // 217: lnrpc.Lightning.SendMany:output_type -> lnrpc.SendManyResponse
-	41,  // 218: lnrpc.Lightning.NewAddress:output_type -> lnrpc.NewAddressResponse
-	43,  // 219: lnrpc.Lightning.SignMessage:output_type -> lnrpc.SignMessageResponse
-	45,  // 220: lnrpc.Lightning.VerifyMessage:output_type -> lnrpc.VerifyMessageResponse
-	47,  // 221: lnrpc.Lightning.ConnectPeer:output_type -> lnrpc.ConnectPeerResponse
-	49,  // 222: lnrpc.Lightning.DisconnectPeer:output_type -> lnrpc.DisconnectPeerResponse
-	62,  // 223: lnrpc.Lightning.ListPeers:output_type -> lnrpc.ListPeersResponse
-	64,  // 224: lnrpc.Lightning.SubscribePeerEvents:output_type -> lnrpc.PeerEvent
-	66,  // 225: lnrpc.Lightning.GetInfo:output_type -> lnrpc.GetInfoResponse
-	68,  // 226: lnrpc.Lightning.GetRecoveryInfo:output_type -> lnrpc.GetRecoveryInfoResponse
-	91,  // 227: lnrpc.Lightning.PendingChannels:output_type -> lnrpc.PendingChannelsResponse
-	54,  // 228: lnrpc.Lightning.ListChannels:output_type -> lnrpc.ListChannelsResponse
-	93,  // 229: lnrpc.Lightning.SubscribeChannelEvents:output_type -> lnrpc.ChannelEventUpdate
-	58,  // 230: lnrpc.Lightning.ClosedChannels:output_type -> lnrpc.ClosedChannelsResponse
-	29,  // 231: lnrpc.Lightning.OpenChannelSync:output_type -> lnrpc.ChannelPoint
-	78,  // 232: lnrpc.Lightning.OpenChannel:output_type -> lnrpc.OpenStatusUpdate
-	88,  // 233: lnrpc.Lightning.FundingStateStep:output_type -> lnrpc.FundingStateStepResp
-	27,  // 234: lnrpc.Lightning.ChannelAcceptor:output_type -> lnrpc.ChannelAcceptRequest
-	74,  // 235: lnrpc.Lightning.CloseChannel:output_type -> lnrpc.CloseStatusUpdate
-	146, // 236: lnrpc.Lightning.AbandonChannel:output_type -> lnrpc.AbandonChannelResponse
-	25,  // 237: lnrpc.Lightning.SendPayment:output_type -> lnrpc.SendResponse
-	25,  // 238: lnrpc.Lightning.SendPaymentSync:output_type -> lnrpc.SendResponse
-	25,  // 239: lnrpc.Lightning.SendToRoute:output_type -> lnrpc.SendResponse
-	25,  // 240: lnrpc.Lightning.SendToRouteSync:output_type -> lnrpc.SendResponse
-	134, // 241: lnrpc.Lightning.AddInvoice:output_type -> lnrpc.AddInvoiceResponse
-	137, // 242: lnrpc.Lightning.ListInvoices:output_type -> lnrpc.ListInvoiceResponse
-	131, // 243: lnrpc.Lightning.LookupInvoice:output_type -> lnrpc.Invoice
-	131, // 244: lnrpc.Lightning.SubscribeInvoices:output_type -> lnrpc.Invoice
-	150, // 245: lnrpc.Lightning.DecodePayReq:output_type -> lnrpc.PayReq
-	142, // 246: lnrpc.Lightning.ListPayments:output_type -> lnrpc.ListPaymentsResponse
-	144, // 247: lnrpc.Lightning.DeleteAllPayments:output_type -> lnrpc.DeleteAllPaymentsResponse
-	115, // 248: lnrpc.Lightning.DescribeGraph:output_type -> lnrpc.ChannelGraph
-	117, // 249: lnrpc.Lightning.GetNodeMetrics:output_type -> lnrpc.NodeMetricsResponse
-	113, // 250: lnrpc.Lightning.GetChanInfo:output_type -> lnrpc.ChannelEdge
-	109, // 251: lnrpc.Lightning.GetNodeInfo:output_type -> lnrpc.NodeInfo
-	103, // 252: lnrpc.Lightning.QueryRoutes:output_type -> lnrpc.QueryRoutesResponse
-	121, // 253: lnrpc.Lightning.GetNetworkInfo:output_type -> lnrpc.NetworkInfo
-	123, // 254: lnrpc.Lightning.StopDaemon:output_type -> lnrpc.StopResponse
-	125, // 255: lnrpc.Lightning.SubscribeChannelGraph:output_type -> lnrpc.GraphTopologyUpdate
-	148, // 256: lnrpc.Lightning.DebugLevel:output_type -> lnrpc.DebugLevelResponse
-	154, // 257: lnrpc.Lightning.FeeReport:output_type -> lnrpc.FeeReportResponse
-	156, // 258: lnrpc.Lightning.UpdateChannelPolicy:output_type -> lnrpc.PolicyUpdateResponse
-	159, // 259: lnrpc.Lightning.ForwardingHistory:output_type -> lnrpc.ForwardingHistoryResponse
-	161, // 260: lnrpc.Lightning.ExportChannelBackup:output_type -> lnrpc.ChannelBackup
-	164, // 261: lnrpc.Lightning.ExportAllChannelBackups:output_type -> lnrpc.ChanBackupSnapshot
-	169, // 262: lnrpc.Lightning.VerifyChanBackup:output_type -> lnrpc.VerifyChanBackupResponse
-	167, // 263: lnrpc.Lightning.RestoreChannelBackups:output_type -> lnrpc.RestoreBackupResponse
-	164, // 264: lnrpc.Lightning.SubscribeChannelBackups:output_type -> lnrpc.ChanBackupSnapshot
-	172, // 265: lnrpc.Lightning.BakeMacaroon:output_type -> lnrpc.BakeMacaroonResponse
-	174, // 266: lnrpc.Lightning.ListMacaroonIDs:output_type -> lnrpc.ListMacaroonIDsResponse
-	176, // 267: lnrpc.Lightning.DeleteMacaroonID:output_type -> lnrpc.DeleteMacaroonIDResponse
-	179, // 268: lnrpc.Lightning.ListPermissions:output_type -> lnrpc.ListPermissionsResponse
-	181, // 269: lnrpc.Lightning.IsOurAddress:output_type -> lnrpc.IsOurAddressResponse
-	210, // [210:270] is the sub-list for method output_type
-	150, // [150:210] is the sub-list for method input_type
+	143, // 187: lnrpc.Lightning.DeletePayment:input_type -> lnrpc.DeletePaymentRequest
+	144, // 188: lnrpc.Lightning.DeleteAllPayments:input_type -> lnrpc.DeleteAllPaymentsRequest
+	114, // 189: lnrpc.Lightning.DescribeGraph:input_type -> lnrpc.ChannelGraphRequest
+	116, // 190: lnrpc.Lightning.GetNodeMetrics:input_type -> lnrpc.NodeMetricsRequest
+	119, // 191: lnrpc.Lightning.GetChanInfo:input_type -> lnrpc.ChanInfoRequest
+	108, // 192: lnrpc.Lightning.GetNodeInfo:input_type -> lnrpc.NodeInfoRequest
+	100, // 193: lnrpc.Lightning.QueryRoutes:input_type -> lnrpc.QueryRoutesRequest
+	120, // 194: lnrpc.Lightning.GetNetworkInfo:input_type -> lnrpc.NetworkInfoRequest
+	122, // 195: lnrpc.Lightning.StopDaemon:input_type -> lnrpc.StopRequest
+	124, // 196: lnrpc.Lightning.SubscribeChannelGraph:input_type -> lnrpc.GraphTopologySubscription
+	149, // 197: lnrpc.Lightning.DebugLevel:input_type -> lnrpc.DebugLevelRequest
+	154, // 198: lnrpc.Lightning.FeeReport:input_type -> lnrpc.FeeReportRequest
+	157, // 199: lnrpc.Lightning.UpdateChannelPolicy:input_type -> lnrpc.PolicyUpdateRequest
+	159, // 200: lnrpc.Lightning.ForwardingHistory:input_type -> lnrpc.ForwardingHistoryRequest
+	162, // 201: lnrpc.Lightning.ExportChannelBackup:input_type -> lnrpc.ExportChannelBackupRequest
+	165, // 202: lnrpc.Lightning.ExportAllChannelBackups:input_type -> lnrpc.ChanBackupExportRequest
+	166, // 203: lnrpc.Lightning.VerifyChanBackup:input_type -> lnrpc.ChanBackupSnapshot
+	168, // 204: lnrpc.Lightning.RestoreChannelBackups:input_type -> lnrpc.RestoreChanBackupRequest
+	170, // 205: lnrpc.Lightning.SubscribeChannelBackups:input_type -> lnrpc.ChannelBackupSubscription
+	173, // 206: lnrpc.Lightning.BakeMacaroon:input_type -> lnrpc.BakeMacaroonRequest
+	175, // 207: lnrpc.Lightning.ListMacaroonIDs:input_type -> lnrpc.ListMacaroonIDsRequest
+	177, // 208: lnrpc.Lightning.DeleteMacaroonID:input_type -> lnrpc.DeleteMacaroonIDRequest
+	180, // 209: lnrpc.Lightning.ListPermissions:input_type -> lnrpc.ListPermissionsRequest
+	182, // 210: lnrpc.Lightning.IsOurAddress:input_type -> lnrpc.IsOurAddressRequest
+	96,  // 211: lnrpc.Lightning.WalletBalance:output_type -> lnrpc.WalletBalanceResponse
+	99,  // 212: lnrpc.Lightning.ChannelBalance:output_type -> lnrpc.ChannelBalanceResponse
+	22,  // 213: lnrpc.Lightning.GetTransactions:output_type -> lnrpc.TransactionDetails
+	33,  // 214: lnrpc.Lightning.EstimateFee:output_type -> lnrpc.EstimateFeeResponse
+	37,  // 215: lnrpc.Lightning.SendCoins:output_type -> lnrpc.SendCoinsResponse
+	39,  // 216: lnrpc.Lightning.ListUnspent:output_type -> lnrpc.ListUnspentResponse
+	20,  // 217: lnrpc.Lightning.SubscribeTransactions:output_type -> lnrpc.Transaction
+	35,  // 218: lnrpc.Lightning.SendMany:output_type -> lnrpc.SendManyResponse
+	41,  // 219: lnrpc.Lightning.NewAddress:output_type -> lnrpc.NewAddressResponse
+	43,  // 220: lnrpc.Lightning.SignMessage:output_type -> lnrpc.SignMessageResponse
+	45,  // 221: lnrpc.Lightning.VerifyMessage:output_type -> lnrpc.VerifyMessageResponse
+	47,  // 222: lnrpc.Lightning.ConnectPeer:output_type -> lnrpc.ConnectPeerResponse
+	49,  // 223: lnrpc.Lightning.DisconnectPeer:output_type -> lnrpc.DisconnectPeerResponse
+	62,  // 224: lnrpc.Lightning.ListPeers:output_type -> lnrpc.ListPeersResponse
+	64,  // 225: lnrpc.Lightning.SubscribePeerEvents:output_type -> lnrpc.PeerEvent
+	66,  // 226: lnrpc.Lightning.GetInfo:output_type -> lnrpc.GetInfoResponse
+	68,  // 227: lnrpc.Lightning.GetRecoveryInfo:output_type -> lnrpc.GetRecoveryInfoResponse
+	91,  // 228: lnrpc.Lightning.PendingChannels:output_type -> lnrpc.PendingChannelsResponse
+	54,  // 229: lnrpc.Lightning.ListChannels:output_type -> lnrpc.ListChannelsResponse
+	93,  // 230: lnrpc.Lightning.SubscribeChannelEvents:output_type -> lnrpc.ChannelEventUpdate
+	58,  // 231: lnrpc.Lightning.ClosedChannels:output_type -> lnrpc.ClosedChannelsResponse
+	29,  // 232: lnrpc.Lightning.OpenChannelSync:output_type -> lnrpc.ChannelPoint
+	78,  // 233: lnrpc.Lightning.OpenChannel:output_type -> lnrpc.OpenStatusUpdate
+	88,  // 234: lnrpc.Lightning.FundingStateStep:output_type -> lnrpc.FundingStateStepResp
+	27,  // 235: lnrpc.Lightning.ChannelAcceptor:output_type -> lnrpc.ChannelAcceptRequest
+	74,  // 236: lnrpc.Lightning.CloseChannel:output_type -> lnrpc.CloseStatusUpdate
+	148, // 237: lnrpc.Lightning.AbandonChannel:output_type -> lnrpc.AbandonChannelResponse
+	25,  // 238: lnrpc.Lightning.SendPayment:output_type -> lnrpc.SendResponse
+	25,  // 239: lnrpc.Lightning.SendPaymentSync:output_type -> lnrpc.SendResponse
+	25,  // 240: lnrpc.Lightning.SendToRoute:output_type -> lnrpc.SendResponse
+	25,  // 241: lnrpc.Lightning.SendToRouteSync:output_type -> lnrpc.SendResponse
+	134, // 242: lnrpc.Lightning.AddInvoice:output_type -> lnrpc.AddInvoiceResponse
+	137, // 243: lnrpc.Lightning.ListInvoices:output_type -> lnrpc.ListInvoiceResponse
+	131, // 244: lnrpc.Lightning.LookupInvoice:output_type -> lnrpc.Invoice
+	131, // 245: lnrpc.Lightning.SubscribeInvoices:output_type -> lnrpc.Invoice
+	152, // 246: lnrpc.Lightning.DecodePayReq:output_type -> lnrpc.PayReq
+	142, // 247: lnrpc.Lightning.ListPayments:output_type -> lnrpc.ListPaymentsResponse
+	145, // 248: lnrpc.Lightning.DeletePayment:output_type -> lnrpc.DeletePaymentResponse
+	146, // 249: lnrpc.Lightning.DeleteAllPayments:output_type -> lnrpc.DeleteAllPaymentsResponse
+	115, // 250: lnrpc.Lightning.DescribeGraph:output_type -> lnrpc.ChannelGraph
+	117, // 251: lnrpc.Lightning.GetNodeMetrics:output_type -> lnrpc.NodeMetricsResponse
+	113, // 252: lnrpc.Lightning.GetChanInfo:output_type -> lnrpc.ChannelEdge
+	109, // 253: lnrpc.Lightning.GetNodeInfo:output_type -> lnrpc.NodeInfo
+	103, // 254: lnrpc.Lightning.QueryRoutes:output_type -> lnrpc.QueryRoutesResponse
+	121, // 255: lnrpc.Lightning.GetNetworkInfo:output_type -> lnrpc.NetworkInfo
+	123, // 256: lnrpc.Lightning.StopDaemon:output_type -> lnrpc.StopResponse
+	125, // 257: lnrpc.Lightning.SubscribeChannelGraph:output_type -> lnrpc.GraphTopologyUpdate
+	150, // 258: lnrpc.Lightning.DebugLevel:output_type -> lnrpc.DebugLevelResponse
+	156, // 259: lnrpc.Lightning.FeeReport:output_type -> lnrpc.FeeReportResponse
+	158, // 260: lnrpc.Lightning.UpdateChannelPolicy:output_type -> lnrpc.PolicyUpdateResponse
+	161, // 261: lnrpc.Lightning.ForwardingHistory:output_type -> lnrpc.ForwardingHistoryResponse
+	163, // 262: lnrpc.Lightning.ExportChannelBackup:output_type -> lnrpc.ChannelBackup
+	166, // 263: lnrpc.Lightning.ExportAllChannelBackups:output_type -> lnrpc.ChanBackupSnapshot
+	171, // 264: lnrpc.Lightning.VerifyChanBackup:output_type -> lnrpc.VerifyChanBackupResponse
+	169, // 265: lnrpc.Lightning.RestoreChannelBackups:output_type -> lnrpc.RestoreBackupResponse
+	166, // 266: lnrpc.Lightning.SubscribeChannelBackups:output_type -> lnrpc.ChanBackupSnapshot
+	174, // 267: lnrpc.Lightning.BakeMacaroon:output_type -> lnrpc.BakeMacaroonResponse
+	176, // 268: lnrpc.Lightning.ListMacaroonIDs:output_type -> lnrpc.ListMacaroonIDsResponse
+	178, // 269: lnrpc.Lightning.DeleteMacaroonID:output_type -> lnrpc.DeleteMacaroonIDResponse
+	181, // 270: lnrpc.Lightning.ListPermissions:output_type -> lnrpc.ListPermissionsResponse
+	183, // 271: lnrpc.Lightning.IsOurAddress:output_type -> lnrpc.IsOurAddressResponse
+	211, // [211:272] is the sub-list for method output_type
+	150, // [150:211] is the sub-list for method input_type
 	150, // [150:150] is the sub-list for extension type_name
 	150, // [150:150] is the sub-list for extension extendee
 	0,   // [0:150] is the sub-list for field type_name
@@ -19426,7 +19538,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[125].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*DeleteAllPaymentsRequest); i {
+			switch v := v.(*DeletePaymentRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19438,7 +19550,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[126].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*DeleteAllPaymentsResponse); i {
+			switch v := v.(*DeleteAllPaymentsRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19450,7 +19562,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[127].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*AbandonChannelRequest); i {
+			switch v := v.(*DeletePaymentResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19462,7 +19574,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[128].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*AbandonChannelResponse); i {
+			switch v := v.(*DeleteAllPaymentsResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19474,7 +19586,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[129].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*DebugLevelRequest); i {
+			switch v := v.(*AbandonChannelRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19486,7 +19598,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[130].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*DebugLevelResponse); i {
+			switch v := v.(*AbandonChannelResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19498,7 +19610,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[131].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*PayReqString); i {
+			switch v := v.(*DebugLevelRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19510,7 +19622,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[132].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*PayReq); i {
+			switch v := v.(*DebugLevelResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19522,7 +19634,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[133].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*Feature); i {
+			switch v := v.(*PayReqString); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19534,7 +19646,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[134].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*FeeReportRequest); i {
+			switch v := v.(*PayReq); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19546,7 +19658,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[135].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ChannelFeeReport); i {
+			switch v := v.(*Feature); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19558,7 +19670,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[136].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*FeeReportResponse); i {
+			switch v := v.(*FeeReportRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19570,7 +19682,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[137].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*PolicyUpdateRequest); i {
+			switch v := v.(*ChannelFeeReport); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19582,7 +19694,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[138].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*PolicyUpdateResponse); i {
+			switch v := v.(*FeeReportResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19594,7 +19706,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[139].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ForwardingHistoryRequest); i {
+			switch v := v.(*PolicyUpdateRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19606,7 +19718,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[140].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ForwardingEvent); i {
+			switch v := v.(*PolicyUpdateResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19618,7 +19730,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[141].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ForwardingHistoryResponse); i {
+			switch v := v.(*ForwardingHistoryRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19630,7 +19742,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[142].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ExportChannelBackupRequest); i {
+			switch v := v.(*ForwardingEvent); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19642,7 +19754,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[143].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ChannelBackup); i {
+			switch v := v.(*ForwardingHistoryResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19654,7 +19766,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[144].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*MultiChanBackup); i {
+			switch v := v.(*ExportChannelBackupRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19666,7 +19778,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[145].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ChanBackupExportRequest); i {
+			switch v := v.(*ChannelBackup); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19678,7 +19790,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[146].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ChanBackupSnapshot); i {
+			switch v := v.(*MultiChanBackup); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19690,7 +19802,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[147].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ChannelBackups); i {
+			switch v := v.(*ChanBackupExportRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19702,7 +19814,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[148].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*RestoreChanBackupRequest); i {
+			switch v := v.(*ChanBackupSnapshot); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19714,7 +19826,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[149].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*RestoreBackupResponse); i {
+			switch v := v.(*ChannelBackups); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19726,7 +19838,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[150].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ChannelBackupSubscription); i {
+			switch v := v.(*RestoreChanBackupRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19738,7 +19850,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[151].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*VerifyChanBackupResponse); i {
+			switch v := v.(*RestoreBackupResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19750,7 +19862,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[152].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*MacaroonPermission); i {
+			switch v := v.(*ChannelBackupSubscription); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19762,7 +19874,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[153].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*BakeMacaroonRequest); i {
+			switch v := v.(*VerifyChanBackupResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19774,7 +19886,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[154].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*BakeMacaroonResponse); i {
+			switch v := v.(*MacaroonPermission); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19786,7 +19898,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[155].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ListMacaroonIDsRequest); i {
+			switch v := v.(*BakeMacaroonRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19798,7 +19910,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[156].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ListMacaroonIDsResponse); i {
+			switch v := v.(*BakeMacaroonResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19810,7 +19922,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[157].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*DeleteMacaroonIDRequest); i {
+			switch v := v.(*ListMacaroonIDsRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19822,7 +19934,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[158].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*DeleteMacaroonIDResponse); i {
+			switch v := v.(*ListMacaroonIDsResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19834,7 +19946,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[159].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*MacaroonPermissionList); i {
+			switch v := v.(*DeleteMacaroonIDRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19846,7 +19958,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[160].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ListPermissionsRequest); i {
+			switch v := v.(*DeleteMacaroonIDResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19858,7 +19970,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[161].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ListPermissionsResponse); i {
+			switch v := v.(*MacaroonPermissionList); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19870,7 +19982,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[162].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*IsOurAddressRequest); i {
+			switch v := v.(*ListPermissionsRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19882,7 +19994,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[163].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*IsOurAddressResponse); i {
+			switch v := v.(*ListPermissionsResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19894,7 +20006,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[164].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*Failure); i {
+			switch v := v.(*IsOurAddressRequest); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19906,7 +20018,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[165].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*ChannelUpdate); i {
+			switch v := v.(*IsOurAddressResponse); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19918,7 +20030,7 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[166].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*MacaroonId); i {
+			switch v := v.(*Failure); i {
 			case 0:
 				return &v.state
 			case 1:
@@ -19930,6 +20042,30 @@ func file_rpc_proto_init() {
 			}
 		}
 		file_rpc_proto_msgTypes[167].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*ChannelUpdate); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_rpc_proto_msgTypes[168].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*MacaroonId); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_rpc_proto_msgTypes[169].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*Op); i {
 			case 0:
 				return &v.state
@@ -19941,7 +20077,7 @@ func file_rpc_proto_init() {
 				return nil
 			}
 		}
-		file_rpc_proto_msgTypes[173].Exporter = func(v interface{}, i int) interface{} {
+		file_rpc_proto_msgTypes[175].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*PendingChannelsResponse_PendingChannel); i {
 			case 0:
 				return &v.state
@@ -19953,7 +20089,7 @@ func file_rpc_proto_init() {
 				return nil
 			}
 		}
-		file_rpc_proto_msgTypes[174].Exporter = func(v interface{}, i int) interface{} {
+		file_rpc_proto_msgTypes[176].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*PendingChannelsResponse_PendingOpenChannel); i {
 			case 0:
 				return &v.state
@@ -19965,7 +20101,7 @@ func file_rpc_proto_init() {
 				return nil
 			}
 		}
-		file_rpc_proto_msgTypes[175].Exporter = func(v interface{}, i int) interface{} {
+		file_rpc_proto_msgTypes[177].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*PendingChannelsResponse_WaitingCloseChannel); i {
 			case 0:
 				return &v.state
@@ -19977,7 +20113,7 @@ func file_rpc_proto_init() {
 				return nil
 			}
 		}
-		file_rpc_proto_msgTypes[176].Exporter = func(v interface{}, i int) interface{} {
+		file_rpc_proto_msgTypes[178].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*PendingChannelsResponse_Commitments); i {
 			case 0:
 				return &v.state
@@ -19989,7 +20125,7 @@ func file_rpc_proto_init() {
 				return nil
 			}
 		}
-		file_rpc_proto_msgTypes[177].Exporter = func(v interface{}, i int) interface{} {
+		file_rpc_proto_msgTypes[179].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*PendingChannelsResponse_ClosedChannel); i {
 			case 0:
 				return &v.state
@@ -20001,7 +20137,7 @@ func file_rpc_proto_init() {
 				return nil
 			}
 		}
-		file_rpc_proto_msgTypes[178].Exporter = func(v interface{}, i int) interface{} {
+		file_rpc_proto_msgTypes[180].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*PendingChannelsResponse_ForceClosedChannel); i {
 			case 0:
 				return &v.state
@@ -20049,11 +20185,11 @@ func file_rpc_proto_init() {
 		(*ChannelEventUpdate_InactiveChannel)(nil),
 		(*ChannelEventUpdate_PendingOpenChannel)(nil),
 	}
-	file_rpc_proto_msgTypes[137].OneofWrappers = []interface{}{
+	file_rpc_proto_msgTypes[139].OneofWrappers = []interface{}{
 		(*PolicyUpdateRequest_Global)(nil),
 		(*PolicyUpdateRequest_ChanPoint)(nil),
 	}
-	file_rpc_proto_msgTypes[148].OneofWrappers = []interface{}{
+	file_rpc_proto_msgTypes[150].OneofWrappers = []interface{}{
 		(*RestoreChanBackupRequest_ChanBackups)(nil),
 		(*RestoreChanBackupRequest_MultiChanBackup)(nil),
 	}
@@ -20063,7 +20199,7 @@ func file_rpc_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_rpc_proto_rawDesc,
 			NumEnums:      18,
-			NumMessages:   189,
+			NumMessages:   191,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
@@ -20314,7 +20450,12 @@ type LightningClient interface {
 	//ListPayments returns a list of all outgoing payments.
 	ListPayments(ctx context.Context, in *ListPaymentsRequest, opts ...grpc.CallOption) (*ListPaymentsResponse, error)
 	//
-	//DeleteAllPayments deletes all outgoing payments from DB.
+	//DeletePayment deletes an outgoing payment from DB. Note that it will not
+	//attempt to delete an In-Flight payment, since that would be unsafe.
+	DeletePayment(ctx context.Context, in *DeletePaymentRequest, opts ...grpc.CallOption) (*DeletePaymentResponse, error)
+	//
+	//DeleteAllPayments deletes all outgoing payments from DB. Note that it will
+	//not attempt to delete In-Flight payments, since that would be unsafe.
 	DeleteAllPayments(ctx context.Context, in *DeleteAllPaymentsRequest, opts ...grpc.CallOption) (*DeleteAllPaymentsResponse, error)
 	// lncli: `describegraph`
 	//DescribeGraph returns a description of the latest graph state from the
@@ -20998,6 +21139,15 @@ func (c *lightningClient) ListPayments(ctx context.Context, in *ListPaymentsRequ
 	return out, nil
 }
 
+func (c *lightningClient) DeletePayment(ctx context.Context, in *DeletePaymentRequest, opts ...grpc.CallOption) (*DeletePaymentResponse, error) {
+	out := new(DeletePaymentResponse)
+	err := c.cc.Invoke(ctx, "/lnrpc.Lightning/DeletePayment", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *lightningClient) DeleteAllPayments(ctx context.Context, in *DeleteAllPaymentsRequest, opts ...grpc.CallOption) (*DeleteAllPaymentsResponse, error) {
 	out := new(DeleteAllPaymentsResponse)
 	err := c.cc.Invoke(ctx, "/lnrpc.Lightning/DeleteAllPayments", in, out, opts...)
@@ -21477,7 +21627,12 @@ type LightningServer interface {
 	//ListPayments returns a list of all outgoing payments.
 	ListPayments(context.Context, *ListPaymentsRequest) (*ListPaymentsResponse, error)
 	//
-	//DeleteAllPayments deletes all outgoing payments from DB.
+	//DeletePayment deletes an outgoing payment from DB. Note that it will not
+	//attempt to delete an In-Flight payment, since that would be unsafe.
+	DeletePayment(context.Context, *DeletePaymentRequest) (*DeletePaymentResponse, error)
+	//
+	//DeleteAllPayments deletes all outgoing payments from DB. Note that it will
+	//not attempt to delete In-Flight payments, since that would be unsafe.
 	DeleteAllPayments(context.Context, *DeleteAllPaymentsRequest) (*DeleteAllPaymentsResponse, error)
 	// lncli: `describegraph`
 	//DescribeGraph returns a description of the latest graph state from the
@@ -21728,6 +21883,9 @@ func (*UnimplementedLightningServer) DecodePayReq(context.Context, *PayReqString
 }
 func (*UnimplementedLightningServer) ListPayments(context.Context, *ListPaymentsRequest) (*ListPaymentsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListPayments not implemented")
+}
+func (*UnimplementedLightningServer) DeletePayment(context.Context, *DeletePaymentRequest) (*DeletePaymentResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method DeletePayment not implemented")
 }
 func (*UnimplementedLightningServer) DeleteAllPayments(context.Context, *DeleteAllPaymentsRequest) (*DeleteAllPaymentsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeleteAllPayments not implemented")
@@ -22511,6 +22669,24 @@ func _Lightning_ListPayments_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Lightning_DeletePayment_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeletePaymentRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(LightningServer).DeletePayment(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/lnrpc.Lightning/DeletePayment",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(LightningServer).DeletePayment(ctx, req.(*DeletePaymentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Lightning_DeleteAllPayments_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DeleteAllPaymentsRequest)
 	if err := dec(in); err != nil {
@@ -23046,6 +23222,10 @@ var _Lightning_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListPayments",
 			Handler:    _Lightning_ListPayments_Handler,
+		},
+		{
+			MethodName: "DeletePayment",
+			Handler:    _Lightning_DeletePayment_Handler,
 		},
 		{
 			MethodName: "DeleteAllPayments",
