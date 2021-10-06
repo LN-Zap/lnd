@@ -4726,12 +4726,15 @@ func testListChannels(net *lntest.NetworkHarness, t *harnessTest) {
 	// Check the returned response is correct.
 	aliceChannel := resp.Channels[0]
 
+	// Calculate the dust limit we'll use for the test.
+	dustLimit := lnwallet.DustLimitForSize(input.UnknownWitnessSize)
+
 	// defaultConstraints is a ChannelConstraints with default values. It is
 	// used to test against Alice's local channel constraints.
 	defaultConstraints := &lnrpc.ChannelConstraints{
 		CsvDelay:          4,
 		ChanReserveSat:    1000,
-		DustLimitSat:      uint64(lnwallet.DefaultDustLimit()),
+		DustLimitSat:      uint64(dustLimit),
 		MaxPendingAmtMsat: 99000000,
 		MinHtlcMsat:       1,
 		MaxAcceptedHtlcs:  bobRemoteMaxHtlcs,
@@ -4747,7 +4750,7 @@ func testListChannels(net *lntest.NetworkHarness, t *harnessTest) {
 	customizedConstraints := &lnrpc.ChannelConstraints{
 		CsvDelay:          4,
 		ChanReserveSat:    1000,
-		DustLimitSat:      uint64(lnwallet.DefaultDustLimit()),
+		DustLimitSat:      uint64(dustLimit),
 		MaxPendingAmtMsat: 99000000,
 		MinHtlcMsat:       customizedMinHtlc,
 		MaxAcceptedHtlcs:  aliceRemoteMaxHtlcs,
@@ -11655,6 +11658,7 @@ func TestLightningNetworkDaemon(t *testing.T) {
 	// TODO(roasbeef): create master balanced channel with all the monies?
 	aliceBobArgs := []string{
 		"--default-remote-max-htlcs=483",
+		"--dust-threshold=5000000",
 	}
 
 	// Run the subset of the test cases selected in this tranche.
