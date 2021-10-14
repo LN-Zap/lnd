@@ -5079,60 +5079,13 @@ func (r *rpcServer) SubscribeTransactions(req *lnrpc.GetTransactionsRequest,
 	for {
 		select {
 		case tx := <-txClient.ConfirmedTransactions():
-			destAddresses := make([]string, 0, len(tx.DestAddresses))
-			for _, destAddress := range tx.DestAddresses {
-				destAddresses = append(destAddresses, destAddress.EncodeAddress())
-			}
-
-			destOutputs := make([]*lnrpc.DestOutput, 0, len(tx.DestOutputs))
-			for _, destOutput := range tx.DestOutputs {
-				destOutputs = append(destOutputs, &lnrpc.DestOutput{
-					PkScript:     hex.EncodeToString(destOutput.PkScript),
-					OutputIndex:  int64(destOutput.OutputIndex),
-					Amount:       int64(destOutput.Value),
-					IsOurAddress: destOutput.IsOurAddress,
-				})
-			}
-			detail := &lnrpc.Transaction{
-				TxHash:           tx.Hash.String(),
-				Amount:           int64(tx.Value),
-				NumConfirmations: tx.NumConfirmations,
-				BlockHash:        tx.BlockHash.String(),
-				BlockHeight:      tx.BlockHeight,
-				TimeStamp:        tx.Timestamp,
-				TotalFees:        tx.TotalFees,
-				DestAddresses:    destAddresses,
-				DestOutputs:      destOutputs,
-				RawTxHex:         hex.EncodeToString(tx.RawTx),
-			}
+			detail := lnrpc.RPCTransaction(tx)
 			if err := updateStream.Send(detail); err != nil {
 				return err
 			}
 
 		case tx := <-txClient.UnconfirmedTransactions():
-			var destAddresses []string
-			for _, destAddress := range tx.DestAddresses {
-				destAddresses = append(destAddresses, destAddress.EncodeAddress())
-			}
-
-			destOutputs := make([]*lnrpc.DestOutput, 0, len(tx.DestOutputs))
-			for _, destOutput := range tx.DestOutputs {
-				destOutputs = append(destOutputs, &lnrpc.DestOutput{
-					PkScript:     hex.EncodeToString(destOutput.PkScript),
-					OutputIndex:  int64(destOutput.OutputIndex),
-					Amount:       int64(destOutput.Value),
-					IsOurAddress: destOutput.IsOurAddress,
-				})
-			}
-			detail := &lnrpc.Transaction{
-				TxHash:        tx.Hash.String(),
-				Amount:        int64(tx.Value),
-				TimeStamp:     tx.Timestamp,
-				TotalFees:     tx.TotalFees,
-				DestAddresses: destAddresses,
-				DestOutputs:   destOutputs,
-				RawTxHex:      hex.EncodeToString(tx.RawTx),
-			}
+			detail := lnrpc.RPCTransaction(tx)
 			if err := updateStream.Send(detail); err != nil {
 				return err
 			}

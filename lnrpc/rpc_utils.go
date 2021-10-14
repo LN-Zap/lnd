@@ -9,6 +9,46 @@ import (
 	"github.com/lightningnetwork/lnd/lnwallet"
 )
 
+// RPCTransaction returns a rpc transaction.
+func RPCTransaction(tx *lnwallet.TransactionDetail) *Transaction {
+	var destAddresses []string
+	for _, destAddress := range tx.DestAddresses {
+		destAddresses = append(destAddresses, destAddress.EncodeAddress())
+	}
+
+	// Re-package destination output information.
+	var destOutputs []*DestOutput
+	for _, o := range tx.DestOutputs {
+		destOutputs = append(destOutputs, &DestOutput{
+			PkScript:     hex.EncodeToString(o.PkScript),
+			OutputIndex:  int64(o.OutputIndex),
+			Amount:       int64(o.Value),
+			IsOurAddress: o.IsOurAddress,
+		})
+	}
+
+	// We also get unconfirmed transactions, so BlockHash can be
+	// nil.
+	blockHash := ""
+	if tx.BlockHash != nil {
+		blockHash = tx.BlockHash.String()
+	}
+
+	return &Transaction{
+		TxHash:           tx.Hash.String(),
+		NumConfirmations: tx.NumConfirmations,
+		Amount:           int64(tx.Value),
+		BlockHash:        blockHash,
+		BlockHeight:      tx.BlockHeight,
+		TotalFees:        tx.TotalFees,
+		TimeStamp:        tx.Timestamp,
+		DestAddresses:    destAddresses,
+		DestOutputs:      destOutputs,
+		RawTxHex:         hex.EncodeToString(tx.RawTx),
+		Label:            tx.Label,
+	}
+}
+
 // RPCTransactionDetails returns a set of rpc transaction details.
 func RPCTransactionDetails(txns []*lnwallet.TransactionDetail) *TransactionDetails {
 	txDetails := &TransactionDetails{
@@ -16,42 +56,7 @@ func RPCTransactionDetails(txns []*lnwallet.TransactionDetail) *TransactionDetai
 	}
 
 	for i, tx := range txns {
-		var destAddresses []string
-		for _, destAddress := range tx.DestAddresses {
-			destAddresses = append(destAddresses, destAddress.EncodeAddress())
-		}
-
-		// Re-package destination output information.
-		var destOutputs []*DestOutput
-		for _, o := range tx.DestOutputs {
-			destOutputs = append(destOutputs, &DestOutput{
-				PkScript:     hex.EncodeToString(o.PkScript),
-				OutputIndex:  int64(o.OutputIndex),
-				Amount:       int64(o.Value),
-				IsOurAddress: o.IsOurAddress,
-			})
-		}
-
-		// We also get unconfirmed transactions, so BlockHash can be
-		// nil.
-		blockHash := ""
-		if tx.BlockHash != nil {
-			blockHash = tx.BlockHash.String()
-		}
-
-		txDetails.Transactions[i] = &Transaction{
-			TxHash:           tx.Hash.String(),
-			Amount:           int64(tx.Value),
-			NumConfirmations: tx.NumConfirmations,
-			BlockHash:        blockHash,
-			BlockHeight:      tx.BlockHeight,
-			TimeStamp:        tx.Timestamp,
-			TotalFees:        tx.TotalFees,
-			DestAddresses:    destAddresses,
-			DestOutputs:      destOutputs,
-			RawTxHex:         hex.EncodeToString(tx.RawTx),
-			Label:            tx.Label,
-		}
+		txDetails.Transactions[i] = RPCTransaction(tx)
 	}
 
 	// Sort transactions by number of confirmations rather than height so
