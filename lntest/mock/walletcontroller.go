@@ -210,6 +210,11 @@ func (w *WalletController) GetRecoveryInfo() (bool, float64, error) {
 	return true, float64(1), nil
 }
 
+// PrivKeyFromAddress
+func (w *WalletController) PrivKeyForAddress(address btcutil.Address) (*btcec.PrivateKey, error) {
+	return nil, nil
+}
+
 // Start currently does nothing.
 func (w *WalletController) Start() error {
 	return nil

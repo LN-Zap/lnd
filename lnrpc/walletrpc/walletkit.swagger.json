@@ -1392,6 +1392,15 @@
         }
       }
     },
+    "walletrpcSignMessageFromAddressResponse": {
+      "type": "object",
+      "properties": {
+        "signature": {
+          "type": "string",
+          "title": "The signature to be verified over the given message"
+        }
+      }
+    },
     "walletrpcTransaction": {
       "type": "object",
       "properties": {
