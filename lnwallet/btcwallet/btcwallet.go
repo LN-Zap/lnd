@@ -1447,3 +1447,7 @@ func (b *BtcWallet) GetRecoveryInfo() (bool, float64, error) {
 
 	return isRecoveryMode, progress, nil
 }
+
+func (b *BtcWallet) PrivKeyForAddress(address btcutil.Address) (*btcec.PrivateKey, error) {
+	return b.wallet.PrivKeyForAddress(address)
+}

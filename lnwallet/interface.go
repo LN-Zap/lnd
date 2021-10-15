@@ -400,6 +400,10 @@ type WalletController interface {
 	// recovery progress made so far.
 	GetRecoveryInfo() (bool, float64, error)
 
+	// PrivKeyForAddress looks up the associated private key for a P2PKH or P2PK
+	// address.
+	PrivKeyForAddress(address btcutil.Address) (*btcec.PrivateKey, error)
+
 	// Start initializes the wallet, making any necessary connections,
 	// starting up required goroutines etc.
 	Start() error
