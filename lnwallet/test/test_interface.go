@@ -1424,7 +1424,7 @@ func testTransactionSubscriptions(miner *rpctest.Harness,
 	// First, check to see if this wallet meets the TransactionNotifier
 	// interface, if not then we'll skip this test for this particular
 	// implementation of the WalletController.
-	txClient, err := alice.SubscribeTransactions()
+	txClient, err := alice.SubscribeTransactions(nil)
 	if err != nil {
 		t.Skipf("unable to generate tx subscription: %v", err)
 	}

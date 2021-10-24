@@ -28,8 +28,10 @@ import (
 	"github.com/lightningnetwork/lnd/blockcache"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/kvdb"
+	"github.com/lightningnetwork/lnd/labels"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwallet/chainfee"
+	lndwire "github.com/lightningnetwork/lnd/lnwire"
 )
 
 const (
@@ -1238,7 +1240,7 @@ func (t *txSubscriptionClient) Cancel() {
 // notificationProxier proxies the notifications received by the underlying
 // wallet's notification client to a higher-level TransactionSubscription
 // client.
-func (t *txSubscriptionClient) notificationProxier() {
+func (t *txSubscriptionClient) notificationProxier(channelRundown func() ([]lnwallet.ChannelRundown, error)) {
 	defer t.wg.Done()
 
 out:
@@ -1272,6 +1274,8 @@ out:
 			// notifications for any newly unconfirmed transactions.
 			go func() {
 				for _, tx := range txNtfn.UnminedTransactions {
+					ensureCorrectLabel(channelRundown, &tx)
+
 					detail, err := unminedTransactionsToDetail(
 						tx, t.w.ChainParams(),
 					)
@@ -1292,13 +1296,66 @@ out:
 	}
 }
 
+// ensureCorrectLabel ensures that the correct label is set for the forwarded transaction.
+// It's possible that, during channel closure, the peer broadcasts the closure transaction
+// before us, therefore leading to us forwarding the transaction without the proper label.
+func ensureCorrectLabel(channelRundown func() ([]lnwallet.ChannelRundown, error), tx *base.TransactionSummary) {
+	if tx.Label != "" {
+		return
+	}
+
+	closedChannelID, _ := findChannelClosedByTxn(channelRundown, tx.Transaction)
+	if closedChannelID == nil {
+		return
+	}
+
+	tx.Label = labels.MakeLabel(
+		labels.LabelTypeChannelClose, closedChannelID,
+	)
+}
+
+func findChannelClosedByTxn(channelRundown func() ([]lnwallet.ChannelRundown, error), rawTx []byte) (*lndwire.ShortChannelID, error) {
+	if channelRundown == nil {
+		return nil, nil
+	}
+
+	msgTx := wire.NewMsgTx(wire.TxVersion)
+	err := msgTx.Deserialize(bytes.NewReader(rawTx))
+
+	if len(msgTx.TxIn) != 1 {
+		return nil, nil
+	}
+
+	txOutpoint := msgTx.TxIn[0].PreviousOutPoint
+
+	if err != nil {
+		return nil, err
+	}
+
+	if channelRundown != nil {
+		channels, err := channelRundown()
+		if err != nil {
+			return nil, err
+		}
+
+		for _, channel := range channels {
+			fundingOutput := channel.ChanPoint
+			if fundingOutput.Hash.IsEqual(&txOutpoint.Hash) && fundingOutput.Index == txOutpoint.Index {
+				return &channel.ShortChanID, nil
+			}
+		}
+	}
+
+	return nil, nil
+}
+
 // SubscribeTransactions returns a TransactionSubscription client which
 // is capable of receiving async notifications as new transactions
 // related to the wallet are seen within the network, or found in
 // blocks.
 //
 // This is a part of the WalletController interface.
-func (b *BtcWallet) SubscribeTransactions() (lnwallet.TransactionSubscription, error) {
+func (b *BtcWallet) SubscribeTransactions(channelRundown func() ([]lnwallet.ChannelRundown, error)) (lnwallet.TransactionSubscription, error) {
 	walletClient := b.wallet.NtfnServer.TransactionNotifications()
 
 	txClient := &txSubscriptionClient{
@@ -1309,7 +1366,7 @@ func (b *BtcWallet) SubscribeTransactions() (lnwallet.TransactionSubscription, e
 		quit:        make(chan struct{}),
 	}
 	txClient.wg.Add(1)
-	go txClient.notificationProxier()
+	go txClient.notificationProxier(channelRundown)
 
 	return txClient, nil
 }

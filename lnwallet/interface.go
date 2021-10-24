@@ -17,6 +17,7 @@ import (
 	"github.com/btcsuite/btcwallet/wtxmgr"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/lnwallet/chainfee"
+	"github.com/lightningnetwork/lnd/lnwire"
 )
 
 const (
@@ -387,7 +388,7 @@ type WalletController interface {
 	// supported.
 	//
 	// TODO(roasbeef): make distinct interface?
-	SubscribeTransactions() (TransactionSubscription, error)
+	SubscribeTransactions(channelRundown func() ([]ChannelRundown, error)) (TransactionSubscription, error)
 
 	// IsSynced returns a boolean indicating if from the PoV of the wallet,
 	// it has fully synced to the current best block in the main chain.
@@ -416,6 +417,11 @@ type WalletController interface {
 	// which could be e.g. btcd, bitcoind, neutrino, or another consensus
 	// service.
 	BackEnd() string
+}
+
+type ChannelRundown struct {
+	ChanPoint   wire.OutPoint
+	ShortChanID lnwire.ShortChannelID
 }
 
 // BlockChainIO is a dedicated source which will be used to obtain queries

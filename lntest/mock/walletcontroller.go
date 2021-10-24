@@ -194,7 +194,7 @@ func (w *WalletController) LabelTransaction(_ chainhash.Hash, _ string,
 }
 
 // SubscribeTransactions currently does nothing.
-func (w *WalletController) SubscribeTransactions() (lnwallet.TransactionSubscription,
+func (w *WalletController) SubscribeTransactions(channelRundown func() ([]lnwallet.ChannelRundown, error)) (lnwallet.TransactionSubscription,
 	error) {
 
 	return nil, nil

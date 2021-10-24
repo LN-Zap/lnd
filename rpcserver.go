@@ -5069,7 +5069,21 @@ func (r *rpcServer) SubscribeInvoices(req *lnrpc.InvoiceSubscription,
 func (r *rpcServer) SubscribeTransactions(req *lnrpc.GetTransactionsRequest,
 	updateStream lnrpc.Lightning_SubscribeTransactionsServer) error {
 
-	txClient, err := r.server.cc.Wallet.SubscribeTransactions()
+	txClient, err := r.server.cc.Wallet.SubscribeTransactions(func() ([]lnwallet.ChannelRundown, error) {
+		channels, err := r.server.remoteChanDB.FetchWaitingCloseChannels()
+		if err != nil {
+			return nil, err
+		}
+
+		var result []lnwallet.ChannelRundown
+		for _, channel := range channels {
+			result = append(result, lnwallet.ChannelRundown{
+				ChanPoint:   channel.FundingOutpoint,
+				ShortChanID: channel.ShortChannelID,
+			})
+		}
+		return result, nil
+	})
 	if err != nil {
 		return err
 	}
