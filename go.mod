@@ -83,4 +83,6 @@ replace git.schwanenlied.me/yawning/bsaes.git => github.com/Yawning/bsaes v0.0.0
 // See https://github.com/etcd-io/etcd/issues/11154
 replace go.etcd.io/etcd => go.etcd.io/etcd v0.5.0-alpha.5.0.20201125193152-8a03d2e9614b
 
+replace github.com/btcsuite/btcwallet => github.com/LN-Zap/btcwallet v0.12.1-0.20211026120124-c24264fe39c2
+
 go 1.15
