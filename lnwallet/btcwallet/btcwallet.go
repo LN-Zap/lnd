@@ -1327,6 +1327,8 @@ func findChannelClosedByTxn(channelRundown func() ([]lnwallet.ChannelRundown, er
 		return nil, nil
 	}
 
+	// Check that there is only a single input to
+	// guarantee the transaction has a single purpose.
 	if len(msgTx.TxIn) != 1 {
 		return nil, nil
 	}
