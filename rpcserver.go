@@ -5069,7 +5069,9 @@ func (r *rpcServer) SubscribeInvoices(req *lnrpc.InvoiceSubscription,
 func (r *rpcServer) SubscribeTransactions(req *lnrpc.GetTransactionsRequest,
 	updateStream lnrpc.Lightning_SubscribeTransactionsServer) error {
 
-	txClient, err := r.server.cc.Wallet.SubscribeTransactions(func() ([]lnwallet.ChannelRundown, error) {
+	// Note: starting with LND 0.14 r.server.remoteChanDB will no longer exist
+	// and r.server.chanStateDB should be used instead.
+	channelRundown := func() ([]lnwallet.ChannelRundown, error) {
 		channels, err := r.server.remoteChanDB.FetchWaitingCloseChannels()
 		if err != nil {
 			return nil, err
@@ -5083,7 +5085,9 @@ func (r *rpcServer) SubscribeTransactions(req *lnrpc.GetTransactionsRequest,
 			})
 		}
 		return result, nil
-	})
+	}
+
+	txClient, err := r.server.cc.Wallet.SubscribeTransactions(channelRundown)
 	if err != nil {
 		return err
 	}
