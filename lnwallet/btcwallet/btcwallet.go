@@ -986,6 +986,7 @@ func minedTransactionsToDetails(
 func unminedTransactionsToDetail(
 	summary base.TransactionSummary,
 	chainParams *chaincfg.Params,
+	channelRundown func() ([]lnwallet.ChannelRundown, error),
 ) (*lnwallet.TransactionDetail, error) {
 
 	wireTx := &wire.MsgTx{}
@@ -1034,6 +1035,8 @@ func unminedTransactionsToDetail(
 		RawTx:         summary.Transaction,
 		Label:         summary.Label,
 	}
+
+	ensureCorrectLabel(channelRundown, txDetail, wireTx)
 
 	balanceDelta, err := extractBalanceDelta(summary, wireTx)
 	if err != nil {
@@ -1087,7 +1090,7 @@ func (b *BtcWallet) ListTransactionDetails(startHeight, endHeight int32,
 		txDetails = append(txDetails, details...)
 	}
 	for _, tx := range txns.UnminedTransactions {
-		detail, err := unminedTransactionsToDetail(tx, b.netParams)
+		detail, err := unminedTransactionsToDetail(tx, b.netParams, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -1274,10 +1277,8 @@ out:
 			// notifications for any newly unconfirmed transactions.
 			go func() {
 				for _, tx := range txNtfn.UnminedTransactions {
-					ensureCorrectLabel(channelRundown, &tx)
-
 					detail, err := unminedTransactionsToDetail(
-						tx, t.w.ChainParams(),
+						tx, t.w.ChainParams(), channelRundown,
 					)
 					if err != nil {
 						continue
@@ -1299,28 +1300,32 @@ out:
 // ensureCorrectLabel ensures that the correct label is set for the forwarded transaction.
 // It's possible that, during channel closure, the peer broadcasts the closure transaction
 // before us, therefore leading to us forwarding the transaction without the proper label.
-func ensureCorrectLabel(channelRundown func() ([]lnwallet.ChannelRundown, error), tx *base.TransactionSummary) {
-	if tx.Label != "" {
-		return
+func ensureCorrectLabel(channelRundown func() ([]lnwallet.ChannelRundown, error),
+	detail *lnwallet.TransactionDetail, tx *wire.MsgTx) error {
+
+	if len(detail.Label) != 0 {
+		return nil
 	}
 
-	closedChannelID, _ := findChannelClosedByTxn(channelRundown, tx.Transaction)
+	closedChannelID, err := findChannelClosedByTxn(channelRundown, tx)
+	if err != nil {
+		return err
+	}
 	if closedChannelID == nil {
-		return
+		return nil
 	}
 
-	tx.Label = labels.MakeLabel(
+	detail.Label = labels.MakeLabel(
 		labels.LabelTypeChannelClose, closedChannelID,
 	)
+
+	return nil
 }
 
-func findChannelClosedByTxn(channelRundown func() ([]lnwallet.ChannelRundown, error), rawTx []byte) (*lndwire.ShortChannelID, error) {
+func findChannelClosedByTxn(channelRundown func() ([]lnwallet.ChannelRundown, error), msgTx *wire.MsgTx) (*lndwire.ShortChannelID, error) {
 	if channelRundown == nil {
 		return nil, nil
 	}
-
-	msgTx := wire.NewMsgTx(wire.TxVersion)
-	err := msgTx.Deserialize(bytes.NewReader(rawTx))
 
 	if len(msgTx.TxIn) != 1 {
 		return nil, nil
@@ -1328,21 +1333,15 @@ func findChannelClosedByTxn(channelRundown func() ([]lnwallet.ChannelRundown, er
 
 	txOutpoint := msgTx.TxIn[0].PreviousOutPoint
 
+	channels, err := channelRundown()
 	if err != nil {
 		return nil, err
 	}
 
-	if channelRundown != nil {
-		channels, err := channelRundown()
-		if err != nil {
-			return nil, err
-		}
-
-		for _, channel := range channels {
-			fundingOutput := channel.ChanPoint
-			if fundingOutput.Hash.IsEqual(&txOutpoint.Hash) && fundingOutput.Index == txOutpoint.Index {
-				return &channel.ShortChanID, nil
-			}
+	for _, channel := range channels {
+		fundingOutput := channel.ChanPoint
+		if fundingOutput.Hash.IsEqual(&txOutpoint.Hash) && fundingOutput.Index == txOutpoint.Index {
+			return &channel.ShortChanID, nil
 		}
 	}
 
