@@ -1341,8 +1341,8 @@ func findChannelClosedByTxn(channelRundown func() ([]lnwallet.ChannelRundown, er
 	}
 
 	for _, channel := range channels {
-		fundingOutput := channel.ChanPoint
-		if fundingOutput.Hash.IsEqual(&txOutpoint.Hash) && fundingOutput.Index == txOutpoint.Index {
+		fundingOutpoint := channel.ChanPoint
+		if fundingOutpoint == txOutpoint {
 			return &channel.ShortChanID, nil
 		}
 	}
