@@ -28,8 +28,10 @@ import (
 	"github.com/lightningnetwork/lnd/blockcache"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/kvdb"
+	"github.com/lightningnetwork/lnd/labels"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwallet/chainfee"
+	lndwire "github.com/lightningnetwork/lnd/lnwire"
 )
 
 const (
@@ -984,6 +986,7 @@ func minedTransactionsToDetails(
 func unminedTransactionsToDetail(
 	summary base.TransactionSummary,
 	chainParams *chaincfg.Params,
+	channelRundown func() ([]lnwallet.ChannelRundown, error),
 ) (*lnwallet.TransactionDetail, error) {
 
 	wireTx := &wire.MsgTx{}
@@ -1031,6 +1034,11 @@ func unminedTransactionsToDetail(
 		DestOutputs:   destOutputs,
 		RawTx:         summary.Transaction,
 		Label:         summary.Label,
+	}
+
+	err := ensureCorrectLabel(channelRundown, txDetail, wireTx)
+	if err != nil {
+		return nil, err
 	}
 
 	balanceDelta, err := extractBalanceDelta(summary, wireTx)
@@ -1085,7 +1093,7 @@ func (b *BtcWallet) ListTransactionDetails(startHeight, endHeight int32,
 		txDetails = append(txDetails, details...)
 	}
 	for _, tx := range txns.UnminedTransactions {
-		detail, err := unminedTransactionsToDetail(tx, b.netParams)
+		detail, err := unminedTransactionsToDetail(tx, b.netParams, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -1238,7 +1246,7 @@ func (t *txSubscriptionClient) Cancel() {
 // notificationProxier proxies the notifications received by the underlying
 // wallet's notification client to a higher-level TransactionSubscription
 // client.
-func (t *txSubscriptionClient) notificationProxier() {
+func (t *txSubscriptionClient) notificationProxier(channelRundown func() ([]lnwallet.ChannelRundown, error)) {
 	defer t.wg.Done()
 
 out:
@@ -1273,7 +1281,7 @@ out:
 			go func() {
 				for _, tx := range txNtfn.UnminedTransactions {
 					detail, err := unminedTransactionsToDetail(
-						tx, t.w.ChainParams(),
+						tx, t.w.ChainParams(), channelRundown,
 					)
 					if err != nil {
 						continue
@@ -1292,13 +1300,66 @@ out:
 	}
 }
 
+// ensureCorrectLabel ensures that the correct label is set for the forwarded transaction.
+// It's possible that, during channel closure, the peer broadcasts the closure transaction
+// before us, therefore leading to us forwarding the transaction without the proper label.
+func ensureCorrectLabel(channelRundown func() ([]lnwallet.ChannelRundown, error),
+	detail *lnwallet.TransactionDetail, tx *wire.MsgTx) error {
+
+	if len(detail.Label) != 0 {
+		return nil
+	}
+
+	closedChannelID, err := findChannelClosedByTxn(channelRundown, tx)
+	if err != nil {
+		return err
+	}
+	if closedChannelID == nil {
+		return nil
+	}
+
+	detail.Label = labels.MakeLabel(
+		labels.LabelTypeChannelClose, closedChannelID,
+	)
+
+	return nil
+}
+
+func findChannelClosedByTxn(channelRundown func() ([]lnwallet.ChannelRundown, error), msgTx *wire.MsgTx) (*lndwire.ShortChannelID, error) {
+	if channelRundown == nil {
+		return nil, nil
+	}
+
+	// Check that there is only a single input to
+	// guarantee the transaction has a single purpose.
+	if len(msgTx.TxIn) != 1 {
+		return nil, nil
+	}
+
+	txOutpoint := msgTx.TxIn[0].PreviousOutPoint
+
+	channels, err := channelRundown()
+	if err != nil {
+		return nil, err
+	}
+
+	for _, channel := range channels {
+		fundingOutpoint := channel.ChanPoint
+		if fundingOutpoint == txOutpoint {
+			return &channel.ShortChanID, nil
+		}
+	}
+
+	return nil, nil
+}
+
 // SubscribeTransactions returns a TransactionSubscription client which
 // is capable of receiving async notifications as new transactions
 // related to the wallet are seen within the network, or found in
 // blocks.
 //
 // This is a part of the WalletController interface.
-func (b *BtcWallet) SubscribeTransactions() (lnwallet.TransactionSubscription, error) {
+func (b *BtcWallet) SubscribeTransactions(channelRundown func() ([]lnwallet.ChannelRundown, error)) (lnwallet.TransactionSubscription, error) {
 	walletClient := b.wallet.NtfnServer.TransactionNotifications()
 
 	txClient := &txSubscriptionClient{
@@ -1309,7 +1370,7 @@ func (b *BtcWallet) SubscribeTransactions() (lnwallet.TransactionSubscription, e
 		quit:        make(chan struct{}),
 	}
 	txClient.wg.Add(1)
-	go txClient.notificationProxier()
+	go txClient.notificationProxier(channelRundown)
 
 	return txClient, nil
 }

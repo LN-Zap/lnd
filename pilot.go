@@ -294,7 +294,9 @@ func initAutoPilot(svr *server, cfg *lncfg.AutoPilot,
 				Node:    autopilot.NewNodeID(channel.IdentityPub),
 			}, nil
 		},
-		SubscribeTransactions: svr.cc.Wallet.SubscribeTransactions,
-		SubscribeTopology:     svr.chanRouter.SubscribeTopology,
+		SubscribeTransactions: func() (lnwallet.TransactionSubscription, error) {
+			return svr.cc.Wallet.SubscribeTransactions(nil)
+		},
+		SubscribeTopology: svr.chanRouter.SubscribeTopology,
 	}, nil
 }
