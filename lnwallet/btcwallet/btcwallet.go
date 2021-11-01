@@ -1036,7 +1036,10 @@ func unminedTransactionsToDetail(
 		Label:         summary.Label,
 	}
 
-	ensureCorrectLabel(channelRundown, txDetail, wireTx)
+	err := ensureCorrectLabel(channelRundown, txDetail, wireTx)
+	if err != nil {
+		return nil, err
+	}
 
 	balanceDelta, err := extractBalanceDelta(summary, wireTx)
 	if err != nil {
