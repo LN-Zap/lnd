@@ -1050,6 +1050,50 @@ func unminedTransactionsToDetail(
 	return txDetail, nil
 }
 
+// GetTransaction returns data for any transaction given its id, even if it is
+// not part of the internal wallet. The returned data is a transaction detail
+// with relevant data for a confirmed or unconfirmed transaction.
+func (b *BtcWallet) GetTransaction(hash *chainhash.Hash) (
+	*lnwallet.TransactionDetail, bool, error) {
+
+	res, inDB, err := b.wallet.GetTransaction(hash)
+	if err != nil {
+		return nil, false, err
+	}
+
+	// Grab the best block the wallet knows of, we'll use this to calculate
+	// # of confirmations shortly below.
+	bestBlock := b.wallet.Manager.SyncedTo()
+	currentHeight := bestBlock.Height
+
+	var detail *lnwallet.TransactionDetail
+
+	if res.MinedTransaction != nil {
+		details, err := minedTransactionsToDetails(
+			currentHeight, *res.MinedTransaction, b.netParams,
+		)
+		if err != nil {
+			return nil, false, err
+		}
+
+		if len(details) != 1 {
+			return nil, false, errors.New("received more than a " +
+				"single transaction")
+		}
+
+		detail = details[0]
+	} else {
+		detail, err = unminedTransactionsToDetail(
+			*res.UnminedTransaction, b.netParams, nil,
+		)
+		if err != nil {
+			return nil, false, err
+		}
+	}
+
+	return detail, inDB, nil
+}
+
 // ListTransactionDetails returns a list of all transactions which are relevant
 // to the wallet over [startHeight;endHeight]. If start height is greater than
 // end height, the transactions will be retrieved in reverse order. To include

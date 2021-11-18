@@ -405,6 +405,10 @@ type WalletController interface {
 	// address.
 	PrivKeyForAddress(address btcutil.Address) (*btcec.PrivateKey, error)
 
+	// GetTransaction returns data for any transaction given its id, even if
+	// it is not part of the internal wallet.
+	GetTransaction(hash *chainhash.Hash) (*TransactionDetail, bool, error)
+
 	// Start initializes the wallet, making any necessary connections,
 	// starting up required goroutines etc.
 	Start() error
