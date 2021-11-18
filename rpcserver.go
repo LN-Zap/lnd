@@ -520,6 +520,10 @@ func MainRPCServerPermissions() map[string][]bakery.Op {
 			Entity: "info",
 			Action: "read",
 		}},
+		"/lnrpc.Lightning/GetTransaction": {{
+			Entity: "info",
+			Action: "read",
+		}},
 	}
 }
 
@@ -5116,6 +5120,37 @@ func (r *rpcServer) SubscribeTransactions(req *lnrpc.GetTransactionsRequest,
 			return nil
 		}
 	}
+}
+
+// GetTransaction returns data for any transaction given its id, even if it is
+// not part of the internal wallet. The response contains a transaction detail
+// with relevant data for a confirmed or unconfirmed transaction. The is
+// relevant field denotes if the transaction is relevant to the internal wallet,
+// hence exists in the transactino store.
+func (r *rpcServer) GetTransaction(ctx context.Context,
+	req *lnrpc.GetTransactionRequest) (*lnrpc.GetTransactionResponse,
+	error) {
+
+	reversed := make([]byte, len(req.Txid))
+	for i, n := range req.Txid {
+		j := len(req.Txid) - i - 1
+		reversed[j] = n
+	}
+
+	hash, err := chainhash.NewHash(reversed)
+	if err != nil {
+		return nil, err
+	}
+
+	detail, inDB, err := r.server.cc.Wallet.GetTransaction(hash)
+	if err != nil {
+		return nil, err
+	}
+
+	return &lnrpc.GetTransactionResponse{
+		Transaction: lnrpc.RPCTransaction(detail),
+		IsRelevant:  inDB,
+	}, nil
 }
 
 // GetTransactions returns a list of describing all the known transactions

@@ -4170,6 +4170,20 @@
         }
       }
     },
+    "lnrpcGetTransactionResponse": {
+      "type": "object",
+      "properties": {
+        "transaction": {
+          "$ref": "#/definitions/lnrpcTransaction",
+          "description": "The data on the transaction."
+        },
+        "is_relevant": {
+          "type": "boolean",
+          "format": "boolean",
+          "description": "Returns true if the transaction is considered relevant for the internal\nwallet."
+        }
+      }
+    },
     "lnrpcGraphTopologyUpdate": {
       "type": "object",
       "properties": {
