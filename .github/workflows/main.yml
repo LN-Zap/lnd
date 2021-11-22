@@ -26,6 +26,9 @@ env:
   # /.github/workflows/release.yml
   GO_VERSION: 1.16.3
 
+  # Configure Go to prevent proxying the private repository.
+  GOPRIVATE: "github.com/LN-Zap/btcwallet-strike"
+
 jobs:
   ########################
   # RPC and mobile compilation check
@@ -34,6 +37,11 @@ jobs:
     name: RPC and mobile compilation check
     runs-on: ubuntu-latest
     steps:
+      - name: Configure git for private modules
+        env:
+          TOKEN: ${{ secrets.GIT_PAT }}
+        run: git config --global url."https://zapci:${TOKEN}@github.com".insteadOf "https://github.com"
+
       - name: git checkout
         uses: actions/checkout@v2
 
@@ -69,6 +77,11 @@ jobs:
     name: lint code
     runs-on: ubuntu-latest
     steps:
+      - name: Configure git for private modules
+        env:
+          TOKEN: ${{ secrets.GIT_PAT }}
+        run: git config --global url."https://zapci:${TOKEN}@github.com".insteadOf "https://github.com"
+
       - name: git checkout
         uses: actions/checkout@v2
 
@@ -101,6 +114,11 @@ jobs:
     name: cross compilation
     runs-on: ubuntu-latest
     steps:
+      - name: Configure git for private modules
+        env:
+          TOKEN: ${{ secrets.GIT_PAT }}
+        run: git config --global url."https://zapci:${TOKEN}@github.com".insteadOf "https://github.com"
+
       - name: git checkout
         uses: actions/checkout@v2
 
@@ -167,6 +185,11 @@ jobs:
           - unit tags=kvdb_etcd
           - travis-race
     steps:
+      - name: Configure git for private modules
+        env:
+          TOKEN: ${{ secrets.GIT_PAT }}
+        run: git config --global url."https://zapci:${TOKEN}@github.com".insteadOf "https://github.com"
+
       - name: git checkout
         uses: actions/checkout@v2
 
