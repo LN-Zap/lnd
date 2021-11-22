@@ -392,6 +392,39 @@
         ]
       }
     },
+    "/v2/wallet/signmessagefromaddress": {
+      "post": {
+        "summary": "SignMessageFromAddress signs a message with the private key corresponding to\nthe wallet address in the request. The returned signature string is\n`base64` encoded and adheres to Electrum's signing method.",
+        "operationId": "SignMessageFromAddress",
+        "responses": {
+          "200": {
+            "description": "A successful response.",
+            "schema": {
+              "$ref": "#/definitions/walletrpcSignMessageFromAddressResponse"
+            }
+          },
+          "default": {
+            "description": "An unexpected error response",
+            "schema": {
+              "$ref": "#/definitions/runtimeError"
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "body",
+            "in": "body",
+            "required": true,
+            "schema": {
+              "$ref": "#/definitions/walletrpcSignMessageFromAddressRequest"
+            }
+          }
+        ],
+        "tags": [
+          "WalletKit"
+        ]
+      }
+    },
     "/v2/wallet/sweeps": {
       "get": {
         "summary": "ListSweeps returns a list of the sweep transactions our node has produced.\nNote that these sweeps may not be confirmed yet, as we record sweeps on\nbroadcast, not confirmation.",
@@ -1389,6 +1422,19 @@
           "type": "string",
           "format": "byte",
           "description": "The serialized transaction sent out on the network."
+        }
+      }
+    },
+    "walletrpcSignMessageFromAddressRequest": {
+      "type": "object",
+      "properties": {
+        "address": {
+          "type": "string",
+          "description": "The address used to determine which private key to use for signing."
+        },
+        "message": {
+          "type": "string",
+          "description": "The message to be signed. When using REST, this field must be encoded as\nbase64."
         }
       }
     },
