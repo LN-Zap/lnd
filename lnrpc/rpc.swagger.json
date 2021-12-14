@@ -4181,6 +4181,11 @@
           "type": "boolean",
           "format": "boolean",
           "description": "Returns true if the transaction is considered relevant for the internal\nwallet."
+        },
+        "block_index": {
+          "type": "integer",
+          "format": "int32",
+          "title": "The transaction position in the block this transaction was included in"
         }
       }
     },
