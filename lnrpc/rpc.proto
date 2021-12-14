@@ -612,6 +612,9 @@ message GetTransactionResponse {
     // Returns true if the transaction is considered relevant for the internal
     // wallet.
     bool is_relevant = 2;
+
+    // The transaction position in the block this transaction was included in
+    int32 block_index = 3;
 }
 message GetTransactionsRequest {
     /*

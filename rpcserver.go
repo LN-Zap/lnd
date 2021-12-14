@@ -5147,8 +5147,28 @@ func (r *rpcServer) GetTransaction(ctx context.Context,
 		return nil, err
 	}
 
+	// Get the transaction index within the block if it is confirmed.
+	// This index is used in e.g. the calculation of a short channel id, see
+	// Bolt#7.
+	blockIndex := -1
+	if detail.BlockHash != nil {
+		block, err := r.server.cc.ChainIO.GetBlock(detail.BlockHash)
+		if err != nil {
+			return nil, err
+		}
+
+		for txindex, tx := range block.Transactions {
+			txHash := tx.TxHash()
+			if detail.Hash.IsEqual(&txHash) {
+				blockIndex = txindex
+				break
+			}
+		}
+	}
+
 	return &lnrpc.GetTransactionResponse{
 		Transaction: lnrpc.RPCTransaction(detail),
+		BlockIndex:  int32(blockIndex),
 		IsRelevant:  inDB,
 	}, nil
 }
