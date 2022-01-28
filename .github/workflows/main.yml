@@ -243,6 +243,11 @@ jobs:
           - name: neutrino
             args: backend=neutrino
     steps:
+      - name: Configure git for private modules
+        env:
+          TOKEN: ${{ secrets.GIT_PAT }}
+        run: git config --global url."https://zapci:${TOKEN}@github.com".insteadOf "https://github.com"
+
       - name: git checkout
         uses: actions/checkout@v2
 
@@ -260,7 +265,7 @@ jobs:
       - name: setup go ${{ env.GO_VERSION }}
         uses: actions/setup-go@v2
         with:
-          go-version: '${{ env.GO_VERSION }}'
+          go-version: "${{ env.GO_VERSION }}"
 
       - name: install bitcoind
         run: ./scripts/install_bitcoind.sh
@@ -290,6 +295,11 @@ jobs:
       GOCACHE: ${{ github.workspace }}/go/pkg/build
       GOPATH: ${{ github.workspace }}/go
     steps:
+      - name: Configure git for private modules
+        env:
+          TOKEN: ${{ secrets.GIT_PAT }}
+        run: git config --global url."https://zapci:${TOKEN}@github.com".insteadOf "https://github.com"
+
       - name: git checkout
         uses: actions/checkout@v2
 
@@ -307,7 +317,7 @@ jobs:
       - name: setup go ${{ env.GO_VERSION }}
         uses: actions/setup-go@v2
         with:
-          go-version: '${{ env.GO_VERSION }}'
+          go-version: "${{ env.GO_VERSION }}"
 
       - name: run itest
         run: make itest-parallel windows=1 tranches=2 parallel=2
@@ -339,20 +349,13 @@ jobs:
           - github.com/golang/protobuf v1.5.2
 
     steps:
+      - name: Configure git for private modules
+        env:
+          TOKEN: ${{ secrets.GIT_PAT }}
+        run: git config --global url."https://zapci:${TOKEN}@github.com".insteadOf "https://github.com"
+
       - name: git checkout
         uses: actions/checkout@v2
 
       - name: ensure dependences at correct version
         run: if ! grep -q "${{ matrix.pinned_dep }}" go.mod; then echo dependency ${{ matrix.pinned_dep }} should not be altered ; exit 1 ; fi
-
-  # check PR updates release notes
-  ########################
-  milestone-check:
-    name: check release notes updated
-    runs-on: ubuntu-latest
-    steps:
-      - name: git checkout
-        uses: actions/checkout@v2
-
-      - name: release notes check
-        run: scripts/check-release-notes.sh
