@@ -58,3 +58,6 @@ http:
     - selector: walletrpc.WalletKit.ImportAccount
       post: "/v2/wallet/accounts/import"
       body: "*"
+    - selector: walletrpc.WalletKit.SignMessageFromAddress
+      post: "/v2/wallet/address/signmessage"
+      body: "*"
