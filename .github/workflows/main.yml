@@ -345,7 +345,6 @@ jobs:
       - name: ensure dependences at correct version
         run: if ! grep -q "${{ matrix.pinned_dep }}" go.mod; then echo dependency ${{ matrix.pinned_dep }} should not be altered ; exit 1 ; fi
 
-  ########################
   # check PR updates release notes
   ########################
   milestone-check:
