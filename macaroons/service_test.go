@@ -33,7 +33,7 @@ var (
 // default password of 'hello'. Only the path to the temporary
 // DB file is returned, because the service will open the file
 // and read the store on its own.
-func setupTestRootKeyStorage(t *testing.T) string {
+func setupTestRootKeyStorage(t *testing.T) (string, kvdb.Backend) {
 	tempDir, err := ioutil.TempDir("", "macaroonstore-")
 	if err != nil {
 		t.Fatalf("Error creating temp dir: %v", err)
@@ -55,21 +55,20 @@ func setupTestRootKeyStorage(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("error creating unlock: %v", err)
 	}
-	return tempDir
+	return tempDir, db
 }
 
 // TestNewService tests the creation of the macaroon service.
 func TestNewService(t *testing.T) {
 	// First, initialize a dummy DB file with a store that the service
 	// can read from. Make sure the file is removed in the end.
-	tempDir := setupTestRootKeyStorage(t)
+	tempDir, db := setupTestRootKeyStorage(t)
 	defer os.RemoveAll(tempDir)
 
 	// Second, create the new service instance, unlock it and pass in a
 	// checker that we expect it to add to the bakery.
 	service, err := macaroons.NewService(
-		tempDir, "lnd", false, kvdb.DefaultDBTimeout,
-		macaroons.IPLockChecker,
+		db, "lnd", false, macaroons.IPLockChecker,
 	)
 	if err != nil {
 		t.Fatalf("Error creating new service: %v", err)
@@ -117,11 +116,10 @@ func TestNewService(t *testing.T) {
 // incoming context.
 func TestValidateMacaroon(t *testing.T) {
 	// First, initialize the service and unlock it.
-	tempDir := setupTestRootKeyStorage(t)
+	tempDir, db := setupTestRootKeyStorage(t)
 	defer os.RemoveAll(tempDir)
 	service, err := macaroons.NewService(
-		tempDir, "lnd", false, kvdb.DefaultDBTimeout,
-		macaroons.IPLockChecker,
+		db, "lnd", false, macaroons.IPLockChecker,
 	)
 	if err != nil {
 		t.Fatalf("Error creating new service: %v", err)
@@ -175,14 +173,13 @@ func TestValidateMacaroon(t *testing.T) {
 func TestListMacaroonIDs(t *testing.T) {
 	// First, initialize a dummy DB file with a store that the service
 	// can read from. Make sure the file is removed in the end.
-	tempDir := setupTestRootKeyStorage(t)
+	tempDir, db := setupTestRootKeyStorage(t)
 	defer os.RemoveAll(tempDir)
 
 	// Second, create the new service instance, unlock it and pass in a
 	// checker that we expect it to add to the bakery.
 	service, err := macaroons.NewService(
-		tempDir, "lnd", false, kvdb.DefaultDBTimeout,
-		macaroons.IPLockChecker,
+		db, "lnd", false, macaroons.IPLockChecker,
 	)
 	require.NoError(t, err, "Error creating new service")
 	defer service.Close()
@@ -208,14 +205,13 @@ func TestDeleteMacaroonID(t *testing.T) {
 
 	// First, initialize a dummy DB file with a store that the service
 	// can read from. Make sure the file is removed in the end.
-	tempDir := setupTestRootKeyStorage(t)
+	tempDir, db := setupTestRootKeyStorage(t)
 	defer os.RemoveAll(tempDir)
 
 	// Second, create the new service instance, unlock it and pass in a
 	// checker that we expect it to add to the bakery.
 	service, err := macaroons.NewService(
-		tempDir, "lnd", false, kvdb.DefaultDBTimeout,
-		macaroons.IPLockChecker,
+		db, "lnd", false, macaroons.IPLockChecker,
 	)
 	require.NoError(t, err, "Error creating new service")
 	defer service.Close()
@@ -256,4 +252,59 @@ func TestDeleteMacaroonID(t *testing.T) {
 	require.Equal(t, expectedIDs[0], deletedID, "expected ID to be removed")
 	ids, _ := service.ListMacaroonIDs(ctxb)
 	require.Equal(t, expectedIDs[1:], ids, "root key IDs mismatch")
+}
+
+// TestCloneMacaroons tests that macaroons can be cloned correctly and that
+// modifications to the copy don't affect the original.
+func TestCloneMacaroons(t *testing.T) {
+	// Get a configured version of the constraint function.
+	constraintFunc := macaroons.TimeoutConstraint(3)
+
+	// Now we need a dummy macaroon that we can apply the constraint
+	// function to.
+	testMacaroon := createDummyMacaroon(t)
+	err := constraintFunc(testMacaroon)
+	require.NoError(t, err)
+
+	// Check that the caveat has an empty location.
+	require.Equal(
+		t, "", testMacaroon.Caveats()[0].Location,
+		"expected caveat location to be empty, found: %s",
+		testMacaroon.Caveats()[0].Location,
+	)
+
+	// Make a copy of the macaroon.
+	newMacCred, err := macaroons.NewMacaroonCredential(testMacaroon)
+	require.NoError(t, err)
+
+	newMac := newMacCred.Macaroon
+	require.Equal(
+		t, "", newMac.Caveats()[0].Location,
+		"expected new caveat location to be empty, found: %s",
+		newMac.Caveats()[0].Location,
+	)
+
+	// They should be deep equal as well.
+	testMacaroonBytes, err := testMacaroon.MarshalBinary()
+	require.NoError(t, err)
+	newMacBytes, err := newMac.MarshalBinary()
+	require.NoError(t, err)
+	require.Equal(t, testMacaroonBytes, newMacBytes)
+
+	// Modify the caveat location on the old macaroon.
+	testMacaroon.Caveats()[0].Location = "mars"
+
+	// The old macaroon's caveat location should be changed.
+	require.Equal(
+		t, "mars", testMacaroon.Caveats()[0].Location,
+		"expected caveat location to be empty, found: %s",
+		testMacaroon.Caveats()[0].Location,
+	)
+
+	// The new macaroon's caveat location should stay untouched.
+	require.Equal(
+		t, "", newMac.Caveats()[0].Location,
+		"expected new caveat location to be empty, found: %s",
+		newMac.Caveats()[0].Location,
+	)
 }

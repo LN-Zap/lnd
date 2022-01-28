@@ -22,7 +22,7 @@ import (
 // extract the preimage from the sweep transaction, and finish settling the
 // HTLC backwards into the route.
 func testMultiHopReceiverChainClaim(net *lntest.NetworkHarness, t *harnessTest,
-	alice, bob *lntest.HarnessNode, c commitType) {
+	alice, bob *lntest.HarnessNode, c lnrpc.CommitmentType) {
 
 	ctxb := context.Background()
 
@@ -113,7 +113,8 @@ func testMultiHopReceiverChainClaim(net *lntest.NetworkHarness, t *harnessTest,
 	// transaction in order to go to the chain and sweep her HTLC. If there
 	// are anchors, Carol also sweeps hers.
 	expectedTxes := 1
-	if c == commitTypeAnchors {
+	hasAnchors := commitTypeHasAnchors(c)
+	if hasAnchors {
 		expectedTxes = 2
 	}
 	_, err = getNTxsFromMempool(
@@ -143,15 +144,32 @@ func testMultiHopReceiverChainClaim(net *lntest.NetworkHarness, t *harnessTest,
 	err = restartBob()
 	require.NoError(t.t, err)
 
-	// After the force close transaction is mined, Carol should broadcast
-	// her second level HTLC transaction. Bob will broadcast a sweep tx to
-	// sweep his output in the channel with Carol. When Bob notices Carol's
-	// second level transaction in the mempool, he will extract the preimage
-	// and settle the HTLC back off-chain. Bob will also sweep his anchor,
-	// if present.
-	expectedTxes = 2
-	if c == commitTypeAnchors {
+	// After the force close transaction is mined, a series of transactions
+	// should be broadcast by Bob and Carol. When Bob notices Carol's second
+	// level transaction in the mempool, he will extract the preimage and
+	// settle the HTLC back off-chain.
+	switch c {
+	// Carol should broadcast her second level HTLC transaction and Bob
+	// should broadcast a sweep tx to sweep his output in the channel with
+	// Carol.
+	case lnrpc.CommitmentType_LEGACY:
+		expectedTxes = 2
+
+	// Carol should broadcast her second level HTLC transaction and Bob
+	// should broadcast a sweep tx to sweep his output in the channel with
+	// Carol, and another sweep tx to sweep his anchor output.
+	case lnrpc.CommitmentType_ANCHORS:
 		expectedTxes = 3
+
+	// Carol should broadcast her second level HTLC transaction and Bob
+	// should broadcast a sweep tx to sweep his anchor output. Bob's commit
+	// output can't be swept yet as he's incurring an additional CLTV from
+	// being the channel initiator of a script-enforced leased channel.
+	case lnrpc.CommitmentType_SCRIPT_ENFORCED_LEASE:
+		expectedTxes = 2
+
+	default:
+		t.Fatalf("unhandled commitment type %v", c)
 	}
 	txes, err := getNTxsFromMempool(
 		net.Miner.Client, expectedTxes, minerMempoolTimeout,
@@ -195,8 +213,8 @@ func testMultiHopReceiverChainClaim(net *lntest.NetworkHarness, t *harnessTest,
 	}, defaultTimeout)
 	require.NoError(t.t, err)
 
-	// If we mine 4 additional blocks, then both outputs should now be
-	// mature.
+	// If we mine 4 additional blocks, then Carol can sweep the second level
+	// HTLC output.
 	_, err = net.Miner.Client.Generate(defaultCSV)
 	require.NoError(t.t, err)
 
@@ -209,8 +227,7 @@ func testMultiHopReceiverChainClaim(net *lntest.NetworkHarness, t *harnessTest,
 	// afterwards.
 	_, err = net.Miner.Client.Generate(1)
 	require.NoError(t.t, err)
-	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	err = waitForNumChannelPendingForceClose(ctxt, carol, 0, nil)
+	err = waitForNumChannelPendingForceClose(carol, 0, nil)
 	require.NoError(t.t, err)
 
 	// The invoice should show as settled for Carol, indicating that it was
@@ -225,17 +242,45 @@ func testMultiHopReceiverChainClaim(net *lntest.NetworkHarness, t *harnessTest,
 
 	// Finally, check that the Alice's payment is correctly marked
 	// succeeded.
-	ctxt, _ = context.WithTimeout(ctxt, defaultTimeout)
-	err = checkPaymentStatus(
-		ctxt, alice, preimage, lnrpc.Payment_SUCCEEDED,
-	)
+	err = checkPaymentStatus(alice, preimage, lnrpc.Payment_SUCCEEDED)
+	require.NoError(t.t, err)
+
+	if c == lnrpc.CommitmentType_SCRIPT_ENFORCED_LEASE {
+		// Bob still has his commit output to sweep to since he incurred
+		// an additional CLTV from being the channel initiator of a
+		// script-enforced leased channel, regardless of whether he
+		// forced closed the channel or not.
+		ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
+		pendingChanResp, err := bob.PendingChannels(
+			ctxt, &lnrpc.PendingChannelsRequest{},
+		)
+		require.NoError(t.t, err)
+
+		require.Len(t.t, pendingChanResp.PendingForceClosingChannels, 1)
+		forceCloseChan := pendingChanResp.PendingForceClosingChannels[0]
+		require.Positive(t.t, forceCloseChan.LimboBalance)
+		require.Positive(t.t, forceCloseChan.BlocksTilMaturity)
+
+		// TODO: Bob still shows a pending HTLC at this point when he
+		// shouldn't, as he already extracted the preimage from Carol's
+		// claim.
+		// require.Len(t.t, forceCloseChan.PendingHtlcs, 0)
+
+		// Mine enough blocks for Bob's commit output's CLTV to expire
+		// and sweep it.
+		_ = mineBlocks(t, net, uint32(forceCloseChan.BlocksTilMaturity), 0)
+		commitOutpoint := wire.OutPoint{Hash: closingTxid, Index: 3}
+		assertSpendingTxInMempool(
+			t, net.Miner.Client, minerMempoolTimeout, commitOutpoint,
+		)
+		_, err = net.Miner.Client.Generate(1)
+		require.NoError(t.t, err)
+	}
+
+	err = waitForNumChannelPendingForceClose(bob, 0, nil)
 	require.NoError(t.t, err)
 
 	// We'll close out the channel between Alice and Bob, then shutdown
 	// carol to conclude the test.
-	ctxt, _ = context.WithTimeout(ctxb, channelCloseTimeout)
-	closeChannelAndAssertType(
-		ctxt, t, net, alice, aliceChanPoint,
-		false, false,
-	)
+	closeChannelAndAssertType(t, net, alice, aliceChanPoint, false, false)
 }

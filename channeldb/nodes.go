@@ -56,12 +56,14 @@ type LinkNode struct {
 	// authenticated connection for the stored identity public key.
 	Addresses []net.Addr
 
-	db *DB
+	// db is the database instance this node was fetched from. This is used
+	// to sync back the node's state if it is updated.
+	db *LinkNodeDB
 }
 
 // NewLinkNode creates a new LinkNode from the provided parameters, which is
-// backed by an instance of channeldb.
-func (db *DB) NewLinkNode(bitNet wire.BitcoinNet, pub *btcec.PublicKey,
+// backed by an instance of a link node DB.
+func NewLinkNode(db *LinkNodeDB, bitNet wire.BitcoinNet, pub *btcec.PublicKey,
 	addrs ...net.Addr) *LinkNode {
 
 	return &LinkNode{
@@ -98,10 +100,9 @@ func (l *LinkNode) AddAddress(addr net.Addr) error {
 // Sync performs a full database sync which writes the current up-to-date data
 // within the struct to the database.
 func (l *LinkNode) Sync() error {
-
 	// Finally update the database by storing the link node and updating
 	// any relevant indexes.
-	return kvdb.Update(l.db, func(tx kvdb.RwTx) error {
+	return kvdb.Update(l.db.backend, func(tx kvdb.RwTx) error {
 		nodeMetaBucket := tx.ReadWriteBucket(nodeInfoBucket)
 		if nodeMetaBucket == nil {
 			return ErrLinkNodesNotFound
@@ -127,15 +128,20 @@ func putLinkNode(nodeMetaBucket kvdb.RwBucket, l *LinkNode) error {
 	return nodeMetaBucket.Put(nodePub, b.Bytes())
 }
 
+// LinkNodeDB is a database that keeps track of all link nodes.
+type LinkNodeDB struct {
+	backend kvdb.Backend
+}
+
 // DeleteLinkNode removes the link node with the given identity from the
 // database.
-func (db *DB) DeleteLinkNode(identity *btcec.PublicKey) error {
-	return kvdb.Update(db, func(tx kvdb.RwTx) error {
-		return db.deleteLinkNode(tx, identity)
+func (l *LinkNodeDB) DeleteLinkNode(identity *btcec.PublicKey) error {
+	return kvdb.Update(l.backend, func(tx kvdb.RwTx) error {
+		return deleteLinkNode(tx, identity)
 	}, func() {})
 }
 
-func (db *DB) deleteLinkNode(tx kvdb.RwTx, identity *btcec.PublicKey) error {
+func deleteLinkNode(tx kvdb.RwTx, identity *btcec.PublicKey) error {
 	nodeMetaBucket := tx.ReadWriteBucket(nodeInfoBucket)
 	if nodeMetaBucket == nil {
 		return ErrLinkNodesNotFound
@@ -148,9 +154,9 @@ func (db *DB) deleteLinkNode(tx kvdb.RwTx, identity *btcec.PublicKey) error {
 // FetchLinkNode attempts to lookup the data for a LinkNode based on a target
 // identity public key. If a particular LinkNode for the passed identity public
 // key cannot be found, then ErrNodeNotFound if returned.
-func (db *DB) FetchLinkNode(identity *btcec.PublicKey) (*LinkNode, error) {
+func (l *LinkNodeDB) FetchLinkNode(identity *btcec.PublicKey) (*LinkNode, error) {
 	var linkNode *LinkNode
-	err := kvdb.View(db, func(tx kvdb.RTx) error {
+	err := kvdb.View(l.backend, func(tx kvdb.RTx) error {
 		node, err := fetchLinkNode(tx, identity)
 		if err != nil {
 			return err
@@ -191,10 +197,10 @@ func fetchLinkNode(tx kvdb.RTx, targetPub *btcec.PublicKey) (*LinkNode, error) {
 
 // FetchAllLinkNodes starts a new database transaction to fetch all nodes with
 // whom we have active channels with.
-func (db *DB) FetchAllLinkNodes() ([]*LinkNode, error) {
+func (l *LinkNodeDB) FetchAllLinkNodes() ([]*LinkNode, error) {
 	var linkNodes []*LinkNode
-	err := kvdb.View(db, func(tx kvdb.RTx) error {
-		nodes, err := db.fetchAllLinkNodes(tx)
+	err := kvdb.View(l.backend, func(tx kvdb.RTx) error {
+		nodes, err := fetchAllLinkNodes(tx)
 		if err != nil {
 			return err
 		}
@@ -213,7 +219,7 @@ func (db *DB) FetchAllLinkNodes() ([]*LinkNode, error) {
 
 // fetchAllLinkNodes uses an existing database transaction to fetch all nodes
 // with whom we have active channels with.
-func (db *DB) fetchAllLinkNodes(tx kvdb.RTx) ([]*LinkNode, error) {
+func fetchAllLinkNodes(tx kvdb.RTx) ([]*LinkNode, error) {
 	nodeMetaBucket := tx.ReadBucket(nodeInfoBucket)
 	if nodeMetaBucket == nil {
 		return nil, ErrLinkNodesNotFound

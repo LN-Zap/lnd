@@ -180,7 +180,7 @@ func TestRouterPaymentStateMachine(t *testing.T) {
 		}, 2),
 	}
 
-	testGraph, err := createTestGraphFromChannels(testChannels, "a")
+	testGraph, err := createTestGraphFromChannels(true, testChannels, "a")
 	if err != nil {
 		t.Fatalf("unable to create graph: %v", err)
 	}
@@ -472,9 +472,6 @@ func testPaymentLifecycle(t *testing.T, test paymentLifecycleTestCase,
 			Payer:              payer,
 			ChannelPruneExpiry: time.Hour * 24,
 			GraphPruneInterval: time.Hour * 2,
-			QueryBandwidth: func(e *channeldb.ChannelEdgeInfo) lnwire.MilliSatoshi {
-				return lnwire.NewMSatFromSatoshis(e.Capacity)
-			},
 			NextPaymentID: func() (uint64, error) {
 				next := atomic.AddUint64(&uniquePaymentID, 1)
 				return next, nil

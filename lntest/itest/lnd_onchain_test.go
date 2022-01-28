@@ -22,6 +22,14 @@ import (
 //
 // TODO(wilmer): Add RBF case once btcd supports it.
 func testCPFP(net *lntest.NetworkHarness, t *harnessTest) {
+	runCPFP(net, t, net.Alice, net.Bob)
+}
+
+// runCPFP ensures that the daemon can bump an unconfirmed  transaction's fee
+// rate by broadcasting a Child-Pays-For-Parent (CPFP) transaction.
+func runCPFP(net *lntest.NetworkHarness, t *harnessTest,
+	alice, bob *lntest.HarnessNode) {
+
 	// Skip this test for neutrino, as it's not aware of mempool
 	// transactions.
 	if net.BackendCfg.Name() == lntest.NeutrinoBackendName {
@@ -31,15 +39,14 @@ func testCPFP(net *lntest.NetworkHarness, t *harnessTest) {
 	// We'll start the test by sending Alice some coins, which she'll use to
 	// send to Bob.
 	ctxb := context.Background()
-	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
-	net.SendCoins(ctxt, t.t, btcutil.SatoshiPerBitcoin, net.Alice)
+	net.SendCoins(t.t, btcutil.SatoshiPerBitcoin, alice)
 
 	// Create an address for Bob to send the coins to.
 	addrReq := &lnrpc.NewAddressRequest{
 		Type: lnrpc.AddressType_WITNESS_PUBKEY_HASH,
 	}
-	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	resp, err := net.Bob.NewAddress(ctxt, addrReq)
+	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
+	resp, err := bob.NewAddress(ctxt, addrReq)
 	if err != nil {
 		t.Fatalf("unable to get new address for bob: %v", err)
 	}
@@ -51,7 +58,7 @@ func testCPFP(net *lntest.NetworkHarness, t *harnessTest) {
 		Amount: btcutil.SatoshiPerBitcoin,
 	}
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	if _, err = net.Alice.SendCoins(ctxt, sendReq); err != nil {
+	if _, err = alice.SendCoins(ctxt, sendReq); err != nil {
 		t.Fatalf("unable to send coins to bob: %v", err)
 	}
 
@@ -89,7 +96,7 @@ func testCPFP(net *lntest.NetworkHarness, t *harnessTest) {
 		TxidBytes:   txid[:],
 		OutputIndex: uint32(bobOutputIdx),
 	}
-	assertWalletUnspent(t, net.Bob, op)
+	assertWalletUnspent(t, bob, op)
 
 	// We'll attempt to bump the fee of this transaction by performing a
 	// CPFP from Alice's point of view.
@@ -100,7 +107,7 @@ func testCPFP(net *lntest.NetworkHarness, t *harnessTest) {
 		),
 	}
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	_, err = net.Bob.WalletKitClient.BumpFee(ctxt, bumpFeeReq)
+	_, err = bob.WalletKitClient.BumpFee(ctxt, bumpFeeReq)
 	if err != nil {
 		t.Fatalf("unable to bump fee: %v", err)
 	}
@@ -116,7 +123,7 @@ func testCPFP(net *lntest.NetworkHarness, t *harnessTest) {
 	// UtxoSweeper. We'll ensure it's using the fee rate specified.
 	pendingSweepsReq := &walletrpc.PendingSweepsRequest{}
 	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	pendingSweepsResp, err := net.Bob.WalletKitClient.PendingSweeps(
+	pendingSweepsResp, err := bob.WalletKitClient.PendingSweeps(
 		ctxt, pendingSweepsReq,
 	)
 	if err != nil {
@@ -147,7 +154,7 @@ func testCPFP(net *lntest.NetworkHarness, t *harnessTest) {
 	err = wait.NoError(func() error {
 		req := &walletrpc.PendingSweepsRequest{}
 		ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-		resp, err := net.Bob.WalletKitClient.PendingSweeps(ctxt, req)
+		resp, err := bob.WalletKitClient.PendingSweeps(ctxt, req)
 		if err != nil {
 			return fmt.Errorf("unable to retrieve bob's pending "+
 				"sweeps: %v", err)
@@ -168,7 +175,7 @@ func testCPFP(net *lntest.NetworkHarness, t *harnessTest) {
 // wallet.
 func testAnchorReservedValue(net *lntest.NetworkHarness, t *harnessTest) {
 	// Start two nodes supporting anchor channels.
-	args := commitTypeAnchors.Args()
+	args := nodeArgsForCommitType(lnrpc.CommitmentType_ANCHORS)
 	alice := net.NewNode(t.t, "Alice", args)
 	defer shutdownAndAssert(net, t, alice)
 
@@ -176,8 +183,7 @@ func testAnchorReservedValue(net *lntest.NetworkHarness, t *harnessTest) {
 	defer shutdownAndAssert(net, t, bob)
 
 	ctxb := context.Background()
-	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
-	net.ConnectNodes(ctxt, t.t, alice, bob)
+	net.ConnectNodes(t.t, alice, bob)
 
 	// Send just enough coins for Alice to open a channel without a change
 	// output.
@@ -186,16 +192,13 @@ func testAnchorReservedValue(net *lntest.NetworkHarness, t *harnessTest) {
 		feeEst  = 8000
 	)
 
-	ctxt, _ = context.WithTimeout(context.Background(), defaultTimeout)
-	net.SendCoins(ctxt, t.t, chanAmt+feeEst, alice)
+	net.SendCoins(t.t, chanAmt+feeEst, alice)
 
 	// wallet, without a change output. This should not be allowed.
 	resErr := lnwallet.ErrReservedValueInvalidated.Error()
 
-	ctxt, _ = context.WithTimeout(context.Background(), defaultTimeout)
 	_, err := net.OpenChannel(
-		ctxt, alice, bob,
-		lntest.OpenChannelParams{
+		alice, bob, lntest.OpenChannelParams{
 			Amt: chanAmt,
 		},
 	)
@@ -205,10 +208,8 @@ func testAnchorReservedValue(net *lntest.NetworkHarness, t *harnessTest) {
 
 	// Alice opens a smaller channel. This works since it will have a
 	// change output.
-	ctxt, _ = context.WithTimeout(context.Background(), defaultTimeout)
 	aliceChanPoint1 := openChannelAndAssert(
-		ctxt, t, net, alice, bob,
-		lntest.OpenChannelParams{
+		t, net, alice, bob, lntest.OpenChannelParams{
 			Amt: chanAmt / 4,
 		},
 	)
@@ -216,7 +217,7 @@ func testAnchorReservedValue(net *lntest.NetworkHarness, t *harnessTest) {
 	// If Alice tries to open another anchor channel to Bob, Bob should not
 	// reject it as he is not contributing any funds.
 	aliceChanPoint2 := openChannelAndAssert(
-		ctxt, t, net, alice, bob, lntest.OpenChannelParams{
+		t, net, alice, bob, lntest.OpenChannelParams{
 			Amt: chanAmt / 4,
 		},
 	)
@@ -226,9 +227,8 @@ func testAnchorReservedValue(net *lntest.NetworkHarness, t *harnessTest) {
 	// to remove his support for anchors.
 	err = net.RestartNode(bob, nil)
 	require.NoError(t.t, err)
-	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
 	aliceChanPoint3 := openChannelAndAssert(
-		ctxt, t, net, alice, bob, lntest.OpenChannelParams{
+		t, net, alice, bob, lntest.OpenChannelParams{
 			Amt: chanAmt / 4,
 		},
 	)
@@ -237,12 +237,10 @@ func testAnchorReservedValue(net *lntest.NetworkHarness, t *harnessTest) {
 		aliceChanPoint1, aliceChanPoint2, aliceChanPoint3,
 	}
 	for _, chanPoint := range chanPoints {
-		ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-		err = alice.WaitForNetworkChannelOpen(ctxt, chanPoint)
+		err = alice.WaitForNetworkChannelOpen(chanPoint)
 		require.NoError(t.t, err)
 
-		ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-		err = bob.WaitForNetworkChannelOpen(ctxt, chanPoint)
+		err = bob.WaitForNetworkChannelOpen(chanPoint)
 		require.NoError(t.t, err)
 	}
 
@@ -252,7 +250,7 @@ func testAnchorReservedValue(net *lntest.NetworkHarness, t *harnessTest) {
 	addrReq := &lnrpc.NewAddressRequest{
 		Type: lnrpc.AddressType_WITNESS_PUBKEY_HASH,
 	}
-	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
+	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
 	resp, err := alice.NewAddress(ctxt, addrReq)
 	require.NoError(t.t, err)
 
@@ -325,7 +323,7 @@ func testAnchorReservedValue(net *lntest.NetworkHarness, t *harnessTest) {
 	block = mineBlocks(t, net, 1, 1)[0]
 
 	// The sweep transaction should have exactly one inputs as we only had
-	// the the single output from above in the wallet.
+	// the single output from above in the wallet.
 	sweepTx = block.Transactions[1]
 	if len(sweepTx.TxIn) != 1 {
 		t.Fatalf("expected 1 inputs instead have %v", len(sweepTx.TxIn))
@@ -343,7 +341,7 @@ func testAnchorReservedValue(net *lntest.NetworkHarness, t *harnessTest) {
 	// Alice closes channel, should now be allowed to send everything to an
 	// external address.
 	for _, chanPoint := range chanPoints {
-		closeChannelAndAssert(ctxt, t, net, alice, chanPoint, false)
+		closeChannelAndAssert(t, net, alice, chanPoint, false)
 	}
 
 	newBalance := waitForConfirmedBalance()
@@ -351,9 +349,12 @@ func testAnchorReservedValue(net *lntest.NetworkHarness, t *harnessTest) {
 		t.Fatalf("Alice's balance did not increase after channel close")
 	}
 
+	// Assert there are no open or pending channels anymore.
+	assertNumPendingChannels(t, alice, 0, 0)
+	assertNodeNumChannels(t, alice, 0)
+
 	// We'll wait for the balance to reflect that the channel has been
 	// closed and the funds are in the wallet.
-
 	sweepReq = &lnrpc.SendCoinsRequest{
 		Addr:    minerAddr.String(),
 		SendAll: true,

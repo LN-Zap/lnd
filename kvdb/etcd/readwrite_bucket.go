@@ -1,3 +1,4 @@
+//go:build kvdb_etcd
 // +build kvdb_etcd
 
 package etcd
@@ -118,7 +119,29 @@ func (b *readWriteBucket) NestedReadWriteBucket(key []byte) walletdb.ReadWriteBu
 
 // assertNoValue checks if the value for the passed key exists.
 func (b *readWriteBucket) assertNoValue(key []byte) error {
+	if !etcdDebug {
+		return nil
+	}
+
 	val, err := b.tx.stm.Get(string(makeValueKey(b.id, key)))
+	if err != nil {
+		return err
+	}
+
+	if val != nil {
+		return walletdb.ErrIncompatibleValue
+	}
+
+	return nil
+}
+
+// assertNoBucket checks if the bucket for the passed key exists.
+func (b *readWriteBucket) assertNoBucket(key []byte) error {
+	if !etcdDebug {
+		return nil
+	}
+
+	val, err := b.tx.stm.Get(string(makeBucketKey(b.id, key)))
 	if err != nil {
 		return err
 	}
@@ -272,13 +295,8 @@ func (b *readWriteBucket) Put(key, value []byte) error {
 		return walletdb.ErrKeyRequired
 	}
 
-	val, err := b.tx.stm.Get(string(makeBucketKey(b.id, key)))
-	if err != nil {
+	if err := b.assertNoBucket(key); err != nil {
 		return err
-	}
-
-	if val != nil {
-		return walletdb.ErrIncompatibleValue
 	}
 
 	// Update the transaction with the new value.
@@ -353,4 +371,44 @@ func (b *readWriteBucket) Sequence() uint64 {
 	num, _ := strconv.ParseUint(string(val), 10, 64)
 
 	return num
+}
+
+func flattenMap(m map[string]struct{}) []string {
+	result := make([]string, len(m))
+	i := 0
+
+	for key := range m {
+		result[i] = key
+		i++
+	}
+
+	return result
+}
+
+// Prefetch will prefetch all keys in the passed paths as well as all bucket
+// keys along the paths.
+func (b *readWriteBucket) Prefetch(paths ...[]string) {
+	keys := make(map[string]struct{})
+	ranges := make(map[string]struct{})
+
+	for _, path := range paths {
+		parent := b.id
+		for _, bucket := range path {
+			bucketKey := makeBucketKey(parent, []byte(bucket))
+			keys[string(bucketKey[:])] = struct{}{}
+
+			id := makeBucketID(bucketKey)
+			parent = id[:]
+		}
+
+		ranges[string(parent)] = struct{}{}
+	}
+
+	b.tx.stm.Prefetch(flattenMap(keys), flattenMap(ranges))
+}
+
+// ForAll is an optimized version of ForEach with the limitation that no
+// additional queries can be executed within the callback.
+func (b *readWriteBucket) ForAll(cb func(k, v []byte) error) error {
+	return b.ForEach(cb)
 }

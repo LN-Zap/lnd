@@ -8,6 +8,7 @@ import (
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/kvdb"
 )
 
 type mockChannelSource struct {
@@ -38,7 +39,9 @@ func (m *mockChannelSource) FetchAllChannels() ([]*channeldb.OpenChannel, error)
 	return chans, nil
 }
 
-func (m *mockChannelSource) FetchChannel(chanPoint wire.OutPoint) (*channeldb.OpenChannel, error) {
+func (m *mockChannelSource) FetchChannel(_ kvdb.RTx, chanPoint wire.OutPoint) (
+	*channeldb.OpenChannel, error) {
+
 	if m.failQuery {
 		return nil, fmt.Errorf("fail")
 	}
@@ -121,7 +124,9 @@ func TestFetchBackupForChan(t *testing.T) {
 		},
 	}
 	for i, testCase := range testCases {
-		_, err := FetchBackupForChan(testCase.chanPoint, chanSource)
+		_, err := FetchBackupForChan(
+			testCase.chanPoint, chanSource, chanSource,
+		)
 		switch {
 		// If this is a valid test case, and we failed, then we'll
 		// return an error.
@@ -164,7 +169,7 @@ func TestFetchStaticChanBackups(t *testing.T) {
 	// With the channel source populated, we'll now attempt to create a set
 	// of backups for all the channels. This should succeed, as all items
 	// are populated within the channel source.
-	backups, err := FetchStaticChanBackups(chanSource)
+	backups, err := FetchStaticChanBackups(chanSource, chanSource)
 	if err != nil {
 		t.Fatalf("unable to create chan back ups: %v", err)
 	}
@@ -181,7 +186,7 @@ func TestFetchStaticChanBackups(t *testing.T) {
 	copy(n[:], randomChan2.IdentityPub.SerializeCompressed())
 	delete(chanSource.addrs, n)
 
-	_, err = FetchStaticChanBackups(chanSource)
+	_, err = FetchStaticChanBackups(chanSource, chanSource)
 	if err == nil {
 		t.Fatalf("query with incomplete information should fail")
 	}
@@ -190,7 +195,7 @@ func TestFetchStaticChanBackups(t *testing.T) {
 	// source at all, then we'll fail as well.
 	chanSource = newMockChannelSource()
 	chanSource.failQuery = true
-	_, err = FetchStaticChanBackups(chanSource)
+	_, err = FetchStaticChanBackups(chanSource, chanSource)
 	if err == nil {
 		t.Fatalf("query should fail")
 	}

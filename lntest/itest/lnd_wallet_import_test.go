@@ -332,9 +332,7 @@ func fundChanAndCloseFromImportedAccount(t *harnessTest, srcNode, destNode,
 
 	// Now, start the channel funding process. We'll need to connect both
 	// nodes first.
-	ctxt, cancel = context.WithTimeout(ctxb, defaultTimeout)
-	defer cancel()
-	t.lndHarness.EnsureConnected(ctxt, t.t, srcNode, destNode)
+	t.lndHarness.EnsureConnected(t.t, srcNode, destNode)
 
 	// The source node will then fund the channel through a PSBT shim.
 	var pendingChanID [32]byte
@@ -498,11 +496,9 @@ func fundChanAndCloseFromImportedAccount(t *harnessTest, srcNode, destNode,
 		},
 		OutputIndex: upd.ChanPending.OutputIndex,
 	}
-	ctxt, cancel = context.WithTimeout(ctxb, defaultTimeout)
-	defer cancel()
-	err = srcNode.WaitForNetworkChannelOpen(ctxt, chanPoint)
+	err = srcNode.WaitForNetworkChannelOpen(chanPoint)
 	require.NoError(t.t, err)
-	err = destNode.WaitForNetworkChannelOpen(ctxt, chanPoint)
+	err = destNode.WaitForNetworkChannelOpen(chanPoint)
 	require.NoError(t.t, err)
 
 	// Send a test payment to ensure the channel is operating as normal.
@@ -515,18 +511,14 @@ func fundChanAndCloseFromImportedAccount(t *harnessTest, srcNode, destNode,
 	})
 	require.NoError(t.t, err)
 
-	ctxt, cancel = context.WithTimeout(ctxb, defaultTimeout)
-	defer cancel()
 	err = completePaymentRequests(
-		ctxt, srcNode, srcNode.RouterClient,
+		srcNode, srcNode.RouterClient,
 		[]string{resp.PaymentRequest}, true,
 	)
 	require.NoError(t.t, err)
 
 	// Now that we've confirmed the opened channel works, we'll close it.
-	ctxt, cancel = context.WithTimeout(ctxb, channelCloseTimeout)
-	defer cancel()
-	closeChannelAndAssert(ctxt, t, t.lndHarness, srcNode, chanPoint, false)
+	closeChannelAndAssert(t, t.lndHarness, srcNode, chanPoint, false)
 
 	// Since the channel still had funds left on the source node's side,
 	// they must've been redeemed after the close. Without a pre-negotiated
@@ -600,9 +592,6 @@ func testWalletImportAccount(net *lntest.NetworkHarness, t *harnessTest) {
 func testWalletImportAccountScenario(net *lntest.NetworkHarness, t *harnessTest,
 	addrType walletrpc.AddressType) {
 
-	ctxb := context.Background()
-	const utxoAmt int64 = btcutil.SatoshiPerBitcoin
-
 	// We'll start our test by having two nodes, Carol and Dave. Carol's
 	// default wallet account will be imported into Dave's node.
 	carol := net.NewNode(t.t, "carol", nil)
@@ -610,6 +599,15 @@ func testWalletImportAccountScenario(net *lntest.NetworkHarness, t *harnessTest,
 
 	dave := net.NewNode(t.t, "dave", nil)
 	defer shutdownAndAssert(net, t, dave)
+
+	runWalletImportAccountScenario(net, t, addrType, carol, dave)
+}
+
+func runWalletImportAccountScenario(net *lntest.NetworkHarness, t *harnessTest,
+	addrType walletrpc.AddressType, carol, dave *lntest.HarnessNode) {
+
+	ctxb := context.Background()
+	const utxoAmt int64 = btcutil.SatoshiPerBitcoin
 
 	ctxt, cancel := context.WithTimeout(ctxb, defaultTimeout)
 	defer cancel()

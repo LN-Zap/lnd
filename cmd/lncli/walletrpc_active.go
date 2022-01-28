@@ -1,8 +1,10 @@
+//go:build walletrpc
 // +build walletrpc
 
 package main
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +13,7 @@ import (
 	"sort"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/walletrpc"
 	"github.com/urfave/cli"
@@ -57,6 +60,7 @@ func walletCommands() []cli.Command {
 				bumpCloseFeeCommand,
 				listSweepsCommand,
 				labelTxCommand,
+				publishTxCommand,
 				releaseOutputCommand,
 				listLeasesCommand,
 				psbtCommand,
@@ -424,7 +428,7 @@ func listSweeps(ctx *cli.Context) error {
 
 var labelTxCommand = cli.Command{
 	Name:      "labeltx",
-	Usage:     "adds a label to a transaction",
+	Usage:     "Adds a label to a transaction.",
 	ArgsUsage: "txid label",
 	Description: `
 	Add a label to a transaction. If the transaction already has a label, 
@@ -474,6 +478,68 @@ func labelTransaction(ctx *cli.Context) error {
 	}
 
 	fmt.Printf("Transaction: %v labelled with: %v\n", txid, label)
+
+	return nil
+}
+
+var publishTxCommand = cli.Command{
+	Name:      "publishtx",
+	Usage:     "Attempts to publish the passed transaction to the network.",
+	ArgsUsage: "tx_hex",
+	Description: `
+	Publish a hex-encoded raw transaction to the on-chain network. The 
+	wallet will continually attempt to re-broadcast the transaction on start up, until it 
+	enters the chain. The label parameter is optional and limited to 500 characters. Note 
+	that multi word labels must be contained in quotation marks ("").
+	`,
+	Flags: []cli.Flag{
+		cli.StringFlag{
+			Name:  "label",
+			Usage: "(optional) transaction label",
+		},
+	},
+	Action: actionDecorator(publishTransaction),
+}
+
+func publishTransaction(ctx *cli.Context) error {
+	ctxc := getContext()
+
+	// Display the command's help message if we do not have the expected
+	// number of arguments/flags.
+	if ctx.NArg() != 1 || ctx.NumFlags() > 1 {
+		return cli.ShowCommandHelp(ctx, "publishtx")
+	}
+
+	walletClient, cleanUp := getWalletClient(ctx)
+	defer cleanUp()
+
+	tx, err := hex.DecodeString(ctx.Args().First())
+	if err != nil {
+		return err
+	}
+
+	// Deserialize the transaction to get the transaction hash.
+	msgTx := &wire.MsgTx{}
+	txReader := bytes.NewReader(tx)
+	if err := msgTx.Deserialize(txReader); err != nil {
+		return err
+	}
+
+	req := &walletrpc.Transaction{
+		TxHex: tx,
+		Label: ctx.String("label"),
+	}
+
+	_, err = walletClient.PublishTransaction(ctxc, req)
+	if err != nil {
+		return err
+	}
+
+	printJSON(&struct {
+		TXID string `json:"txid"`
+	}{
+		TXID: msgTx.TxHash().String(),
+	})
 
 	return nil
 }
@@ -595,26 +661,24 @@ func fundPsbt(ctx *cli.Context) error {
 			Psbt: psbtBytes,
 		}
 
-	// The user manually specified outputs and optional inputs in JSON
+	// The user manually specified outputs and/or inputs in JSON
 	// format.
-	case len(ctx.String("outputs")) > 0:
+	case len(ctx.String("outputs")) > 0 || len(ctx.String("inputs")) > 0:
 		var (
 			tpl          = &walletrpc.TxTemplate{}
 			amountToAddr map[string]uint64
 		)
 
-		// Parse the address to amount map as JSON now. At least one
-		// entry must be present.
-		jsonMap := []byte(ctx.String("outputs"))
-		if err := json.Unmarshal(jsonMap, &amountToAddr); err != nil {
-			return fmt.Errorf("error parsing outputs JSON: %v",
-				err)
+		if len(ctx.String("outputs")) > 0 {
+			// Parse the address to amount map as JSON now. At least one
+			// entry must be present.
+			jsonMap := []byte(ctx.String("outputs"))
+			if err := json.Unmarshal(jsonMap, &amountToAddr); err != nil {
+				return fmt.Errorf("error parsing outputs JSON: %v",
+					err)
+			}
+			tpl.Outputs = amountToAddr
 		}
-		if len(amountToAddr) == 0 {
-			return fmt.Errorf("at least one output must be " +
-				"specified")
-		}
-		tpl.Outputs = amountToAddr
 
 		// Inputs are optional.
 		if len(ctx.String("inputs")) > 0 {
@@ -643,7 +707,7 @@ func fundPsbt(ctx *cli.Context) error {
 
 	default:
 		return fmt.Errorf("must specify either template_psbt or " +
-			"outputs flag")
+			"inputs/outputs flag")
 	}
 
 	// Parse fee flags.

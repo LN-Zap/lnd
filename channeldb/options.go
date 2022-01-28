@@ -17,6 +17,12 @@ const (
 	// in order to reply to gossip queries. This produces a cache size of
 	// around 40MB.
 	DefaultChannelCacheSize = 20000
+
+	// DefaultPreAllocCacheNumNodes is the default number of channels we
+	// assume for mainnet for pre-allocating the graph cache. As of
+	// September 2021, there currently are 14k nodes in a strictly pruned
+	// graph, so we choose a number that is slightly higher.
+	DefaultPreAllocCacheNumNodes = 15000
 )
 
 // Options holds parameters for tuning and customizing a channeldb.DB.
@@ -35,6 +41,15 @@ type Options struct {
 	// wait before attempting to commit a pending set of updates.
 	BatchCommitInterval time.Duration
 
+	// PreAllocCacheNumNodes is the number of nodes we expect to be in the
+	// graph cache, so we can pre-allocate the map accordingly.
+	PreAllocCacheNumNodes int
+
+	// UseGraphCache denotes whether the in-memory graph cache should be
+	// used or a fallback version that uses the underlying database for
+	// path finding.
+	UseGraphCache bool
+
 	// clock is the time source used by the database.
 	clock clock.Clock
 
@@ -52,9 +67,11 @@ func DefaultOptions() Options {
 			AutoCompactMinAge: kvdb.DefaultBoltAutoCompactMinAge,
 			DBTimeout:         kvdb.DefaultDBTimeout,
 		},
-		RejectCacheSize:  DefaultRejectCacheSize,
-		ChannelCacheSize: DefaultChannelCacheSize,
-		clock:            clock.NewDefaultClock(),
+		RejectCacheSize:       DefaultRejectCacheSize,
+		ChannelCacheSize:      DefaultChannelCacheSize,
+		PreAllocCacheNumNodes: DefaultPreAllocCacheNumNodes,
+		UseGraphCache:         true,
+		clock:                 clock.NewDefaultClock(),
 	}
 }
 
@@ -72,6 +89,20 @@ func OptionSetRejectCacheSize(n int) OptionModifier {
 func OptionSetChannelCacheSize(n int) OptionModifier {
 	return func(o *Options) {
 		o.ChannelCacheSize = n
+	}
+}
+
+// OptionSetPreAllocCacheNumNodes sets the PreAllocCacheNumNodes to n.
+func OptionSetPreAllocCacheNumNodes(n int) OptionModifier {
+	return func(o *Options) {
+		o.PreAllocCacheNumNodes = n
+	}
+}
+
+// OptionSetUseGraphCache sets the UseGraphCache option to the given value.
+func OptionSetUseGraphCache(use bool) OptionModifier {
+	return func(o *Options) {
+		o.UseGraphCache = use
 	}
 }
 

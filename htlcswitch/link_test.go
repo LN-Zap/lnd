@@ -1938,7 +1938,7 @@ func newSingleLinkTestHarness(chanAmt, chanReserve btcutil.Amount) (
 
 	pCache := newMockPreimageCache()
 
-	aliceDb := aliceLc.channel.State().Db
+	aliceDb := aliceLc.channel.State().Db.GetParentDB()
 	aliceSwitch, err := initSwitchWithDB(testStartingHeight, aliceDb)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
@@ -1951,6 +1951,7 @@ func newSingleLinkTestHarness(chanAmt, chanReserve btcutil.Amount) (
 		FwrdingPolicy:      globalPolicy,
 		Peer:               alicePeer,
 		Switch:             aliceSwitch,
+		BestHeight:         aliceSwitch.BestHeight,
 		Circuits:           aliceSwitch.CircuitModifier(),
 		ForwardPackets:     aliceSwitch.ForwardPackets,
 		DecodeHopIterators: decoder.DecodeHopIterators,
@@ -2169,7 +2170,7 @@ func updateState(batchTick chan time.Time, link *channelLink,
 // sleep in this test and the one below
 func TestChannelLinkBandwidthConsistency(t *testing.T) {
 	if !build.IsDevBuild() {
-		t.Fatalf("htlcswitch tests must be run with '-tags debug")
+		t.Fatalf("htlcswitch tests must be run with '-tags dev")
 	}
 	t.Parallel()
 
@@ -2246,7 +2247,7 @@ func TestChannelLinkBandwidthConsistency(t *testing.T) {
 	}
 
 	addPkt.circuit = &circuit
-	if err := aliceLink.HandleSwitchPacket(&addPkt); err != nil {
+	if err := aliceLink.handleSwitchPacket(&addPkt); err != nil {
 		t.Fatalf("unable to handle switch packet: %v", err)
 	}
 	time.Sleep(time.Millisecond * 500)
@@ -2326,7 +2327,7 @@ func TestChannelLinkBandwidthConsistency(t *testing.T) {
 	}
 
 	addPkt.circuit = &circuit
-	if err := aliceLink.HandleSwitchPacket(&addPkt); err != nil {
+	if err := aliceLink.handleSwitchPacket(&addPkt); err != nil {
 		t.Fatalf("unable to handle switch packet: %v", err)
 	}
 	time.Sleep(time.Millisecond * 500)
@@ -2445,7 +2446,7 @@ func TestChannelLinkBandwidthConsistency(t *testing.T) {
 	addPkt.outgoingChanID = carolChanID
 	addPkt.outgoingHTLCID = 0
 
-	err = coreLink.cfg.Switch.openCircuits(addPkt.keystone())
+	err = coreLink.cfg.Circuits.OpenCircuits(addPkt.keystone())
 	if err != nil {
 		t.Fatalf("unable to set keystone: %v", err)
 	}
@@ -2466,7 +2467,7 @@ func TestChannelLinkBandwidthConsistency(t *testing.T) {
 		obfuscator: NewMockObfuscator(),
 	}
 
-	if err := aliceLink.HandleSwitchPacket(&settlePkt); err != nil {
+	if err := aliceLink.handleSwitchPacket(&settlePkt); err != nil {
 		t.Fatalf("unable to handle switch packet: %v", err)
 	}
 	time.Sleep(time.Millisecond * 500)
@@ -2553,7 +2554,7 @@ func TestChannelLinkBandwidthConsistency(t *testing.T) {
 	addPkt.outgoingChanID = carolChanID
 	addPkt.outgoingHTLCID = 1
 
-	err = coreLink.cfg.Switch.openCircuits(addPkt.keystone())
+	err = coreLink.cfg.Circuits.OpenCircuits(addPkt.keystone())
 	if err != nil {
 		t.Fatalf("unable to set keystone: %v", err)
 	}
@@ -2570,7 +2571,7 @@ func TestChannelLinkBandwidthConsistency(t *testing.T) {
 		obfuscator: NewMockObfuscator(),
 	}
 
-	if err := aliceLink.HandleSwitchPacket(&failPkt); err != nil {
+	if err := aliceLink.handleSwitchPacket(&failPkt); err != nil {
 		t.Fatalf("unable to handle switch packet: %v", err)
 	}
 	time.Sleep(time.Millisecond * 500)
@@ -2708,7 +2709,7 @@ func TestChannelLinkTrimCircuitsPending(t *testing.T) {
 	// Since both were committed successfully, we will now deliver them to
 	// Alice's link.
 	for _, addPkt := range addPkts[:halfHtlcs] {
-		if err := alice.link.HandleSwitchPacket(addPkt); err != nil {
+		if err := alice.link.handleSwitchPacket(addPkt); err != nil {
 			t.Fatalf("unable to handle switch packet: %v", err)
 		}
 	}
@@ -2793,7 +2794,7 @@ func TestChannelLinkTrimCircuitsPending(t *testing.T) {
 	// Deliver the latter two HTLCs to Alice's links so that they can be
 	// processed and added to the in-memory commitment state.
 	for _, addPkt := range addPkts[halfHtlcs:] {
-		if err := alice.link.HandleSwitchPacket(addPkt); err != nil {
+		if err := alice.link.handleSwitchPacket(addPkt); err != nil {
 			t.Fatalf("unable to handle switch packet: %v", err)
 		}
 	}
@@ -2903,7 +2904,7 @@ func TestChannelLinkTrimCircuitsPending(t *testing.T) {
 // circuits if the ADDs corresponding to open circuits are never committed.
 func TestChannelLinkTrimCircuitsNoCommit(t *testing.T) {
 	if !build.IsDevBuild() {
-		t.Fatalf("htlcswitch tests must be run with '-tags debug")
+		t.Fatalf("htlcswitch tests must be run with '-tags dev")
 	}
 
 	t.Parallel()
@@ -2988,7 +2989,7 @@ func TestChannelLinkTrimCircuitsNoCommit(t *testing.T) {
 	// Since both were committed successfully, we will now deliver them to
 	// Alice's link.
 	for _, addPkt := range addPkts[:halfHtlcs] {
-		if err := alice.link.HandleSwitchPacket(addPkt); err != nil {
+		if err := alice.link.handleSwitchPacket(addPkt); err != nil {
 			t.Fatalf("unable to handle switch packet: %v", err)
 		}
 	}
@@ -3081,7 +3082,7 @@ func TestChannelLinkTrimCircuitsNoCommit(t *testing.T) {
 
 	// Deliver the last two HTLCs to the link via Alice's mailbox.
 	for _, addPkt := range addPkts[halfHtlcs:] {
-		if err := alice.link.HandleSwitchPacket(addPkt); err != nil {
+		if err := alice.link.handleSwitchPacket(addPkt); err != nil {
 			t.Fatalf("unable to handle switch packet: %v", err)
 		}
 	}
@@ -3248,7 +3249,7 @@ func TestChannelLinkTrimCircuitsRemoteCommit(t *testing.T) {
 	// Since both were committed successfully, we will now deliver them to
 	// Alice's link.
 	for _, addPkt := range addPkts {
-		if err := alice.link.HandleSwitchPacket(addPkt); err != nil {
+		if err := alice.link.handleSwitchPacket(addPkt); err != nil {
 			t.Fatalf("unable to handle switch packet: %v", err)
 		}
 	}
@@ -3389,7 +3390,7 @@ func TestChannelLinkBandwidthChanReserve(t *testing.T) {
 		t.Fatalf("unable to commit circuit: %v", err)
 	}
 
-	aliceLink.HandleSwitchPacket(addPkt)
+	_ = aliceLink.handleSwitchPacket(addPkt)
 	time.Sleep(time.Millisecond * 100)
 	assertLinkBandwidth(t, aliceLink, aliceStartingBandwidth-htlcAmt-htlcFee)
 
@@ -3743,6 +3744,7 @@ func TestShouldAdjustCommitFee(t *testing.T) {
 	tests := []struct {
 		netFee       chainfee.SatPerKWeight
 		chanFee      chainfee.SatPerKWeight
+		minRelayFee  chainfee.SatPerKWeight
 		shouldAdjust bool
 	}{
 
@@ -3818,11 +3820,22 @@ func TestShouldAdjustCommitFee(t *testing.T) {
 			chanFee:      1000,
 			shouldAdjust: false,
 		},
+
+		// The network fee is higher than our commitment fee,
+		// hasn't yet crossed our activation threshold, but the
+		// current commitment fee is below the minimum relay fee and
+		// so the fee should be updated.
+		{
+			netFee:       1100,
+			chanFee:      1098,
+			minRelayFee:  1099,
+			shouldAdjust: true,
+		},
 	}
 
 	for i, test := range tests {
 		adjustedFee := shouldAdjustCommitFee(
-			test.netFee, test.chanFee,
+			test.netFee, test.chanFee, test.minRelayFee,
 		)
 
 		if adjustedFee && !test.shouldAdjust {
@@ -4008,6 +4021,13 @@ func TestChannelLinkUpdateCommitFee(t *testing.T) {
 		{"bob", "alice", &lnwire.RevokeAndAck{}, false},
 		{"bob", "alice", &lnwire.CommitSig{}, false},
 		{"alice", "bob", &lnwire.RevokeAndAck{}, false},
+
+		// Third fee update.
+		{"alice", "bob", &lnwire.UpdateFee{}, false},
+		{"alice", "bob", &lnwire.CommitSig{}, false},
+		{"bob", "alice", &lnwire.RevokeAndAck{}, false},
+		{"bob", "alice", &lnwire.CommitSig{}, false},
+		{"alice", "bob", &lnwire.RevokeAndAck{}, false},
 	}
 	n.aliceServer.intersect(createInterceptorFunc("[alice] <-- [bob]",
 		"alice", messages, chanID, false))
@@ -4024,8 +4044,8 @@ func TestChannelLinkUpdateCommitFee(t *testing.T) {
 
 	// triggerFeeUpdate is a helper closure to determine whether a fee
 	// update was triggered and completed properly.
-	triggerFeeUpdate := func(feeEstimate, newFeeRate chainfee.SatPerKWeight,
-		shouldUpdate bool) {
+	triggerFeeUpdate := func(feeEstimate, minRelayFee,
+		newFeeRate chainfee.SatPerKWeight, shouldUpdate bool) {
 
 		t.Helper()
 
@@ -4043,6 +4063,13 @@ func TestChannelLinkUpdateCommitFee(t *testing.T) {
 		case n.feeEstimator.byteFeeIn <- feeEstimate:
 		case <-time.After(time.Second * 5):
 			t.Fatalf("alice didn't query for the new network fee")
+		}
+
+		// We also send the min relay fee response to Alice.
+		select {
+		case n.feeEstimator.relayFee <- minRelayFee:
+		case <-time.After(time.Second * 5):
+			t.Fatalf("alice didn't query for the min relay fee")
 		}
 
 		// Record the fee rates after the links have processed the fee
@@ -4070,20 +4097,28 @@ func TestChannelLinkUpdateCommitFee(t *testing.T) {
 		}, 10*time.Second, time.Second)
 	}
 
+	minRelayFee := startingFeeRate / 3
+
 	// Triggering the link to update the fee of the channel with the same
 	// fee rate should not send a fee update.
-	triggerFeeUpdate(startingFeeRate, startingFeeRate, false)
+	triggerFeeUpdate(startingFeeRate, minRelayFee, startingFeeRate, false)
 
 	// Triggering the link to update the fee of the channel with a much
 	// larger fee rate _should_ send a fee update.
 	newFeeRate := startingFeeRate * 3
-	triggerFeeUpdate(newFeeRate, newFeeRate, true)
+	triggerFeeUpdate(newFeeRate, minRelayFee, newFeeRate, true)
 
 	// Triggering the link to update the fee of the channel with a fee rate
 	// that exceeds its maximum fee allocation should result in a fee rate
 	// corresponding to the maximum fee allocation.
-	const maxFeeRate chainfee.SatPerKWeight = 207182320
-	triggerFeeUpdate(maxFeeRate+1, maxFeeRate, true)
+	const maxFeeRate chainfee.SatPerKWeight = 207180182
+	triggerFeeUpdate(maxFeeRate+1, minRelayFee, maxFeeRate, true)
+
+	// Triggering the link to update the fee of the channel with a fee rate
+	// that is below the current min relay fee rate should result in a fee
+	// rate corresponding to the minimum relay fee.
+	newFeeRate = minRelayFee / 2
+	triggerFeeUpdate(newFeeRate, minRelayFee, minRelayFee, true)
 }
 
 // TestChannelLinkAcceptDuplicatePayment tests that if a link receives an
@@ -4437,7 +4472,7 @@ func (h *persistentLinkHarness) restartLink(
 		pCache = newMockPreimageCache()
 	)
 
-	aliceDb := aliceChannel.State().Db
+	aliceDb := aliceChannel.State().Db.GetParentDB()
 	aliceSwitch := h.coreLink.cfg.Switch
 	if restartSwitch {
 		var err error
@@ -4454,6 +4489,7 @@ func (h *persistentLinkHarness) restartLink(
 		FwrdingPolicy:      globalPolicy,
 		Peer:               alicePeer,
 		Switch:             aliceSwitch,
+		BestHeight:         aliceSwitch.BestHeight,
 		Circuits:           aliceSwitch.CircuitModifier(),
 		ForwardPackets:     aliceSwitch.ForwardPackets,
 		DecodeHopIterators: decoder.DecodeHopIterators,
@@ -5137,7 +5173,7 @@ func TestChannelLinkCleanupSpuriousResponses(t *testing.T) {
 		obfuscator:     NewMockObfuscator(),
 		htlc:           &lnwire.UpdateFailHTLC{},
 	}
-	aliceLink.HandleSwitchPacket(fail0)
+	_ = aliceLink.handleSwitchPacket(fail0)
 
 	//  Bob               Alice
 	//   |<----- fal-1 ------|
@@ -5197,7 +5233,7 @@ func TestChannelLinkCleanupSpuriousResponses(t *testing.T) {
 		obfuscator:     NewMockObfuscator(),
 		htlc:           &lnwire.UpdateFailHTLC{},
 	}
-	aliceLink.HandleSwitchPacket(fail1)
+	_ = aliceLink.handleSwitchPacket(fail1)
 
 	//  Bob               Alice
 	//   |<----- fal-1 ------|
@@ -5254,7 +5290,7 @@ func TestChannelLinkCleanupSpuriousResponses(t *testing.T) {
 	// this should trigger an attempt to cleanup the spurious response.
 	// However, we expect it to result in a NOP since it is still missing
 	// its sourceRef.
-	aliceLink.HandleSwitchPacket(fail0)
+	_ = aliceLink.handleSwitchPacket(fail0)
 
 	// Allow the link enough time to process and reject the duplicate
 	// packet, we'll also check that this doesn't trigger Alice to send the
@@ -5309,7 +5345,7 @@ func TestChannelLinkCleanupSpuriousResponses(t *testing.T) {
 		obfuscator:     NewMockObfuscator(),
 		htlc:           &lnwire.UpdateFailHTLC{},
 	}
-	aliceLink.HandleSwitchPacket(fail0)
+	_ = aliceLink.handleSwitchPacket(fail0)
 
 	// Allow the link enough time to process and reject the duplicate
 	// packet, we'll also check that this doesn't trigger Alice to send the
@@ -5368,6 +5404,10 @@ func (m *mockPackager) LoadFwdPkgs(tx kvdb.RTx) ([]*channeldb.FwdPkg, error) {
 }
 
 func (*mockPackager) RemovePkg(tx kvdb.RwTx, height uint64) error {
+	return nil
+}
+
+func (*mockPackager) Wipe(tx kvdb.RwTx) error {
 	return nil
 }
 
@@ -6527,6 +6567,95 @@ func TestPendingCommitTicker(t *testing.T) {
 
 	case <-time.After(time.Second):
 		t.Fatalf("did not receive failure")
+	}
+}
+
+// TestShutdownIfChannelClean tests that a link will exit the htlcManager loop
+// if and only if the underlying channel state is clean.
+func TestShutdownIfChannelClean(t *testing.T) {
+	t.Parallel()
+
+	const chanAmt = btcutil.SatoshiPerBitcoin * 5
+	const chanReserve = btcutil.SatoshiPerBitcoin * 1
+	aliceLink, bobChannel, batchTicker, start, cleanUp, _, err :=
+		newSingleLinkTestHarness(chanAmt, chanReserve)
+	require.NoError(t, err)
+
+	var (
+		coreLink  = aliceLink.(*channelLink)
+		aliceMsgs = coreLink.cfg.Peer.(*mockPeer).sentMsgs
+	)
+
+	shutdownAssert := func(expectedErr error) {
+		err = aliceLink.ShutdownIfChannelClean()
+		if expectedErr != nil {
+			require.Error(t, err, expectedErr)
+		} else {
+			require.NoError(t, err)
+		}
+	}
+
+	err = start()
+	require.NoError(t, err)
+	defer cleanUp()
+
+	ctx := linkTestContext{
+		t:          t,
+		aliceLink:  aliceLink,
+		bobChannel: bobChannel,
+		aliceMsgs:  aliceMsgs,
+	}
+
+	// First send an HTLC from Bob to Alice and assert that the link can't
+	// be shutdown while the update is outstanding.
+	htlc := generateHtlc(t, coreLink, 0)
+
+	// <---add-----
+	ctx.sendHtlcBobToAlice(htlc)
+	// <---sig-----
+	ctx.sendCommitSigBobToAlice(1)
+	// ----rev---->
+	ctx.receiveRevAndAckAliceToBob()
+	shutdownAssert(ErrLinkFailedShutdown)
+
+	// ----sig---->
+	ctx.receiveCommitSigAliceToBob(1)
+	shutdownAssert(ErrLinkFailedShutdown)
+
+	// <---rev-----
+	ctx.sendRevAndAckBobToAlice()
+	shutdownAssert(ErrLinkFailedShutdown)
+
+	// ---settle-->
+	ctx.receiveSettleAliceToBob()
+	shutdownAssert(ErrLinkFailedShutdown)
+
+	// ----sig---->
+	ctx.receiveCommitSigAliceToBob(0)
+	shutdownAssert(ErrLinkFailedShutdown)
+
+	// <---rev-----
+	ctx.sendRevAndAckBobToAlice()
+	shutdownAssert(ErrLinkFailedShutdown)
+
+	// There is currently no controllable breakpoint between Alice
+	// receiving the CommitSig and her sending out the RevokeAndAck. As
+	// soon as the RevokeAndAck is generated, the channel becomes clean.
+	// This can happen right after the CommitSig is received, so there is
+	// no shutdown assertion here.
+	// <---sig-----
+	ctx.sendCommitSigBobToAlice(0)
+
+	// ----rev---->
+	ctx.receiveRevAndAckAliceToBob()
+	shutdownAssert(nil)
+
+	// Now that the link has exited the htlcManager loop, attempt to
+	// trigger the batch ticker. It should not be possible.
+	select {
+	case batchTicker <- time.Now():
+		t.Fatalf("expected batch ticker to be inactive")
+	case <-time.After(5 * time.Second):
 	}
 }
 

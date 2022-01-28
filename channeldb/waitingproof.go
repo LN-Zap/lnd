@@ -2,6 +2,7 @@ package channeldb
 
 import (
 	"encoding/binary"
+	"fmt"
 	"sync"
 
 	"io"
@@ -35,12 +36,12 @@ type WaitingProofStore struct {
 	// cache is used in order to reduce the number of redundant get
 	// calls, when object isn't stored in it.
 	cache map[WaitingProofKey]struct{}
-	db    *DB
+	db    kvdb.Backend
 	mu    sync.RWMutex
 }
 
 // NewWaitingProofStore creates new instance of proofs storage.
-func NewWaitingProofStore(db *DB) (*WaitingProofStore, error) {
+func NewWaitingProofStore(db kvdb.Backend) (*WaitingProofStore, error) {
 	s := &WaitingProofStore{
 		db: db,
 	}
@@ -232,7 +233,14 @@ func (p *WaitingProof) Encode(w io.Writer) error {
 		return err
 	}
 
-	if err := p.AnnounceSignatures.Encode(w, 0); err != nil {
+	// TODO(yy): remove the type assertion when we finished refactoring db
+	// into using write buffer.
+	buf, ok := w.(*bytes.Buffer)
+	if !ok {
+		return fmt.Errorf("expect io.Writer to be *bytes.Buffer")
+	}
+
+	if err := p.AnnounceSignatures.Encode(buf, 0); err != nil {
 		return err
 	}
 
