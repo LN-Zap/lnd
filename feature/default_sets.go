@@ -60,4 +60,12 @@ var defaultSetDesc = setDesc{
 	lnwire.AMPRequired: {
 		SetInvoiceAmp: {}, // 9A
 	},
+	lnwire.ExplicitChannelTypeOptional: {
+		SetInit:    {}, // I
+		SetNodeAnn: {}, // N
+	},
+	lnwire.ScriptEnforcedLeaseOptional: {
+		SetInit:    {}, // I
+		SetNodeAnn: {}, // N
+	},
 }

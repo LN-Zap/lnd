@@ -71,6 +71,7 @@ func (m *mockPreimageCache) SubscribeUpdates() *contractcourt.WitnessSubscriptio
 
 type mockFeeEstimator struct {
 	byteFeeIn chan chainfee.SatPerKWeight
+	relayFee  chan chainfee.SatPerKWeight
 
 	quit chan struct{}
 }
@@ -78,6 +79,7 @@ type mockFeeEstimator struct {
 func newMockFeeEstimator() *mockFeeEstimator {
 	return &mockFeeEstimator{
 		byteFeeIn: make(chan chainfee.SatPerKWeight),
+		relayFee:  make(chan chainfee.SatPerKWeight),
 		quit:      make(chan struct{}),
 	}
 }
@@ -94,7 +96,12 @@ func (m *mockFeeEstimator) EstimateFeePerKW(
 }
 
 func (m *mockFeeEstimator) RelayFeePerKW() chainfee.SatPerKWeight {
-	return 1e3
+	select {
+	case feeRate := <-m.relayFee:
+		return feeRate
+	case <-m.quit:
+		return 0
+	}
 }
 
 func (m *mockFeeEstimator) Start() error {
@@ -170,8 +177,10 @@ func initSwitchWithDB(startingHeight uint32, db *channeldb.DB) (*Switch, error) 
 	}
 
 	cfg := Config{
-		DB:             db,
-		SwitchPackager: channeldb.NewSwitchPackager(),
+		DB:                   db,
+		FetchAllOpenChannels: db.ChannelStateDB().FetchAllOpenChannels,
+		FetchClosedChannels:  db.ChannelStateDB().FetchClosedChannels,
+		SwitchPackager:       channeldb.NewSwitchPackager(),
 		FwdingLog: &mockForwardingLog{
 			events: make(map[time.Time]channeldb.ForwardingEvent),
 		},
@@ -673,7 +682,8 @@ func (f *mockChannelLink) completeCircuit(pkt *htlcPacket) error {
 		htlc.ID = f.htlcID
 
 		keystone := Keystone{pkt.inKey(), pkt.outKey()}
-		if err := f.htlcSwitch.openCircuits(keystone); err != nil {
+		err := f.htlcSwitch.circuits.OpenCircuits(keystone)
+		if err != nil {
 			return err
 		}
 
@@ -692,7 +702,7 @@ func (f *mockChannelLink) completeCircuit(pkt *htlcPacket) error {
 }
 
 func (f *mockChannelLink) deleteCircuit(pkt *htlcPacket) error {
-	return f.htlcSwitch.deleteCircuits(pkt.inKey())
+	return f.htlcSwitch.circuits.DeleteCircuits(pkt.inKey())
 }
 
 func newMockChannelLink(htlcSwitch *Switch, chanID lnwire.ChannelID,
@@ -708,12 +718,12 @@ func newMockChannelLink(htlcSwitch *Switch, chanID lnwire.ChannelID,
 	}
 }
 
-func (f *mockChannelLink) HandleSwitchPacket(pkt *htlcPacket) error {
+func (f *mockChannelLink) handleSwitchPacket(pkt *htlcPacket) error {
 	f.mailBox.AddPacket(pkt)
 	return nil
 }
 
-func (f *mockChannelLink) HandleLocalAddPacket(pkt *htlcPacket) error {
+func (f *mockChannelLink) handleLocalAddPacket(pkt *htlcPacket) error {
 	_ = f.mailBox.AddPacket(pkt)
 	return nil
 }
@@ -774,7 +784,8 @@ func (f *mockChannelLink) Peer() lnpeer.Peer                            { return
 func (f *mockChannelLink) ChannelPoint() *wire.OutPoint                 { return &wire.OutPoint{} }
 func (f *mockChannelLink) Stop()                                        {}
 func (f *mockChannelLink) EligibleToForward() bool                      { return f.eligible }
-func (f *mockChannelLink) MayAddOutgoingHtlc() error                    { return nil }
+func (f *mockChannelLink) MayAddOutgoingHtlc(lnwire.MilliSatoshi) error { return nil }
+func (f *mockChannelLink) ShutdownIfChannelClean() error                { return nil }
 func (f *mockChannelLink) setLiveShortChanID(sid lnwire.ShortChannelID) { f.shortChanID = sid }
 func (f *mockChannelLink) UpdateShortChanID() (lnwire.ShortChannelID, error) {
 	f.eligible = true
@@ -986,5 +997,6 @@ func (h *mockHTLCNotifier) NotifyForwardingFailEvent(key HtlcKey,
 	eventType HtlcEventType) {
 }
 
-func (h *mockHTLCNotifier) NotifySettleEvent(key HtlcKey, eventType HtlcEventType) {
+func (h *mockHTLCNotifier) NotifySettleEvent(key HtlcKey,
+	preimage lntypes.Preimage, eventType HtlcEventType) {
 }

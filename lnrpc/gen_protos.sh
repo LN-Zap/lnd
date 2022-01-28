@@ -5,30 +5,65 @@ set -e
 # generate compiles the *.pb.go stubs from the *.proto files.
 function generate() {
   echo "Generating root gRPC server protos"
-  
-  PROTOS="rpc.proto walletunlocker.proto stateservice.proto **/*.proto"
-  
+
+  PROTOS="lightning.proto walletunlocker.proto stateservice.proto **/*.proto"
+
   # For each of the sub-servers, we then generate their protos, but a restricted
   # set as they don't yet require REST proxies, or swagger docs.
   for file in $PROTOS; do
     DIRECTORY=$(dirname "${file}")
     echo "Generating protos from ${file}, into ${DIRECTORY}"
-  
+
     # Generate the protos.
     protoc -I/usr/local/include -I. \
-      --go_out=plugins=grpc,paths=source_relative:. \
+      --go_out . --go_opt paths=source_relative \
+      --go-grpc_out . --go-grpc_opt paths=source_relative \
       "${file}"
-  
+
     # Generate the REST reverse proxy.
+    annotationsFile=${file//proto/yaml}
     protoc -I/usr/local/include -I. \
-      --grpc-gateway_out=logtostderr=true,paths=source_relative,grpc_api_configuration=rest-annotations.yaml:. \
+      --grpc-gateway_out . \
+      --grpc-gateway_opt logtostderr=true \
+      --grpc-gateway_opt paths=source_relative \
+      --grpc-gateway_opt grpc_api_configuration=${annotationsFile} \
       "${file}"
-  
-  
-    # Finally, generate the swagger file which describes the REST API in detail.
+
+    # Generate the swagger file which describes the REST API in detail.
     protoc -I/usr/local/include -I. \
-      --swagger_out=logtostderr=true,grpc_api_configuration=rest-annotations.yaml:. \
+      --openapiv2_out . \
+      --openapiv2_opt logtostderr=true \
+      --openapiv2_opt grpc_api_configuration=${annotationsFile} \
+      --openapiv2_opt json_names_for_fields=false \
       "${file}"
+  done
+  
+  # Generate the JSON/WASM client stubs.
+  falafel=$(which falafel)
+  pkg="lnrpc"
+  opts="package_name=$pkg,js_stubs=1,build_tags=// +build js"
+  protoc -I/usr/local/include -I. -I.. \
+    --plugin=protoc-gen-custom=$falafel\
+    --custom_out=. \
+    --custom_opt="$opts" \
+    lightning.proto stateservice.proto walletunlocker.proto
+  
+  PACKAGES="autopilotrpc chainrpc invoicesrpc routerrpc signrpc verrpc walletrpc watchtowerrpc wtclientrpc"
+  for package in $PACKAGES; do
+    # Special import for the wallet kit.
+    manual_import=""
+    if [[ "$package" == "walletrpc" ]]; then
+      manual_import="github.com/lightningnetwork/lnd/lnrpc/signrpc"
+    fi
+
+    opts="package_name=$package,manual_import=$manual_import,js_stubs=1,build_tags=// +build js"
+    pushd $package
+    protoc -I/usr/local/include -I. -I.. \
+      --plugin=protoc-gen-custom=$falafel\
+      --custom_out=. \
+      --custom_opt="$opts" \
+      "$(find . -name '*.proto')"
+    popd
   done
 }
 

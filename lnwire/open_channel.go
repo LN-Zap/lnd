@@ -1,11 +1,13 @@
 package lnwire
 
 import (
+	"bytes"
 	"io"
 
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcutil"
+	"github.com/lightningnetwork/lnd/tlv"
 )
 
 // FundingFlag represents the possible bit mask values for the ChannelFlags
@@ -129,6 +131,16 @@ type OpenChannel struct {
 	// and its length followed by the script will be written if it is set.
 	UpfrontShutdownScript DeliveryAddress
 
+	// ChannelType is the explicit channel type the initiator wishes to
+	// open.
+	ChannelType *ChannelType
+
+	// LeaseExpiry represents the absolute expiration height of a channel
+	// lease. This is a custom TLV record that will only apply when a leased
+	// channel is being opened using the script enforced lease commitment
+	// type.
+	LeaseExpiry *LeaseExpiry
+
 	// ExtraData is the set of data that was appended to this message to
 	// fill out the full maximum transport message size. These fields can
 	// be used to specify optional data such as custom TLV fields.
@@ -149,38 +161,93 @@ var _ Message = (*OpenChannel)(nil)
 // implementation. Serialization will observe the rules defined by the passed
 // protocol version.
 //
-// This is part of the lnwire.Message interface.
-func (o *OpenChannel) Encode(w io.Writer, pver uint32) error {
-	// Since the upfront script is encoded as a TLV record, concatenate it
-	// with the ExtraData, and write them as one.
-	tlvRecords, err := packShutdownScript(
-		o.UpfrontShutdownScript, o.ExtraData,
-	)
+func (o *OpenChannel) Encode(w *bytes.Buffer, pver uint32) error {
+	recordProducers := []tlv.RecordProducer{&o.UpfrontShutdownScript}
+	if o.ChannelType != nil {
+		recordProducers = append(recordProducers, o.ChannelType)
+	}
+	if o.LeaseExpiry != nil {
+		recordProducers = append(recordProducers, o.LeaseExpiry)
+	}
+	err := EncodeMessageExtraData(&o.ExtraData, recordProducers...)
 	if err != nil {
 		return err
 	}
 
-	return WriteElements(w,
-		o.ChainHash[:],
-		o.PendingChannelID[:],
-		o.FundingAmount,
-		o.PushAmount,
-		o.DustLimit,
-		o.MaxValueInFlight,
-		o.ChannelReserve,
-		o.HtlcMinimum,
-		o.FeePerKiloWeight,
-		o.CsvDelay,
-		o.MaxAcceptedHTLCs,
-		o.FundingKey,
-		o.RevocationPoint,
-		o.PaymentPoint,
-		o.DelayedPaymentPoint,
-		o.HtlcPoint,
-		o.FirstCommitmentPoint,
-		o.ChannelFlags,
-		tlvRecords,
-	)
+	if err := WriteBytes(w, o.ChainHash[:]); err != nil {
+		return err
+	}
+
+	if err := WriteBytes(w, o.PendingChannelID[:]); err != nil {
+		return err
+	}
+
+	if err := WriteSatoshi(w, o.FundingAmount); err != nil {
+		return err
+	}
+
+	if err := WriteMilliSatoshi(w, o.PushAmount); err != nil {
+		return err
+	}
+
+	if err := WriteSatoshi(w, o.DustLimit); err != nil {
+		return err
+	}
+
+	if err := WriteMilliSatoshi(w, o.MaxValueInFlight); err != nil {
+		return err
+	}
+
+	if err := WriteSatoshi(w, o.ChannelReserve); err != nil {
+		return err
+	}
+
+	if err := WriteMilliSatoshi(w, o.HtlcMinimum); err != nil {
+		return err
+	}
+
+	if err := WriteUint32(w, o.FeePerKiloWeight); err != nil {
+		return err
+	}
+
+	if err := WriteUint16(w, o.CsvDelay); err != nil {
+		return err
+	}
+
+	if err := WriteUint16(w, o.MaxAcceptedHTLCs); err != nil {
+		return err
+	}
+
+	if err := WritePublicKey(w, o.FundingKey); err != nil {
+		return err
+	}
+
+	if err := WritePublicKey(w, o.RevocationPoint); err != nil {
+		return err
+	}
+
+	if err := WritePublicKey(w, o.PaymentPoint); err != nil {
+		return err
+	}
+
+	if err := WritePublicKey(w, o.DelayedPaymentPoint); err != nil {
+		return err
+	}
+
+	if err := WritePublicKey(w, o.HtlcPoint); err != nil {
+		return err
+
+	}
+
+	if err := WritePublicKey(w, o.FirstCommitmentPoint); err != nil {
+		return err
+	}
+
+	if err := WriteFundingFlag(w, o.ChannelFlags); err != nil {
+		return err
+	}
+
+	return WriteBytes(w, o.ExtraData)
 }
 
 // Decode deserializes the serialized OpenChannel stored in the passed
@@ -222,12 +289,28 @@ func (o *OpenChannel) Decode(r io.Reader, pver uint32) error {
 		return err
 	}
 
-	o.UpfrontShutdownScript, o.ExtraData, err = parseShutdownScript(
-		tlvRecords,
+	// Next we'll parse out the set of known records, keeping the raw tlv
+	// bytes untouched to ensure we don't drop any bytes erroneously.
+	var (
+		chanType    ChannelType
+		leaseExpiry LeaseExpiry
+	)
+	typeMap, err := tlvRecords.ExtractRecords(
+		&o.UpfrontShutdownScript, &chanType, &leaseExpiry,
 	)
 	if err != nil {
 		return err
 	}
+
+	// Set the corresponding TLV types if they were included in the stream.
+	if val, ok := typeMap[ChannelTypeRecordType]; ok && val == nil {
+		o.ChannelType = &chanType
+	}
+	if val, ok := typeMap[LeaseExpiryRecordType]; ok && val == nil {
+		o.LeaseExpiry = &leaseExpiry
+	}
+
+	o.ExtraData = tlvRecords
 
 	return nil
 }

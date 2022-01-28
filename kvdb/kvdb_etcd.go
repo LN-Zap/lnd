@@ -1,3 +1,4 @@
+//go:build kvdb_etcd
 // +build kvdb_etcd
 
 package kvdb
@@ -12,10 +13,10 @@ const TestBackend = EtcdBackendName
 
 // GetEtcdTestBackend creates an embedded etcd backend for testing
 // storig the database at the passed path.
-func StartEtcdTestBackend(path string, clientPort, peerPort uint16) (
-	*etcd.Config, func(), error) {
+func StartEtcdTestBackend(path string, clientPort, peerPort uint16,
+	logFile string) (*etcd.Config, func(), error) {
 
 	return etcd.NewEmbeddedEtcdInstance(
-		path, clientPort, peerPort,
+		path, clientPort, peerPort, logFile,
 	)
 }

@@ -9,6 +9,13 @@ import (
 	"github.com/lightningnetwork/lnd/lnwallet"
 )
 
+const (
+	// RegisterRPCMiddlewareURI is the full RPC method URI for the
+	// middleware registration call. This is declared here rather than where
+	// it's mainly used to avoid circular package dependencies.
+	RegisterRPCMiddlewareURI = "/lnrpc.Lightning/RegisterRPCMiddleware"
+)
+
 // RPCTransaction returns a rpc transaction.
 func RPCTransaction(tx *lnwallet.TransactionDetail) *Transaction {
 	var destAddresses []string

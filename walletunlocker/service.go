@@ -9,10 +9,13 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcutil/hdkeychain"
+	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/btcsuite/btcwallet/wallet"
 	"github.com/lightningnetwork/lnd/aezeed"
 	"github.com/lightningnetwork/lnd/chanbackup"
 	"github.com/lightningnetwork/lnd/keychain"
+	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwallet/btcwallet"
@@ -24,6 +27,45 @@ var (
 	// message before the timeout occurred.
 	ErrUnlockTimeout = errors.New("got no unlock message before timeout")
 )
+
+// WalletUnlockParams holds the variables used to parameterize the unlocking of
+// lnd's wallet after it has already been created.
+type WalletUnlockParams struct {
+	// Password is the public and private wallet passphrase.
+	Password []byte
+
+	// Birthday specifies the approximate time that this wallet was created.
+	// This is used to bound any rescans on startup.
+	Birthday time.Time
+
+	// RecoveryWindow specifies the address lookahead when entering recovery
+	// mode. A recovery will be attempted if this value is non-zero.
+	RecoveryWindow uint32
+
+	// Wallet is the loaded and unlocked Wallet. This is returned
+	// from the unlocker service to avoid it being unlocked twice (once in
+	// the unlocker service to check if the password is correct and again
+	// later when lnd actually uses it). Because unlocking involves scrypt
+	// which is resource intensive, we want to avoid doing it twice.
+	Wallet *wallet.Wallet
+
+	// ChansToRestore a set of static channel backups that should be
+	// restored before the main server instance starts up.
+	ChansToRestore ChannelsToRecover
+
+	// UnloadWallet is a function for unloading the wallet, which should
+	// be called on shutdown.
+	UnloadWallet func() error
+
+	// StatelessInit signals that the user requested the daemon to be
+	// initialized stateless, which means no unencrypted macaroons should be
+	// written to disk.
+	StatelessInit bool
+
+	// MacResponseChan is the channel for sending back the admin macaroon to
+	// the WalletUnlocker service.
+	MacResponseChan chan []byte
+}
 
 // ChannelsToRecover wraps any set of packed (serialized+encrypted) channel
 // back ups together. These can be passed in when unlocking the wallet, or
@@ -49,8 +91,30 @@ type WalletInitMsg struct {
 	Passphrase []byte
 
 	// WalletSeed is the deciphered cipher seed that the wallet should use
-	// to initialize itself.
+	// to initialize itself. The seed might be nil if the wallet should be
+	// created from an extended master root key instead.
 	WalletSeed *aezeed.CipherSeed
+
+	// WalletExtendedKey is the wallet's extended master root key that
+	// should be used instead of the seed, if non-nil. The extended key is
+	// mutually exclusive to the wallet seed, but one of both is always set.
+	WalletExtendedKey *hdkeychain.ExtendedKey
+
+	// ExtendedKeyBirthday is the birthday of a wallet that's being restored
+	// through an extended key instead of an aezeed.
+	ExtendedKeyBirthday time.Time
+
+	// WatchOnlyAccounts is a map of scoped account extended public keys
+	// that should be imported to create a watch-only wallet.
+	WatchOnlyAccounts map[waddrmgr.ScopedIndex]*hdkeychain.ExtendedKey
+
+	// WatchOnlyBirthday is the birthday of the master root key the above
+	// watch-only account xpubs were derived from.
+	WatchOnlyBirthday time.Time
+
+	// WatchOnlyMasterFingerprint is the fingerprint of the master root key
+	// the above watch-only account xpubs were derived from.
+	WatchOnlyMasterFingerprint uint32
 
 	// RecoveryWindow is the address look-ahead used when restoring a seed
 	// with existing funds. A recovery window zero indicates that no
@@ -109,6 +173,9 @@ type WalletUnlockMsg struct {
 // initial setup, users can provide their own source of entropy which will be
 // used to generate the seed that's ultimately used within the wallet.
 type UnlockerService struct {
+	// Required by the grpc-gateway/v2 library for forward compatibility.
+	lnrpc.UnimplementedWalletUnlockerServer
+
 	// InitMsgs is a channel that carries all wallet init messages.
 	InitMsgs chan *WalletInitMsg
 
@@ -121,18 +188,12 @@ type UnlockerService struct {
 	// the WalletUnlocker service.
 	MacResponseChan chan []byte
 
-	chainDir       string
-	noFreelistSync bool
-	netParams      *chaincfg.Params
+	netParams *chaincfg.Params
 
 	// macaroonFiles is the path to the three generated macaroons with
 	// different access permissions. These might not exist in a stateless
 	// initialization of lnd.
 	macaroonFiles []string
-
-	// dbTimeout specifies the timeout value to use when opening the wallet
-	// database.
-	dbTimeout time.Duration
 
 	// resetWalletTransactions indicates that the wallet state should be
 	// reset on unlock to force a full chain rescan.
@@ -140,11 +201,15 @@ type UnlockerService struct {
 
 	// LoaderOpts holds the functional options for the wallet loader.
 	loaderOpts []btcwallet.LoaderOption
+
+	// macaroonDB is an instance of a database backend that stores all
+	// macaroon root keys. This will be nil on initialization and must be
+	// set using the SetMacaroonDB method as soon as it's available.
+	macaroonDB kvdb.Backend
 }
 
 // New creates and returns a new UnlockerService.
-func New(chainDir string, params *chaincfg.Params, noFreelistSync bool,
-	macaroonFiles []string, dbTimeout time.Duration,
+func New(params *chaincfg.Params, macaroonFiles []string,
 	resetWalletTransactions bool,
 	loaderOpts []btcwallet.LoaderOption) *UnlockerService {
 
@@ -155,11 +220,8 @@ func New(chainDir string, params *chaincfg.Params, noFreelistSync bool,
 		// Make sure we buffer the channel is buffered so the main lnd
 		// goroutine isn't blocking on writing to it.
 		MacResponseChan:         make(chan []byte, 1),
-		chainDir:                chainDir,
 		netParams:               params,
 		macaroonFiles:           macaroonFiles,
-		dbTimeout:               dbTimeout,
-		noFreelistSync:          noFreelistSync,
 		resetWalletTransactions: resetWalletTransactions,
 		loaderOpts:              loaderOpts,
 	}
@@ -169,6 +231,12 @@ func New(chainDir string, params *chaincfg.Params, noFreelistSync bool,
 // service has been hooked to the main RPC server.
 func (u *UnlockerService) SetLoaderOpts(loaderOpts []btcwallet.LoaderOption) {
 	u.loaderOpts = loaderOpts
+}
+
+// SetMacaroonDB can be used to inject the macaroon database after the unlocker
+// service has been hooked to the main RPC server.
+func (u *UnlockerService) SetMacaroonDB(macaroonDB kvdb.Backend) {
+	u.macaroonDB = macaroonDB
 }
 
 func (u *UnlockerService) newLoader(recoveryWindow uint32) (*wallet.Loader,
@@ -262,7 +330,7 @@ func (u *UnlockerService) GenSeed(_ context.Context,
 	}
 
 	return &lnrpc.GenSeedResponse{
-		CipherSeedMnemonic: []string(mnemonic[:]),
+		CipherSeedMnemonic: mnemonic[:],
 		EncipheredSeed:     encipheredSeed[:],
 	}, nil
 }
@@ -283,9 +351,7 @@ func extractChanBackups(chanBackups *lnrpc.ChanBackupSnapshot) *ChannelsToRecove
 	var backups ChannelsToRecover
 	if chanBackups.MultiChanBackup != nil {
 		multiBackup := chanBackups.MultiChanBackup
-		backups.PackedMultiChanBackup = chanbackup.PackedMulti(
-			multiBackup.MultiChanBackup,
-		)
+		backups.PackedMultiChanBackup = multiBackup.MultiChanBackup
 	}
 
 	if chanBackups.SingleChanBackups == nil {
@@ -350,27 +416,162 @@ func (u *UnlockerService) InitWallet(ctx context.Context,
 		return nil, fmt.Errorf("wallet already exists")
 	}
 
-	// At this point, we know that the wallet doesn't already exist. So
-	// we'll map the user provided aezeed and passphrase into a decoded
-	// cipher seed instance.
-	var mnemonic aezeed.Mnemonic
-	copy(mnemonic[:], in.CipherSeedMnemonic[:])
-
-	// If we're unable to map it back into the ciphertext, then either the
-	// mnemonic is wrong, or the passphrase is wrong.
-	cipherSeed, err := mnemonic.ToCipherSeed(in.AezeedPassphrase)
-	if err != nil {
-		return nil, err
-	}
-
-	// With the cipher seed deciphered, and the auth service created, we'll
-	// now send over the wallet password and the seed. This will allow the
-	// daemon to initialize itself and startup.
+	// At this point, we know the wallet doesn't already exist so we can
+	// prepare the message that we'll send over the channel later.
 	initMsg := &WalletInitMsg{
 		Passphrase:     password,
-		WalletSeed:     cipherSeed,
 		RecoveryWindow: uint32(recoveryWindow),
 		StatelessInit:  in.StatelessInit,
+	}
+
+	// There are two supported ways to initialize the wallet. Either from
+	// the aezeed or the final extended master key directly.
+	switch {
+	// Don't allow the user to specify both as that would be ambiguous.
+	case len(in.CipherSeedMnemonic) > 0 && len(in.ExtendedMasterKey) > 0:
+		return nil, fmt.Errorf("cannot specify both the cipher " +
+			"seed mnemonic and the extended master key")
+
+	// The aezeed is the preferred and default way of initializing a wallet.
+	case len(in.CipherSeedMnemonic) > 0:
+		// We'll map the user provided aezeed and passphrase into a
+		// decoded cipher seed instance.
+		var mnemonic aezeed.Mnemonic
+		copy(mnemonic[:], in.CipherSeedMnemonic)
+
+		// If we're unable to map it back into the ciphertext, then
+		// either the mnemonic is wrong, or the passphrase is wrong.
+		cipherSeed, err := mnemonic.ToCipherSeed(in.AezeedPassphrase)
+		if err != nil {
+			return nil, err
+		}
+
+		initMsg.WalletSeed = cipherSeed
+
+	// To support restoring a wallet where the seed isn't known or a wallet
+	// created externally to lnd, we also allow the extended master key
+	// (xprv) to be imported directly. This is what'll be stored in the
+	// btcwallet database anyway.
+	case len(in.ExtendedMasterKey) > 0:
+		extendedKey, err := hdkeychain.NewKeyFromString(
+			in.ExtendedMasterKey,
+		)
+		if err != nil {
+			return nil, err
+		}
+
+		// The on-chain wallet of lnd is going to derive keys based on
+		// the BIP49/84 key derivation paths from this root key. To make
+		// sure we use default derivation paths, we want to avoid
+		// deriving keys from something other than the master key (at
+		// depth 0, denoted with "m/" in BIP32 notation).
+		if extendedKey.Depth() != 0 {
+			return nil, fmt.Errorf("extended master key must " +
+				"be at depth 0 not a child key")
+		}
+
+		// Because we need the master key (at depth 0), it must be an
+		// extended private key as the first levels of BIP49/84
+		// derivation paths are hardened, which isn't possible with
+		// extended public keys.
+		if !extendedKey.IsPrivate() {
+			return nil, fmt.Errorf("extended master key must " +
+				"contain private keys")
+		}
+
+		// To avoid using the wrong master key, we check that it was
+		// issued for the correct network. This will cause problems if
+		// someone tries to import a "new" BIP84 zprv key because with
+		// this we only support the "legacy" zprv prefix. But it is
+		// trivial to convert between those formats, as long as the user
+		// knows what they're doing.
+		if !extendedKey.IsForNet(u.netParams) {
+			return nil, fmt.Errorf("extended master key must be "+
+				"for network %s", u.netParams.Name)
+		}
+
+		// When importing a wallet from its extended private key we
+		// don't know the birthday as that information is not encoded in
+		// that format. We therefore must set an arbitrary date to start
+		// rescanning at if the user doesn't provide an explicit value
+		// for it. Since lnd only uses SegWit addresses, we pick the
+		// date of the first block that contained SegWit transactions
+		// (481824).
+		initMsg.ExtendedKeyBirthday = time.Date(
+			2017, time.August, 24, 1, 57, 37, 0, time.UTC,
+		)
+		if in.ExtendedMasterKeyBirthdayTimestamp != 0 {
+			initMsg.ExtendedKeyBirthday = time.Unix(
+				int64(in.ExtendedMasterKeyBirthdayTimestamp), 0,
+			)
+		}
+
+		initMsg.WalletExtendedKey = extendedKey
+
+	// The third option for creating a wallet is the watch-only mode:
+	// Instead of providing the master root key directly, each individual
+	// account is passed as an extended public key only. Because of the
+	// hardened derivation path up to the account (depth 3), it is not
+	// possible to create a master root extended _public_ key. Therefore, an
+	// xpub must be derived and passed into the unlocker for _every_ account
+	// lnd expects.
+	case in.WatchOnly != nil && len(in.WatchOnly.Accounts) > 0:
+		initMsg.WatchOnlyAccounts = make(
+			map[waddrmgr.ScopedIndex]*hdkeychain.ExtendedKey,
+			len(in.WatchOnly.Accounts),
+		)
+
+		for _, acct := range in.WatchOnly.Accounts {
+			scopedIndex := waddrmgr.ScopedIndex{
+				Scope: waddrmgr.KeyScope{
+					Purpose: acct.Purpose,
+					Coin:    acct.CoinType,
+				},
+				Index: acct.Account,
+			}
+			acctKey, err := hdkeychain.NewKeyFromString(acct.Xpub)
+			if err != nil {
+				return nil, fmt.Errorf("error parsing xpub "+
+					"%v: %v", acct.Xpub, err)
+			}
+
+			// Just to make sure the user is doing the right thing,
+			// we expect the public key to be at derivation depth
+			// three (which is the account level) and the key not to
+			// contain any private key material.
+			if acctKey.Depth() != 3 {
+				return nil, fmt.Errorf("xpub must be at " +
+					"depth 3")
+			}
+			if acctKey.IsPrivate() {
+				return nil, fmt.Errorf("xpub is not really " +
+					"an xpub, contains private key")
+			}
+
+			initMsg.WatchOnlyAccounts[scopedIndex] = acctKey
+		}
+
+		// When importing a wallet from its extended public keys we
+		// don't know the birthday as that information is not encoded in
+		// that format. We therefore must set an arbitrary date to start
+		// rescanning at if the user doesn't provide an explicit value
+		// for it. Since lnd only uses SegWit addresses, we pick the
+		// date of the first block that contained SegWit transactions
+		// (481824).
+		initMsg.WatchOnlyBirthday = time.Date(
+			2017, time.August, 24, 1, 57, 37, 0, time.UTC,
+		)
+		if in.WatchOnly.MasterKeyBirthdayTimestamp != 0 {
+			initMsg.WatchOnlyBirthday = time.Unix(
+				int64(in.WatchOnly.MasterKeyBirthdayTimestamp),
+				0,
+			)
+		}
+
+	// No key material was set, no wallet can be created.
+	default:
+		return nil, fmt.Errorf("must either specify cipher seed " +
+			"mnemonic or the extended master key")
 	}
 
 	// Before we return the unlock payload, we'll check if we can extract
@@ -606,9 +807,8 @@ func (u *UnlockerService) ChangePassword(ctx context.Context,
 	// then close it again.
 	// Attempt to open the macaroon DB, unlock it and then change
 	// the passphrase.
-	netDir := btcwallet.NetworkDir(u.chainDir, u.netParams)
 	macaroonService, err := macaroons.NewService(
-		netDir, "lnd", in.StatelessInit, u.dbTimeout,
+		u.macaroonDB, "lnd", in.StatelessInit,
 	)
 	if err != nil {
 		return nil, err

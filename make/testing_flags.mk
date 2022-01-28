@@ -7,6 +7,7 @@ EXEC_SUFFIX =
 COVER_PKG = $$(go list -deps -tags="$(DEV_TAGS)" ./... | grep '$(PKG)' | grep -v lnrpc)
 NUM_ITEST_TRANCHES = 4
 ITEST_PARALLELISM = $(NUM_ITEST_TRANCHES)
+POSTGRES_START_DELAY = 5
 
 # If rpc option is set also add all extra RPC tags to DEV_TAGS
 ifneq ($(with-rpc),)
@@ -46,13 +47,20 @@ endif
 
 # Define the integration test.run filter if the icase argument was provided.
 ifneq ($(icase),)
-TEST_FLAGS += -test.run="TestLightningNetworkDaemon/.*-of-.*/.*/$(icase)"
+TEST_FLAGS += -test.run="TestLightningNetworkDaemon/tranche.*/.*-of-.*/.*/$(icase)"
 endif
 
-# Run itests with etcd backend.
-ifeq ($(etcd),1)
-ITEST_FLAGS += -etcd
+# Run itests with specified db backend.
+ifneq ($(dbbackend),)
+ITEST_FLAGS += -dbbackend=$(dbbackend)
+endif
+
+ifeq ($(dbbackend),etcd)
 DEV_TAGS += kvdb_etcd
+endif
+
+ifeq ($(dbbackend),postgres)
+DEV_TAGS += kvdb_postgres
 endif
 
 ifneq ($(tags),)

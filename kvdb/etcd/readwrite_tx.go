@@ -1,8 +1,11 @@
+//go:build kvdb_etcd
 // +build kvdb_etcd
 
 package etcd
 
 import (
+	"sync"
+
 	"github.com/btcsuite/btcwallet/walletdb"
 )
 
@@ -17,13 +20,18 @@ type readWriteTx struct {
 
 	// active is true if the transaction hasn't been committed yet.
 	active bool
+
+	// lock is passed on for manual txns when the backend is instantiated
+	// such that we read/write lock transactions to ensure a single writer.
+	lock sync.Locker
 }
 
 // newReadWriteTx creates an rw transaction with the passed STM.
-func newReadWriteTx(stm STM, prefix string) *readWriteTx {
+func newReadWriteTx(stm STM, prefix string, lock sync.Locker) *readWriteTx {
 	return &readWriteTx{
 		stm:          stm,
 		active:       true,
+		lock:         lock,
 		rootBucketID: makeBucketID([]byte(prefix)),
 	}
 }
@@ -32,6 +40,13 @@ func newReadWriteTx(stm STM, prefix string) *readWriteTx {
 // pseudo root bucket.
 func rootBucket(tx *readWriteTx) *readWriteBucket {
 	return newReadWriteBucket(tx, tx.rootBucketID[:], tx.rootBucketID[:])
+}
+
+// RootBucket will return a handle to the root bucket. This is not a real handle
+// but just a wrapper around the root bucket ID to allow derivation of child
+// keys.
+func (tx *readWriteTx) RootBucket() walletdb.ReadBucket {
+	return rootBucket(tx)
 }
 
 // ReadBucket opens the root bucket for read only access.  If the bucket
@@ -63,6 +78,10 @@ func (tx *readWriteTx) Rollback() error {
 	// If the transaction has been closed roolback will fail.
 	if !tx.active {
 		return walletdb.ErrTxClosed
+	}
+
+	if tx.lock != nil {
+		defer tx.lock.Unlock()
 	}
 
 	// Rollback the STM and set the tx to inactive.
@@ -97,6 +116,10 @@ func (tx *readWriteTx) Commit() error {
 	// Commit will fail if the transaction is already committed.
 	if !tx.active {
 		return walletdb.ErrTxClosed
+	}
+
+	if tx.lock != nil {
+		defer tx.lock.Unlock()
 	}
 
 	// Try committing the transaction.

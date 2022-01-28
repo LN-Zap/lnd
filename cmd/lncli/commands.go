@@ -14,7 +14,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
@@ -1550,72 +1549,6 @@ func getNodeMetrics(ctx *cli.Context) error {
 	return nil
 }
 
-var listPaymentsCommand = cli.Command{
-	Name:     "listpayments",
-	Category: "Payments",
-	Usage:    "List all outgoing payments.",
-	Description: "This command enables the retrieval of payments stored " +
-		"in the database. Pagination is supported by the usage of " +
-		"index_offset in combination with the paginate_forwards flag. " +
-		"Reversed pagination is enabled by default to receive " +
-		"current payments first. Pagination can be resumed by using " +
-		"the returned last_index_offset (for forwards order), or " +
-		"first_index_offset (for reversed order) as the offset_index. ",
-	Flags: []cli.Flag{
-		cli.BoolFlag{
-			Name: "include_incomplete",
-			Usage: "if set to true, payments still in flight (or " +
-				"failed) will be returned as well, keeping" +
-				"indices for payments the same as without " +
-				"the flag",
-		},
-		cli.UintFlag{
-			Name: "index_offset",
-			Usage: "The index of a payment that will be used as " +
-				"either the start (in forwards mode) or end " +
-				"(in reverse mode) of a query to determine " +
-				"which payments should be returned in the " +
-				"response, where the index_offset is " +
-				"excluded. If index_offset is set to zero in " +
-				"reversed mode, the query will end with the " +
-				"last payment made.",
-		},
-		cli.UintFlag{
-			Name: "max_payments",
-			Usage: "the max number of payments to return, by " +
-				"default, all completed payments are returned",
-		},
-		cli.BoolFlag{
-			Name: "paginate_forwards",
-			Usage: "if set, payments succeeding the " +
-				"index_offset will be returned, allowing " +
-				"forwards pagination",
-		},
-	},
-	Action: actionDecorator(listPayments),
-}
-
-func listPayments(ctx *cli.Context) error {
-	ctxc := getContext()
-	client, cleanUp := getClient(ctx)
-	defer cleanUp()
-
-	req := &lnrpc.ListPaymentsRequest{
-		IncludeIncomplete: ctx.Bool("include_incomplete"),
-		IndexOffset:       uint64(ctx.Uint("index_offset")),
-		MaxPayments:       uint64(ctx.Uint("max_payments")),
-		Reversed:          !ctx.Bool("paginate_forwards"),
-	}
-
-	payments, err := client.ListPayments(ctxc, req)
-	if err != nil {
-		return err
-	}
-
-	printRespJSON(payments)
-	return nil
-}
-
 var getChanInfoCommand = cli.Command{
 	Name:     "getchaninfo",
 	Category: "Graph",
@@ -1624,7 +1557,7 @@ var getChanInfoCommand = cli.Command{
 		"particular channel",
 	ArgsUsage: "chan_id",
 	Flags: []cli.Flag{
-		cli.Int64Flag{
+		cli.Uint64Flag{
 			Name:  "chan_id",
 			Usage: "the 8-byte compact channel ID to query for",
 		},
@@ -1638,15 +1571,15 @@ func getChanInfo(ctx *cli.Context) error {
 	defer cleanUp()
 
 	var (
-		chanID int64
+		chanID uint64
 		err    error
 	)
 
 	switch {
 	case ctx.IsSet("chan_id"):
-		chanID = ctx.Int64("chan_id")
+		chanID = ctx.Uint64("chan_id")
 	case ctx.Args().Present():
-		chanID, err = strconv.ParseInt(ctx.Args().First(), 10, 64)
+		chanID, err = strconv.ParseUint(ctx.Args().First(), 10, 64)
 		if err != nil {
 			return fmt.Errorf("error parsing chan_id: %s", err)
 		}
@@ -1655,7 +1588,7 @@ func getChanInfo(ctx *cli.Context) error {
 	}
 
 	req := &lnrpc.ChanInfoRequest{
-		ChanId: uint64(chanID),
+		ChanId: chanID,
 	}
 
 	chanInfo, err := client.GetChanInfo(ctxc, req)
@@ -1717,142 +1650,6 @@ func getNodeInfo(ctx *cli.Context) error {
 
 	printRespJSON(nodeInfo)
 	return nil
-}
-
-var queryRoutesCommand = cli.Command{
-	Name:        "queryroutes",
-	Category:    "Payments",
-	Usage:       "Query a route to a destination.",
-	Description: "Queries the channel router for a potential path to the destination that has sufficient flow for the amount including fees",
-	ArgsUsage:   "dest amt",
-	Flags: []cli.Flag{
-		cli.StringFlag{
-			Name: "dest",
-			Usage: "the 33-byte hex-encoded public key for the payment " +
-				"destination",
-		},
-		cli.Int64Flag{
-			Name:  "amt",
-			Usage: "the amount to send expressed in satoshis",
-		},
-		cli.Int64Flag{
-			Name: "fee_limit",
-			Usage: "maximum fee allowed in satoshis when sending " +
-				"the payment",
-		},
-		cli.Int64Flag{
-			Name: "fee_limit_percent",
-			Usage: "percentage of the payment's amount used as the " +
-				"maximum fee allowed when sending the payment",
-		},
-		cli.Int64Flag{
-			Name: "final_cltv_delta",
-			Usage: "(optional) number of blocks the last hop has to reveal " +
-				"the preimage",
-		},
-		cli.BoolFlag{
-			Name:  "use_mc",
-			Usage: "use mission control probabilities",
-		},
-		cli.Uint64Flag{
-			Name: "outgoing_chanid",
-			Usage: "(optional) the channel id of the channel " +
-				"that must be taken to the first hop",
-		},
-		cltvLimitFlag,
-	},
-	Action: actionDecorator(queryRoutes),
-}
-
-func queryRoutes(ctx *cli.Context) error {
-	ctxc := getContext()
-	client, cleanUp := getClient(ctx)
-	defer cleanUp()
-
-	var (
-		dest string
-		amt  int64
-		err  error
-	)
-
-	args := ctx.Args()
-
-	switch {
-	case ctx.IsSet("dest"):
-		dest = ctx.String("dest")
-	case args.Present():
-		dest = args.First()
-		args = args.Tail()
-	default:
-		return fmt.Errorf("dest argument missing")
-	}
-
-	switch {
-	case ctx.IsSet("amt"):
-		amt = ctx.Int64("amt")
-	case args.Present():
-		amt, err = strconv.ParseInt(args.First(), 10, 64)
-		if err != nil {
-			return fmt.Errorf("unable to decode amt argument: %v", err)
-		}
-	default:
-		return fmt.Errorf("amt argument missing")
-	}
-
-	feeLimit, err := retrieveFeeLimitLegacy(ctx)
-	if err != nil {
-		return err
-	}
-
-	req := &lnrpc.QueryRoutesRequest{
-		PubKey:            dest,
-		Amt:               amt,
-		FeeLimit:          feeLimit,
-		FinalCltvDelta:    int32(ctx.Int("final_cltv_delta")),
-		UseMissionControl: ctx.Bool("use_mc"),
-		CltvLimit:         uint32(ctx.Uint64(cltvLimitFlag.Name)),
-		OutgoingChanId:    ctx.Uint64("outgoing_chanid"),
-	}
-
-	route, err := client.QueryRoutes(ctxc, req)
-	if err != nil {
-		return err
-	}
-
-	printRespJSON(route)
-	return nil
-}
-
-// retrieveFeeLimitLegacy retrieves the fee limit based on the different fee
-// limit flags passed. This function will eventually disappear in favor of
-// retrieveFeeLimit and the new payment rpc.
-func retrieveFeeLimitLegacy(ctx *cli.Context) (*lnrpc.FeeLimit, error) {
-	switch {
-	case ctx.IsSet("fee_limit") && ctx.IsSet("fee_limit_percent"):
-		return nil, fmt.Errorf("either fee_limit or fee_limit_percent " +
-			"can be set, but not both")
-	case ctx.IsSet("fee_limit"):
-		return &lnrpc.FeeLimit{
-			Limit: &lnrpc.FeeLimit_Fixed{
-				Fixed: ctx.Int64("fee_limit"),
-			},
-		}, nil
-	case ctx.IsSet("fee_limit_percent"):
-		feeLimitPercent := ctx.Int64("fee_limit_percent")
-		if feeLimitPercent < 0 {
-			return nil, errors.New("negative fee limit percentage " +
-				"provided")
-		}
-		return &lnrpc.FeeLimit{
-			Limit: &lnrpc.FeeLimit_Percent{
-				Percent: feeLimitPercent,
-			},
-		}, nil
-	}
-
-	// Since the fee limit flags aren't required, we don't return an error
-	// if they're not set.
-	return nil, nil
 }
 
 var getNetworkInfoCommand = cli.Command{
@@ -2156,7 +1953,16 @@ var updateChannelPolicyCommand = cli.Command{
 			Usage: "the fee rate that will be charged " +
 				"proportionally based on the value of each " +
 				"forwarded HTLC, the lowest possible rate is 0 " +
-				"with a granularity of 0.000001 (millionths)",
+				"with a granularity of 0.000001 (millionths). Can not " +
+				"be set at the same time as fee_rate_ppm.",
+		},
+		cli.Uint64Flag{
+			Name: "fee_rate_ppm",
+			Usage: "the fee rate ppm (parts per million) that " +
+				"will be charged proportionally based on the value of each " +
+				"forwarded HTLC, the lowest possible rate is 0 " +
+				"with a granularity of 0.000001 (millionths). Can not " +
+				"be set at the same time as fee_rate.",
 		},
 		cli.Int64Flag{
 			Name: "time_lock_delta",
@@ -2218,6 +2024,7 @@ func updateChannelPolicy(ctx *cli.Context) error {
 	var (
 		baseFee       int64
 		feeRate       float64
+		feeRatePpm    uint64
 		timeLockDelta int64
 		err           error
 	)
@@ -2237,8 +2044,12 @@ func updateChannelPolicy(ctx *cli.Context) error {
 	}
 
 	switch {
+	case ctx.IsSet("fee_rate") && ctx.IsSet("fee_rate_ppm"):
+		return fmt.Errorf("fee_rate or fee_rate_ppm can not both be set")
 	case ctx.IsSet("fee_rate"):
 		feeRate = ctx.Float64("fee_rate")
+	case ctx.IsSet("fee_rate_ppm"):
+		feeRatePpm = ctx.Uint64("fee_rate_ppm")
 	case args.Present():
 		feeRate, err = strconv.ParseFloat(args.First(), 64)
 		if err != nil {
@@ -2247,7 +2058,7 @@ func updateChannelPolicy(ctx *cli.Context) error {
 
 		args = args.Tail()
 	default:
-		return fmt.Errorf("fee_rate argument missing")
+		return fmt.Errorf("fee_rate or fee_rate_ppm argument missing")
 	}
 
 	switch {
@@ -2286,7 +2097,6 @@ func updateChannelPolicy(ctx *cli.Context) error {
 
 	req := &lnrpc.PolicyUpdateRequest{
 		BaseFeeMsat:   baseFee,
-		FeeRate:       feeRate,
 		TimeLockDelta: uint32(timeLockDelta),
 		MaxHtlcMsat:   ctx.Uint64("max_htlc_msat"),
 	}
@@ -2306,137 +2116,33 @@ func updateChannelPolicy(ctx *cli.Context) error {
 		}
 	}
 
+	if feeRate != 0 {
+		req.FeeRate = feeRate
+	} else if feeRatePpm != 0 {
+		req.FeeRatePpm = uint32(feeRatePpm)
+	}
+
 	resp, err := client.UpdateChannelPolicy(ctxc, req)
 	if err != nil {
 		return err
 	}
 
-	printRespJSON(resp)
-	return nil
-}
-
-var forwardingHistoryCommand = cli.Command{
-	Name:      "fwdinghistory",
-	Category:  "Payments",
-	Usage:     "Query the history of all forwarded HTLCs.",
-	ArgsUsage: "start_time [end_time] [index_offset] [max_events]",
-	Description: `
-	Query the HTLC switch's internal forwarding log for all completed
-	payment circuits (HTLCs) over a particular time range (--start_time and
-	--end_time). The start and end times are meant to be expressed in
-	seconds since the Unix epoch.
-	Alternatively negative time ranges can be used, e.g. "-3d". Supports
-	s(seconds), m(minutes), h(ours), d(ays), w(eeks), M(onths), y(ears).
-	Month equals 30.44 days, year equals 365.25 days.
-	If --start_time isn't provided, then 24 hours ago is used. If
-	--end_time isn't provided, then the current time is used.
-
-	The max number of events returned is 50k. The default number is 100,
-	callers can use the --max_events param to modify this value.
-
-	Finally, callers can skip a series of events using the --index_offset
-	parameter. Each response will contain the offset index of the last
-	entry. Using this callers can manually paginate within a time slice.
-	`,
-	Flags: []cli.Flag{
-		cli.StringFlag{
-			Name: "start_time",
-			Usage: "the starting time for the query " +
-				`as unix timestamp or relative e.g. "-1w"`,
-		},
-		cli.StringFlag{
-			Name: "end_time",
-			Usage: "the end time for the query " +
-				`as unix timestamp or relative e.g. "-1w"`,
-		},
-		cli.Int64Flag{
-			Name:  "index_offset",
-			Usage: "the number of events to skip",
-		},
-		cli.Int64Flag{
-			Name:  "max_events",
-			Usage: "the max number of events to return",
-		},
-	},
-	Action: actionDecorator(forwardingHistory),
-}
-
-func forwardingHistory(ctx *cli.Context) error {
-	ctxc := getContext()
-	client, cleanUp := getClient(ctx)
-	defer cleanUp()
-
-	var (
-		startTime, endTime     uint64
-		indexOffset, maxEvents uint32
-		err                    error
-	)
-	args := ctx.Args()
-	now := time.Now()
-
-	switch {
-	case ctx.IsSet("start_time"):
-		startTime, err = parseTime(ctx.String("start_time"), now)
-	case args.Present():
-		startTime, err = parseTime(args.First(), now)
-		args = args.Tail()
-	default:
-		now := time.Now()
-		startTime = uint64(now.Add(-time.Hour * 24).Unix())
+	// Parse the response into the final json object that will be printed
+	// to stdout. At the moment, this filters out the raw txid bytes from
+	// each failed update's outpoint and only prints the txid string.
+	var listFailedUpdateResp = struct {
+		FailedUpdates []*FailedUpdate `json:"failed_updates"`
+	}{
+		FailedUpdates: make([]*FailedUpdate, 0, len(resp.FailedUpdates)),
 	}
-	if err != nil {
-		return fmt.Errorf("unable to decode start_time: %v", err)
+	for _, protoUpdate := range resp.FailedUpdates {
+		failedUpdate := NewFailedUpdateFromProto(protoUpdate)
+		listFailedUpdateResp.FailedUpdates = append(
+			listFailedUpdateResp.FailedUpdates, failedUpdate)
 	}
 
-	switch {
-	case ctx.IsSet("end_time"):
-		endTime, err = parseTime(ctx.String("end_time"), now)
-	case args.Present():
-		endTime, err = parseTime(args.First(), now)
-		args = args.Tail()
-	default:
-		endTime = uint64(now.Unix())
-	}
-	if err != nil {
-		return fmt.Errorf("unable to decode end_time: %v", err)
-	}
+	printJSON(listFailedUpdateResp)
 
-	switch {
-	case ctx.IsSet("index_offset"):
-		indexOffset = uint32(ctx.Int64("index_offset"))
-	case args.Present():
-		i, err := strconv.ParseInt(args.First(), 10, 64)
-		if err != nil {
-			return fmt.Errorf("unable to decode index_offset: %v", err)
-		}
-		indexOffset = uint32(i)
-		args = args.Tail()
-	}
-
-	switch {
-	case ctx.IsSet("max_events"):
-		maxEvents = uint32(ctx.Int64("max_events"))
-	case args.Present():
-		m, err := strconv.ParseInt(args.First(), 10, 64)
-		if err != nil {
-			return fmt.Errorf("unable to decode max_events: %v", err)
-		}
-		maxEvents = uint32(m)
-		args = args.Tail()
-	}
-
-	req := &lnrpc.ForwardingHistoryRequest{
-		StartTime:    startTime,
-		EndTime:      endTime,
-		IndexOffset:  indexOffset,
-		NumMaxEvents: maxEvents,
-	}
-	resp, err := client.ForwardingHistory(ctxc, req)
-	if err != nil {
-		return err
-	}
-
-	printRespJSON(resp)
 	return nil
 }
 
@@ -2444,7 +2150,7 @@ var exportChanBackupCommand = cli.Command{
 	Name:     "exportchanbackup",
 	Category: "Channels",
 	Usage: "Obtain a static channel back up for a selected channels, " +
-		"or all known channels",
+		"or all known channels.",
 	ArgsUsage: "[chan_point] [--all] [--output_file]",
 	Description: `
 	This command allows a user to export a Static Channel Backup (SCB) for
@@ -2487,7 +2193,7 @@ var exportChanBackupCommand = cli.Command{
 			of the static channel backup, a serialized version of
 			the backup (either Single or Multi) will be written to
 			the target file, this is the same format used by lnd in
-			its channels.backup file `,
+			its channel.backup file `,
 		},
 	},
 	Action: actionDecorator(exportChanBackup),
@@ -2600,7 +2306,7 @@ func exportChanBackup(ctx *cli.Context) error {
 var verifyChanBackupCommand = cli.Command{
 	Name:      "verifychanbackup",
 	Category:  "Channels",
-	Usage:     "Verify an existing channel backup",
+	Usage:     "Verify an existing channel backup.",
 	ArgsUsage: "[--single_backup] [--multi_backup] [--multi_file]",
 	Description: `
     This command allows a user to verify an existing Single or Multi channel
@@ -2616,7 +2322,7 @@ var verifyChanBackupCommand = cli.Command{
 	 static channel backups in single blob.
 
        * A file path which points to a packed multi-channel backup within a
-	 file, using the same format that lnd does in its channels.backup
+	 file, using the same format that lnd does in its channel.backup
 	 file.
     `,
 	Flags: []cli.Flag{
@@ -2678,12 +2384,12 @@ var restoreChanBackupCommand = cli.Command{
 	Name:     "restorechanbackup",
 	Category: "Channels",
 	Usage: "Restore an existing single or multi-channel static channel " +
-		"backup",
+		"backup.",
 	ArgsUsage: "[--single_backup] [--multi_backup] [--multi_file=",
 	Description: `
 	Allows a user to restore a Static Channel Backup (SCB) that was
 	obtained either via the exportchanbackup command, or from lnd's
-	automatically managed channels.backup file. This command should be used
+	automatically managed channel.backup file. This command should be used
 	if a user is attempting to restore a channel due to data loss on a
 	running node restored with the same seed as the node that created the
 	channel. If successful, this command will allows the user to recover
@@ -2698,7 +2404,7 @@ var restoreChanBackupCommand = cli.Command{
 	     static channel backups in single blob.
 
 	   * A file path which points to a packed multi-channel backup within a
-	     file, using the same format that lnd does in its channels.backup
+	     file, using the same format that lnd does in its channel.backup
 	     file.
 	`,
 	Flags: []cli.Flag{

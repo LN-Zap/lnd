@@ -1,3 +1,4 @@
+//go:build kvdb_etcd
 // +build kvdb_etcd
 
 package etcd
@@ -11,9 +12,9 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcwallet/walletdb"
-	"go.etcd.io/etcd/clientv3"
-	"go.etcd.io/etcd/clientv3/namespace"
-	"go.etcd.io/etcd/pkg/transport"
+	"go.etcd.io/etcd/client/pkg/v3/transport"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/namespace"
 )
 
 const (
@@ -122,24 +123,25 @@ func (c *commitStatsCollector) callback(succ bool, stats CommitStats) {
 type db struct {
 	cfg                  Config
 	ctx                  context.Context
+	cancel               func()
 	cli                  *clientv3.Client
 	commitStatsCollector *commitStatsCollector
 	txQueue              *commitQueue
+	txMutex              sync.RWMutex
 }
 
 // Enforce db implements the walletdb.DB interface.
 var _ walletdb.DB = (*db)(nil)
 
 // newEtcdBackend returns a db object initialized with the passed backend
-// config. If etcd connection cannot be estabished, then returns error.
+// config. If etcd connection cannot be established, then returns error.
 func newEtcdBackend(ctx context.Context, cfg Config) (*db, error) {
 	clientCfg := clientv3.Config{
-		Context:            ctx,
 		Endpoints:          []string{cfg.Host},
 		DialTimeout:        etcdConnectionTimeout,
 		Username:           cfg.User,
 		Password:           cfg.Pass,
-		MaxCallSendMsgSize: 16384*1024 - 1,
+		MaxCallSendMsgSize: cfg.MaxMsgSize,
 	}
 
 	if !cfg.DisableTLS {
@@ -157,8 +159,11 @@ func newEtcdBackend(ctx context.Context, cfg Config) (*db, error) {
 		clientCfg.TLS = tlsConfig
 	}
 
+	ctx, cancel := context.WithCancel(ctx)
+	clientCfg.Context = ctx
 	cli, err := clientv3.New(clientCfg)
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 
@@ -170,6 +175,7 @@ func newEtcdBackend(ctx context.Context, cfg Config) (*db, error) {
 	backend := &db{
 		cfg:     cfg,
 		ctx:     ctx,
+		cancel:  cancel,
 		cli:     cli,
 		txQueue: NewCommitQueue(ctx),
 	}
@@ -181,7 +187,7 @@ func newEtcdBackend(ctx context.Context, cfg Config) (*db, error) {
 	return backend, nil
 }
 
-// getSTMOptions creats all STM options based on the backend config.
+// getSTMOptions creates all STM options based on the backend config.
 func (db *db) getSTMOptions() []STMOptionFunc {
 	opts := []STMOptionFunc{
 		WithAbortContext(db.ctx),
@@ -204,12 +210,18 @@ func (db *db) getSTMOptions() []STMOptionFunc {
 // expect retries of the f closure (depending on the database backend used), the
 // reset function will be called before each retry respectively.
 func (db *db) View(f func(tx walletdb.ReadTx) error, reset func()) error {
-	apply := func(stm STM) error {
-		reset()
-		return f(newReadWriteTx(stm, etcdDefaultRootBucketId))
+	if db.cfg.SingleWriter {
+		db.txMutex.RLock()
+		defer db.txMutex.RUnlock()
 	}
 
-	return RunSTM(db.cli, apply, db.txQueue, db.getSTMOptions()...)
+	apply := func(stm STM) error {
+		reset()
+		return f(newReadWriteTx(stm, etcdDefaultRootBucketId, nil))
+	}
+
+	_, err := RunSTM(db.cli, apply, db.txQueue, db.getSTMOptions()...)
+	return err
 }
 
 // Update opens a database read/write transaction and executes the function f
@@ -220,12 +232,18 @@ func (db *db) View(f func(tx walletdb.ReadTx) error, reset func()) error {
 // returned. As callers may expect retries of the f closure, the reset function
 // will be called before each retry respectively.
 func (db *db) Update(f func(tx walletdb.ReadWriteTx) error, reset func()) error {
-	apply := func(stm STM) error {
-		reset()
-		return f(newReadWriteTx(stm, etcdDefaultRootBucketId))
+	if db.cfg.SingleWriter {
+		db.txMutex.Lock()
+		defer db.txMutex.Unlock()
 	}
 
-	return RunSTM(db.cli, apply, db.txQueue, db.getSTMOptions()...)
+	apply := func(stm STM) error {
+		reset()
+		return f(newReadWriteTx(stm, etcdDefaultRootBucketId, nil))
+	}
+
+	_, err := RunSTM(db.cli, apply, db.txQueue, db.getSTMOptions()...)
+	return err
 }
 
 // PrintStats returns all collected stats pretty printed into a string.
@@ -239,17 +257,29 @@ func (db *db) PrintStats() string {
 
 // BeginReadWriteTx opens a database read+write transaction.
 func (db *db) BeginReadWriteTx() (walletdb.ReadWriteTx, error) {
+	var locker sync.Locker
+	if db.cfg.SingleWriter {
+		db.txMutex.Lock()
+		locker = &db.txMutex
+	}
+
 	return newReadWriteTx(
 		NewSTM(db.cli, db.txQueue, db.getSTMOptions()...),
-		etcdDefaultRootBucketId,
+		etcdDefaultRootBucketId, locker,
 	), nil
 }
 
 // BeginReadTx opens a database read transaction.
 func (db *db) BeginReadTx() (walletdb.ReadTx, error) {
+	var locker sync.Locker
+	if db.cfg.SingleWriter {
+		db.txMutex.RLock()
+		locker = db.txMutex.RLocker()
+	}
+
 	return newReadWriteTx(
 		NewSTM(db.cli, db.txQueue, db.getSTMOptions()...),
-		etcdDefaultRootBucketId,
+		etcdDefaultRootBucketId, locker,
 	), nil
 }
 
@@ -273,5 +303,8 @@ func (db *db) Copy(w io.Writer) error {
 // Close cleanly shuts down the database and syncs all data.
 // This function is part of the walletdb.Db interface implementation.
 func (db *db) Close() error {
-	return db.cli.Close()
+	err := db.cli.Close()
+	db.cancel()
+	db.txQueue.Stop()
+	return err
 }

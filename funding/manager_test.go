@@ -1,3 +1,4 @@
+//go:build !rpctest
 // +build !rpctest
 
 package funding
@@ -108,6 +109,8 @@ var (
 	}
 	_, _ = testSig.R.SetString("63724406601629180062774974542967536251589935445068131219452686511677818569431", 10)
 	_, _ = testSig.S.SetString("18801056069249825825291287104931333862866033135609736119018462340006816851118", 10)
+
+	testKeyLoc = keychain.KeyLocator{Family: keychain.KeyFamilyNodeKey}
 
 	fundingNetParams = chainreg.BitcoinTestNetParams
 )
@@ -261,7 +264,7 @@ func (n *testNode) AddNewChannel(channel *channeldb.OpenChannel,
 	}
 }
 
-func createTestWallet(cdb *channeldb.DB, netParams *chaincfg.Params,
+func createTestWallet(cdb *channeldb.ChannelStateDB, netParams *chaincfg.Params,
 	notifier chainntnfs.ChainNotifier, wc lnwallet.WalletController,
 	signer input.Signer, keyRing keychain.SecretKeyRing,
 	bio lnwallet.BlockChainIO,
@@ -329,10 +332,12 @@ func createTestFundingManager(t *testing.T, privKey *btcec.PrivateKey,
 	}
 
 	dbDir := filepath.Join(tempTestDir, "cdb")
-	cdb, err := channeldb.Open(dbDir)
+	fullDB, err := channeldb.Open(dbDir)
 	if err != nil {
 		return nil, err
 	}
+
+	cdb := fullDB.ChannelStateDB()
 
 	keyRing := &mock.SecretKeyRing{
 		RootKey: alicePrivKey,
@@ -352,11 +357,12 @@ func createTestFundingManager(t *testing.T, privKey *btcec.PrivateKey,
 
 	fundingCfg := Config{
 		IDKey:        privKey.PubKey(),
+		IDKeyLoc:     testKeyLoc,
 		Wallet:       lnw,
 		Notifier:     chainNotifier,
 		FeeEstimator: estimator,
-		SignMessage: func(pubKey *btcec.PublicKey,
-			msg []byte) (input.Signature, error) {
+		SignMessage: func(_ keychain.KeyLocator,
+			_ []byte, _ bool) (*btcec.Signature, error) {
 
 			return testSig, nil
 		},
@@ -499,11 +505,13 @@ func recreateAliceFundingManager(t *testing.T, alice *testNode) {
 
 	f, err := NewFundingManager(Config{
 		IDKey:        oldCfg.IDKey,
+		IDKeyLoc:     oldCfg.IDKeyLoc,
 		Wallet:       oldCfg.Wallet,
 		Notifier:     oldCfg.Notifier,
 		FeeEstimator: oldCfg.FeeEstimator,
-		SignMessage: func(pubKey *btcec.PublicKey,
-			msg []byte) (input.Signature, error) {
+		SignMessage: func(_ keychain.KeyLocator,
+			_ []byte, _ bool) (*btcec.Signature, error) {
+
 			return testSig, nil
 		},
 		SendAnnouncement: func(msg lnwire.Message,
@@ -922,12 +930,12 @@ func assertDatabaseState(t *testing.T, node *testNode,
 		}
 		state, _, err = node.fundingMgr.getChannelOpeningState(
 			fundingOutPoint)
-		if err != nil && err != ErrChannelNotFound {
+		if err != nil && err != channeldb.ErrChannelNotFound {
 			t.Fatalf("unable to get channel state: %v", err)
 		}
 
 		// If we found the channel, check if it had the expected state.
-		if err != ErrChannelNotFound && state == expectedState {
+		if err != channeldb.ErrChannelNotFound && state == expectedState {
 			// Got expected state, return with success.
 			return
 		}
@@ -1165,7 +1173,7 @@ func assertErrChannelNotFound(t *testing.T, node *testNode,
 		}
 		state, _, err = node.fundingMgr.getChannelOpeningState(
 			fundingOutPoint)
-		if err == ErrChannelNotFound {
+		if err == channeldb.ErrChannelNotFound {
 			// Got expected state, return with success.
 			return
 		} else if err != nil {

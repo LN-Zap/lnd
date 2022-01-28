@@ -59,7 +59,8 @@ var (
 	// transaction that would take the walletbalance below what we require
 	// to keep around to fee bump our open anchor channels.
 	ErrReservedValueInvalidated = errors.New("reserved wallet balance " +
-		"invalidated")
+		"invalidated: transaction would leave insufficient funds for " +
+		"fee bumping anchor channel closings (see debug log for details)")
 )
 
 // PsbtFundingRequired is a type that implements the error interface and
@@ -572,7 +573,7 @@ func (l *LightningWallet) RegisterFundingIntent(expectedID [32]byte,
 // pending channel ID and tries to advance the state machine by verifying the
 // passed PSBT.
 func (l *LightningWallet) PsbtFundingVerify(pendingChanID [32]byte,
-	packet *psbt.Packet) error {
+	packet *psbt.Packet, skipFinalize bool) error {
 
 	l.intentMtx.Lock()
 	defer l.intentMtx.Unlock()
@@ -586,7 +587,13 @@ func (l *LightningWallet) PsbtFundingVerify(pendingChanID [32]byte,
 	if !ok {
 		return fmt.Errorf("incompatible funding intent")
 	}
-	err := psbtIntent.Verify(packet)
+
+	if skipFinalize && psbtIntent.ShouldPublishFundingTX() {
+		return fmt.Errorf("cannot set skip_finalize for channel that " +
+			"did not set no_publish")
+	}
+
+	err := psbtIntent.Verify(packet, skipFinalize)
 	if err != nil {
 		return fmt.Errorf("error verifying PSBT: %v", err)
 	}
@@ -699,6 +706,12 @@ func (l *LightningWallet) handleFundingReserveRequest(req *InitFundingReserveMsg
 		return
 	}
 
+	// We need to avoid enforcing reserved value in the middle of PSBT
+	// funding because some of the following steps may add UTXOs funding
+	// the on-chain wallet.
+	// The enforcement still happens at the last step - in PsbtFundingVerify
+	enforceNewReservedValue := true
+
 	// If no chanFunder was provided, then we'll assume the default
 	// assembler, which is backed by the wallet's internal coin selection.
 	if req.ChanFunder == nil {
@@ -713,6 +726,9 @@ func (l *LightningWallet) handleFundingReserveRequest(req *InitFundingReserveMsg
 			DustLimit:        DustLimitForSize(input.P2WSHSize),
 		}
 		req.ChanFunder = chanfunding.NewWalletAssembler(cfg)
+	} else {
+		_, isPsbtFunder := req.ChanFunder.(*chanfunding.PsbtAssembler)
+		enforceNewReservedValue = !isPsbtFunder
 	}
 
 	localFundingAmt := req.LocalFundingAmt
@@ -811,14 +827,16 @@ func (l *LightningWallet) handleFundingReserveRequest(req *InitFundingReserveMsg
 	// funding tx ready, so this will always pass.  We'll do another check
 	// when the PSBT has been verified.
 	isPublic := req.Flags&lnwire.FFAnnounceChannel != 0
-	hasAnchors := req.CommitType == CommitmentTypeAnchorsZeroFeeHtlcTx
-	err = l.enforceNewReservedValue(fundingIntent, isPublic, hasAnchors)
-	if err != nil {
-		fundingIntent.Cancel()
+	hasAnchors := req.CommitType.HasAnchors()
+	if enforceNewReservedValue {
+		err = l.enforceNewReservedValue(fundingIntent, isPublic, hasAnchors)
+		if err != nil {
+			fundingIntent.Cancel()
 
-		req.err <- err
-		req.resp <- nil
-		return
+			req.err <- err
+			req.resp <- nil
+			return
+		}
 	}
 
 	// The total channel capacity will be the size of the funding output we
@@ -1239,8 +1257,8 @@ func (l *LightningWallet) handleFundingCancelRequest(req *fundingReserveCancelMs
 func CreateCommitmentTxns(localBalance, remoteBalance btcutil.Amount,
 	ourChanCfg, theirChanCfg *channeldb.ChannelConfig,
 	localCommitPoint, remoteCommitPoint *btcec.PublicKey,
-	fundingTxIn wire.TxIn, chanType channeldb.ChannelType) (
-	*wire.MsgTx, *wire.MsgTx, error) {
+	fundingTxIn wire.TxIn, chanType channeldb.ChannelType, initiator bool,
+	leaseExpiry uint32) (*wire.MsgTx, *wire.MsgTx, error) {
 
 	localCommitmentKeys := DeriveCommitmentKeys(
 		localCommitPoint, true, chanType, ourChanCfg, theirChanCfg,
@@ -1251,7 +1269,8 @@ func CreateCommitmentTxns(localBalance, remoteBalance btcutil.Amount,
 
 	ourCommitTx, err := CreateCommitTx(
 		chanType, fundingTxIn, localCommitmentKeys, ourChanCfg,
-		theirChanCfg, localBalance, remoteBalance, 0,
+		theirChanCfg, localBalance, remoteBalance, 0, initiator,
+		leaseExpiry,
 	)
 	if err != nil {
 		return nil, nil, err
@@ -1264,7 +1283,8 @@ func CreateCommitmentTxns(localBalance, remoteBalance btcutil.Amount,
 
 	theirCommitTx, err := CreateCommitTx(
 		chanType, fundingTxIn, remoteCommitmentKeys, theirChanCfg,
-		ourChanCfg, remoteBalance, localBalance, 0,
+		ourChanCfg, remoteBalance, localBalance, 0, !initiator,
+		leaseExpiry,
 	)
 	if err != nil {
 		return nil, nil, err
@@ -1422,7 +1442,7 @@ func (l *LightningWallet) handleContributionMsg(req *addContributionMsg) {
 			)
 		}
 
-		walletLog.Debugf("Funding tx for ChannelPoint(%v) "+
+		walletLog.Tracef("Funding tx for ChannelPoint(%v) "+
 			"generated: %v", chanPoint, spew.Sdump(fundingTx))
 	}
 
@@ -1453,9 +1473,11 @@ func (l *LightningWallet) handleChanPointReady(req *continueContributionMsg) {
 	// is needed to construct and publish the full funding transaction.
 	intent := pendingReservation.fundingIntent
 	if psbtIntent, ok := intent.(*chanfunding.PsbtIntent); ok {
-		// With our keys bound, we can now construct+sign the final
-		// funding transaction and also obtain the chanPoint that
-		// creates the channel.
+		// With our keys bound, we can now construct and possibly sign
+		// the final funding transaction and also obtain the chanPoint
+		// that creates the channel. We _have_ to call CompileFundingTx
+		// even if we don't publish ourselves as that sets the actual
+		// funding outpoint in stone for this channel.
 		fundingTx, err := psbtIntent.CompileFundingTx()
 		if err != nil {
 			req.err <- fmt.Errorf("unable to construct funding "+
@@ -1469,23 +1491,26 @@ func (l *LightningWallet) handleChanPointReady(req *continueContributionMsg) {
 			return
 		}
 
-		// Finally, we'll populate the relevant information in our
-		// pendingReservation so the rest of the funding flow can
-		// continue as normal.
-		pendingReservation.fundingTx = fundingTx
 		pendingReservation.partialState.FundingOutpoint = *chanPointPtr
 		chanPoint = *chanPointPtr
-		pendingReservation.ourFundingInputScripts = make(
-			[]*input.Script, 0, len(ourContribution.Inputs),
-		)
-		for _, txIn := range fundingTx.TxIn {
-			pendingReservation.ourFundingInputScripts = append(
-				pendingReservation.ourFundingInputScripts,
-				&input.Script{
-					Witness:   txIn.Witness,
-					SigScript: txIn.SignatureScript,
-				},
+
+		// Finally, we'll populate the relevant information in our
+		// pendingReservation so the rest of the funding flow can
+		// continue as normal in case we are going to publish ourselves.
+		if psbtIntent.ShouldPublishFundingTX() {
+			pendingReservation.fundingTx = fundingTx
+			pendingReservation.ourFundingInputScripts = make(
+				[]*input.Script, 0, len(ourContribution.Inputs),
 			)
+			for _, txIn := range fundingTx.TxIn {
+				pendingReservation.ourFundingInputScripts = append(
+					pendingReservation.ourFundingInputScripts,
+					&input.Script{
+						Witness:   txIn.Witness,
+						SigScript: txIn.SignatureScript,
+					},
+				)
+			}
 		}
 	}
 
@@ -1510,12 +1535,17 @@ func (l *LightningWallet) handleChanPointReady(req *continueContributionMsg) {
 	// With the funding tx complete, create both commitment transactions.
 	localBalance := pendingReservation.partialState.LocalCommitment.LocalBalance.ToSatoshis()
 	remoteBalance := pendingReservation.partialState.LocalCommitment.RemoteBalance.ToSatoshis()
+	var leaseExpiry uint32
+	if pendingReservation.partialState.ChanType.HasLeaseExpiration() {
+		leaseExpiry = pendingReservation.partialState.ThawHeight
+	}
 	ourCommitTx, theirCommitTx, err := CreateCommitmentTxns(
 		localBalance, remoteBalance, ourContribution.ChannelConfig,
 		theirContribution.ChannelConfig,
 		ourContribution.FirstCommitmentPoint,
 		theirContribution.FirstCommitmentPoint, fundingTxIn,
 		pendingReservation.partialState.ChanType,
+		pendingReservation.partialState.IsInitiator, leaseExpiry,
 	)
 	if err != nil {
 		req.err <- err
@@ -1559,9 +1589,9 @@ func (l *LightningWallet) handleChanPointReady(req *continueContributionMsg) {
 	txsort.InPlaceSort(ourCommitTx)
 	txsort.InPlaceSort(theirCommitTx)
 
-	walletLog.Debugf("Local commit tx for ChannelPoint(%v): %v",
+	walletLog.Tracef("Local commit tx for ChannelPoint(%v): %v",
 		chanPoint, spew.Sdump(ourCommitTx))
-	walletLog.Debugf("Remote commit tx for ChannelPoint(%v): %v",
+	walletLog.Tracef("Remote commit tx for ChannelPoint(%v): %v",
 		chanPoint, spew.Sdump(theirCommitTx))
 
 	// Record newly available information within the open channel state.
@@ -1882,6 +1912,10 @@ func (l *LightningWallet) handleSingleFunderSigs(req *addSingleFunderSigsMsg) {
 	// remote node's commitment transactions.
 	localBalance := pendingReservation.partialState.LocalCommitment.LocalBalance.ToSatoshis()
 	remoteBalance := pendingReservation.partialState.LocalCommitment.RemoteBalance.ToSatoshis()
+	var leaseExpiry uint32
+	if pendingReservation.partialState.ChanType.HasLeaseExpiration() {
+		leaseExpiry = pendingReservation.partialState.ThawHeight
+	}
 	ourCommitTx, theirCommitTx, err := CreateCommitmentTxns(
 		localBalance, remoteBalance,
 		pendingReservation.ourContribution.ChannelConfig,
@@ -1889,6 +1923,7 @@ func (l *LightningWallet) handleSingleFunderSigs(req *addSingleFunderSigsMsg) {
 		pendingReservation.ourContribution.FirstCommitmentPoint,
 		pendingReservation.theirContribution.FirstCommitmentPoint,
 		*fundingTxIn, pendingReservation.partialState.ChanType,
+		pendingReservation.partialState.IsInitiator, leaseExpiry,
 	)
 	if err != nil {
 		req.err <- err

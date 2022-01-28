@@ -18,9 +18,12 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/clock"
 	"github.com/lightningnetwork/lnd/htlcswitch"
+	lnmock "github.com/lightningnetwork/lnd/lntest/mock"
+	"github.com/lightningnetwork/lnd/lntest/wait"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/record"
@@ -44,6 +47,8 @@ type testCtx struct {
 	chain *mockChain
 
 	chainView *mockChainView
+
+	notifier *lnmock.ChainNotifier
 }
 
 func (c *testCtx) getChannelIDFromAlias(t *testing.T, a, b string) uint64 {
@@ -120,20 +125,24 @@ func createTestCtxFromGraphInstanceAssumeValid(t *testing.T,
 	}
 
 	mc, err := NewMissionControl(
-		graphInstance.graph.Database(), route.Vertex{},
-		mcConfig,
+		graphInstance.graphBackend, route.Vertex{}, mcConfig,
 	)
 	require.NoError(t, err, "failed to create missioncontrol")
 
+	sourceNode, err := graphInstance.graph.SourceNode()
+	require.NoError(t, err)
 	sessionSource := &SessionSource{
-		Graph: graphInstance.graph,
-		QueryBandwidth: func(
-			e *channeldb.ChannelEdgeInfo) lnwire.MilliSatoshi {
-
-			return lnwire.NewMSatFromSatoshis(e.Capacity)
-		},
+		Graph:             graphInstance.graph,
+		SourceNode:        sourceNode,
+		GetLink:           graphInstance.getLink,
 		PathFindingConfig: pathFindingConfig,
 		MissionControl:    mc,
+	}
+
+	notifier := &lnmock.ChainNotifier{
+		EpochChan: make(chan *chainntnfs.BlockEpoch),
+		SpendChan: make(chan *chainntnfs.SpendDetail),
+		ConfChan:  make(chan *chainntnfs.TxConfirmation),
 	}
 
 	router, err := New(Config{
@@ -141,16 +150,13 @@ func createTestCtxFromGraphInstanceAssumeValid(t *testing.T,
 		Chain:              chain,
 		ChainView:          chainView,
 		Payer:              &mockPaymentAttemptDispatcherOld{},
+		Notifier:           notifier,
 		Control:            makeMockControlTower(),
 		MissionControl:     mc,
 		SessionSource:      sessionSource,
 		ChannelPruneExpiry: time.Hour * 24,
 		GraphPruneInterval: time.Hour * 2,
-		QueryBandwidth: func(
-			e *channeldb.ChannelEdgeInfo) lnwire.MilliSatoshi {
-
-			return lnwire.NewMSatFromSatoshis(e.Capacity)
-		},
+		GetLink:            graphInstance.getLink,
 		NextPaymentID: func() (uint64, error) {
 			next := atomic.AddUint64(&uniquePaymentID, 1)
 			return next, nil
@@ -171,11 +177,11 @@ func createTestCtxFromGraphInstanceAssumeValid(t *testing.T,
 		channelIDs: graphInstance.channelIDs,
 		chain:      chain,
 		chainView:  chainView,
+		notifier:   notifier,
 	}
 
 	cleanUp := func() {
 		ctx.router.Stop()
-		graphInstance.cleanUp()
 	}
 
 	return ctx, cleanUp
@@ -184,17 +190,10 @@ func createTestCtxFromGraphInstanceAssumeValid(t *testing.T,
 func createTestCtxSingleNode(t *testing.T,
 	startingHeight uint32) (*testCtx, func()) {
 
-	var (
-		graph      *channeldb.ChannelGraph
-		sourceNode *channeldb.LightningNode
-		cleanup    func()
-		err        error
-	)
-
-	graph, cleanup, err = makeTestGraph()
+	graph, graphBackend, cleanup, err := makeTestGraph(true)
 	require.NoError(t, err, "failed to make test graph")
 
-	sourceNode, err = createTestNode()
+	sourceNode, err := createTestNode()
 	require.NoError(t, err, "failed to create test node")
 
 	require.NoError(t,
@@ -202,8 +201,9 @@ func createTestCtxSingleNode(t *testing.T,
 	)
 
 	graphInstance := &testGraphInstance{
-		graph:   graph,
-		cleanUp: cleanup,
+		graph:        graph,
+		graphBackend: graphBackend,
+		cleanUp:      cleanup,
 	}
 
 	return createTestCtxFromGraphInstance(
@@ -216,7 +216,7 @@ func createTestCtxFromFile(t *testing.T,
 
 	// We'll attempt to locate and parse out the file
 	// that encodes the graph that our tests should be run against.
-	graphInstance, err := parseTestGraph(testGraph)
+	graphInstance, err := parseTestGraph(true, testGraph)
 	require.NoError(t, err, "unable to create test graph")
 
 	return createTestCtxFromGraphInstance(
@@ -387,7 +387,7 @@ func TestChannelUpdateValidation(t *testing.T) {
 		}, 2),
 	}
 
-	testGraph, err := createTestGraphFromChannels(testChannels, "a")
+	testGraph, err := createTestGraphFromChannels(true, testChannels, "a")
 	require.NoError(t, err, "unable to create graph")
 	defer testGraph.cleanUp()
 
@@ -1246,7 +1246,7 @@ func TestIgnoreChannelEdgePolicyForUnknownChannel(t *testing.T) {
 	// Setup an initially empty network.
 	testChannels := []*testChannel{}
 	testGraph, err := createTestGraphFromChannels(
-		testChannels, "roasbeef",
+		true, testChannels, "roasbeef",
 	)
 	if err != nil {
 		t.Fatalf("unable to create graph: %v", err)
@@ -1388,6 +1388,9 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 		MinHTLC:                   1,
 		FeeBaseMSat:               10,
 		FeeProportionalMillionths: 10000,
+		Node: &channeldb.LightningNode{
+			PubKeyBytes: edge.NodeKey2Bytes,
+		},
 	}
 	edgePolicy.ChannelFlags = 0
 
@@ -1404,6 +1407,9 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 		MinHTLC:                   1,
 		FeeBaseMSat:               10,
 		FeeProportionalMillionths: 10000,
+		Node: &channeldb.LightningNode{
+			PubKeyBytes: edge.NodeKey1Bytes,
+		},
 	}
 	edgePolicy.ChannelFlags = 1
 
@@ -1485,6 +1491,9 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 		MinHTLC:                   1,
 		FeeBaseMSat:               10,
 		FeeProportionalMillionths: 10000,
+		Node: &channeldb.LightningNode{
+			PubKeyBytes: edge.NodeKey2Bytes,
+		},
 	}
 	edgePolicy.ChannelFlags = 0
 
@@ -1500,6 +1509,9 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 		MinHTLC:                   1,
 		FeeBaseMSat:               10,
 		FeeProportionalMillionths: 10000,
+		Node: &channeldb.LightningNode{
+			PubKeyBytes: edge.NodeKey1Bytes,
+		},
 	}
 	edgePolicy.ChannelFlags = 1
 
@@ -1564,7 +1576,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 		t.Fatalf("unable to find any routes: %v", err)
 	}
 
-	copy1, err := ctx.graph.FetchLightningNode(nil, pub1)
+	copy1, err := ctx.graph.FetchLightningNode(pub1)
 	if err != nil {
 		t.Fatalf("unable to fetch node: %v", err)
 	}
@@ -1573,7 +1585,7 @@ func TestAddEdgeUnknownVertexes(t *testing.T) {
 		t.Fatalf("fetched node not equal to original")
 	}
 
-	copy2, err := ctx.graph.FetchLightningNode(nil, pub2)
+	copy2, err := ctx.graph.FetchLightningNode(pub2)
 	if err != nil {
 		t.Fatalf("unable to fetch node: %v", err)
 	}
@@ -1624,7 +1636,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 		ctx.chain.addBlock(block, height, rand.Uint32())
 		ctx.chain.setBestBlock(int32(height))
 		ctx.chainView.notifyBlock(block.BlockHash(), height,
-			[]*wire.MsgTx{})
+			[]*wire.MsgTx{}, t)
 	}
 
 	// Give time to process new blocks
@@ -1656,7 +1668,7 @@ func TestWakeUpOnStaleBranch(t *testing.T) {
 		ctx.chain.addBlock(block, height, rand.Uint32())
 		ctx.chain.setBestBlock(int32(height))
 		ctx.chainView.notifyBlock(block.BlockHash(), height,
-			[]*wire.MsgTx{})
+			[]*wire.MsgTx{}, t)
 	}
 	// Give time to process new blocks
 	time.Sleep(time.Millisecond * 500)
@@ -1833,7 +1845,7 @@ func TestDisconnectedBlocks(t *testing.T) {
 		ctx.chain.addBlock(block, height, rand.Uint32())
 		ctx.chain.setBestBlock(int32(height))
 		ctx.chainView.notifyBlock(block.BlockHash(), height,
-			[]*wire.MsgTx{})
+			[]*wire.MsgTx{}, t)
 	}
 
 	// Give time to process new blocks
@@ -1867,7 +1879,7 @@ func TestDisconnectedBlocks(t *testing.T) {
 		ctx.chain.addBlock(block, height, rand.Uint32())
 		ctx.chain.setBestBlock(int32(height))
 		ctx.chainView.notifyBlock(block.BlockHash(), height,
-			[]*wire.MsgTx{})
+			[]*wire.MsgTx{}, t)
 	}
 	// Give time to process new blocks
 	time.Sleep(time.Millisecond * 500)
@@ -1949,12 +1961,18 @@ func TestDisconnectedBlocks(t *testing.T) {
 	// Create a 15 block fork. We first let the chainView notify the router
 	// about stale blocks, before sending the now connected blocks. We do
 	// this because we expect this order from the chainview.
+	ctx.chainView.notifyStaleBlockAck = make(chan struct{}, 1)
 	for i := len(minorityChain) - 1; i >= 0; i-- {
 		block := minorityChain[i]
 		height := uint32(forkHeight) + uint32(i) + 1
 		ctx.chainView.notifyStaleBlock(block.BlockHash(), height,
-			block.Transactions)
+			block.Transactions, t)
+		<-ctx.chainView.notifyStaleBlockAck
 	}
+
+	time.Sleep(time.Second * 2)
+
+	ctx.chainView.notifyBlockAck = make(chan struct{}, 1)
 	for i := uint32(1); i <= 15; i++ {
 		block := &wire.MsgBlock{
 			Transactions: []*wire.MsgTx{},
@@ -1963,10 +1981,10 @@ func TestDisconnectedBlocks(t *testing.T) {
 		ctx.chain.addBlock(block, height, rand.Uint32())
 		ctx.chain.setBestBlock(int32(height))
 		ctx.chainView.notifyBlock(block.BlockHash(), height,
-			block.Transactions)
+			block.Transactions, t)
+		<-ctx.chainView.notifyBlockAck
 	}
 
-	// Give time to process new blocks
 	time.Sleep(time.Millisecond * 500)
 
 	// chanID2 should not be in the database anymore, since it is not
@@ -2022,7 +2040,7 @@ func TestRouterChansClosedOfflinePruneGraph(t *testing.T) {
 	ctx.chain.addBlock(block102, uint32(nextHeight), rand.Uint32())
 	ctx.chain.setBestBlock(int32(nextHeight))
 	ctx.chainView.notifyBlock(block102.BlockHash(), uint32(nextHeight),
-		[]*wire.MsgTx{})
+		[]*wire.MsgTx{}, t)
 
 	// We'll now create the edges and nodes within the database required
 	// for the ChannelRouter to properly recognize the channel we added
@@ -2075,7 +2093,7 @@ func TestRouterChansClosedOfflinePruneGraph(t *testing.T) {
 		ctx.chain.addBlock(block, uint32(nextHeight), rand.Uint32())
 		ctx.chain.setBestBlock(int32(nextHeight))
 		ctx.chainView.notifyBlock(block.BlockHash(), uint32(nextHeight),
-			[]*wire.MsgTx{})
+			[]*wire.MsgTx{}, t)
 	}
 
 	// At this point, our starting height should be 107.
@@ -2117,7 +2135,7 @@ func TestRouterChansClosedOfflinePruneGraph(t *testing.T) {
 		ctx.chain.addBlock(block, uint32(nextHeight), rand.Uint32())
 		ctx.chain.setBestBlock(int32(nextHeight))
 		ctx.chainView.notifyBlock(block.BlockHash(), uint32(nextHeight),
-			[]*wire.MsgTx{})
+			[]*wire.MsgTx{}, t)
 	}
 
 	// At this point, our starting height should be 112.
@@ -2242,7 +2260,9 @@ func TestPruneChannelGraphStaleEdges(t *testing.T) {
 	for _, strictPruning := range []bool{true, false} {
 		// We'll create our test graph and router backed with these test
 		// channels we've created.
-		testGraph, err := createTestGraphFromChannels(testChannels, "a")
+		testGraph, err := createTestGraphFromChannels(
+			true, testChannels, "a",
+		)
 		if err != nil {
 			t.Fatalf("unable to create test graph: %v", err)
 		}
@@ -2372,7 +2392,9 @@ func testPruneChannelGraphDoubleDisabled(t *testing.T, assumeValid bool) {
 
 	// We'll create our test graph and router backed with these test
 	// channels we've created.
-	testGraph, err := createTestGraphFromChannels(testChannels, "self")
+	testGraph, err := createTestGraphFromChannels(
+		true, testChannels, "self",
+	)
 	if err != nil {
 		t.Fatalf("unable to create test graph: %v", err)
 	}
@@ -2441,7 +2463,7 @@ func TestFindPathFeeWeighting(t *testing.T) {
 	// the edge weighting, we should select the direct path over the 2 hop
 	// path even though the direct path has a higher potential time lock.
 	path, err := dbFindPath(
-		ctx.graph, nil, nil,
+		ctx.graph, nil, &mockBandwidthHints{},
 		noRestrictions,
 		testPathFindingConfig,
 		sourceNode.PubKeyBytes, target, amt, 0,
@@ -2455,8 +2477,8 @@ func TestFindPathFeeWeighting(t *testing.T) {
 	if len(path) != 1 {
 		t.Fatalf("expected path length of 1, instead was: %v", len(path))
 	}
-	if path[0].Node.Alias != "luoji" {
-		t.Fatalf("wrong node: %v", path[0].Node.Alias)
+	if path[0].ToNodePubKey() != ctx.aliases["luoji"] {
+		t.Fatalf("wrong node: %v", path[0].ToNodePubKey())
 	}
 }
 
@@ -2742,7 +2764,7 @@ func TestUnknownErrorSource(t *testing.T) {
 		}, 4),
 	}
 
-	testGraph, err := createTestGraphFromChannels(testChannels, "a")
+	testGraph, err := createTestGraphFromChannels(true, testChannels, "a")
 	defer testGraph.cleanUp()
 	if err != nil {
 		t.Fatalf("unable to create graph: %v", err)
@@ -2878,7 +2900,7 @@ func TestSendToRouteStructuredError(t *testing.T) {
 		}, 2),
 	}
 
-	testGraph, err := createTestGraphFromChannels(testChannels, "a")
+	testGraph, err := createTestGraphFromChannels(true, testChannels, "a")
 	if err != nil {
 		t.Fatalf("unable to create graph: %v", err)
 	}
@@ -3127,7 +3149,7 @@ func TestSendToRouteMaxHops(t *testing.T) {
 		}, 1),
 	}
 
-	testGraph, err := createTestGraphFromChannels(testChannels, "a")
+	testGraph, err := createTestGraphFromChannels(true, testChannels, "a")
 	if err != nil {
 		t.Fatalf("unable to create graph: %v", err)
 	}
@@ -3238,7 +3260,7 @@ func TestBuildRoute(t *testing.T) {
 		}, 4),
 	}
 
-	testGraph, err := createTestGraphFromChannels(testChannels, "a")
+	testGraph, err := createTestGraphFromChannels(true, testChannels, "a")
 	if err != nil {
 		t.Fatalf("unable to create graph: %v", err)
 	}
@@ -3478,7 +3500,7 @@ func createDummyTestGraph(t *testing.T) *testGraphInstance {
 		}, 2),
 	}
 
-	testGraph, err := createTestGraphFromChannels(testChannels, "a")
+	testGraph, err := createTestGraphFromChannels(true, testChannels, "a")
 	require.NoError(t, err, "failed to create graph")
 	return testGraph
 }
@@ -4023,17 +4045,16 @@ func TestSendMPPaymentFailed(t *testing.T) {
 	failureReason := channeldb.FailureReasonPaymentDetails
 	missionControl.On("ReportPaymentFail",
 		mock.Anything, mock.Anything, mock.Anything, mock.Anything,
-	).Return(nil, nil).Run(func(args mock.Arguments) {
+	).Return(&failureReason, nil).Run(func(args mock.Arguments) {
 		// We only return the terminal error once, thus when the method
 		// is called, we will return it with a nil error.
 		if called {
-			missionControl.failReason = nil
+			args[0] = nil
 			return
 		}
 
 		// If it's the first time calling this method, we will return a
 		// terminal error.
-		missionControl.failReason = &failureReason
 		payment.FailureReason = &failureReason
 		called = true
 	})
@@ -4213,8 +4234,7 @@ func TestSendMPPaymentFailedWithShardsInFlight(t *testing.T) {
 	failureReason := channeldb.FailureReasonPaymentDetails
 	missionControl.On("ReportPaymentFail",
 		mock.Anything, mock.Anything, mock.Anything, mock.Anything,
-	).Return(failureReason, nil).Run(func(args mock.Arguments) {
-		missionControl.failReason = &failureReason
+	).Return(&failureReason, nil).Run(func(args mock.Arguments) {
 		payment.FailureReason = &failureReason
 	}).Once()
 
@@ -4250,4 +4270,82 @@ func TestSendMPPaymentFailedWithShardsInFlight(t *testing.T) {
 	sessionSource.AssertExpectations(t)
 	session.AssertExpectations(t)
 	missionControl.AssertExpectations(t)
+}
+
+// TestBlockDifferenceFix tests if when the router is behind on blocks, the
+// router catches up to the best block head.
+func TestBlockDifferenceFix(t *testing.T) {
+	t.Parallel()
+
+	initialBlockHeight := uint32(0)
+
+	// Starting height here is set to 0, which is behind where we want to be.
+	ctx, cleanup := createTestCtxSingleNode(t, initialBlockHeight)
+	defer cleanup()
+
+	// Add initial block to our mini blockchain.
+	block := &wire.MsgBlock{
+		Transactions: []*wire.MsgTx{},
+	}
+	ctx.chain.addBlock(block, initialBlockHeight, rand.Uint32())
+
+	// Let's generate a new block of height 5, 5 above where our node is at.
+	newBlock := &wire.MsgBlock{
+		Transactions: []*wire.MsgTx{},
+	}
+	newBlockHeight := uint32(5)
+
+	blockDifference := newBlockHeight - initialBlockHeight
+
+	ctx.chainView.notifyBlockAck = make(chan struct{}, 1)
+
+	ctx.chain.addBlock(newBlock, newBlockHeight, rand.Uint32())
+	ctx.chain.setBestBlock(int32(newBlockHeight))
+	ctx.chainView.notifyBlock(block.BlockHash(), newBlockHeight,
+		[]*wire.MsgTx{}, t)
+
+	<-ctx.chainView.notifyBlockAck
+
+	// At this point, the chain notifier should have noticed that we're
+	// behind on blocks, and will send the n missing blocks that we
+	// need to the client's epochs channel. Let's replicate this
+	// functionality.
+	for i := 0; i < int(blockDifference); i++ {
+		currBlockHeight := int32(i + 1)
+
+		nonce := rand.Uint32()
+
+		newBlock := &wire.MsgBlock{
+			Transactions: []*wire.MsgTx{},
+			Header:       wire.BlockHeader{Nonce: nonce},
+		}
+		ctx.chain.addBlock(newBlock, uint32(currBlockHeight), nonce)
+		currHash := newBlock.Header.BlockHash()
+
+		newEpoch := &chainntnfs.BlockEpoch{
+			Height: currBlockHeight,
+			Hash:   &currHash,
+		}
+
+		ctx.notifier.EpochChan <- newEpoch
+
+		ctx.chainView.notifyBlock(currHash,
+			uint32(currBlockHeight), block.Transactions, t)
+
+		<-ctx.chainView.notifyBlockAck
+	}
+
+	err := wait.NoError(func() error {
+		// Then router height should be updated to the latest block.
+		if atomic.LoadUint32(&ctx.router.bestHeight) != newBlockHeight {
+			return fmt.Errorf("height should have been updated "+
+				"to %v, instead got %v", newBlockHeight,
+				ctx.router.bestHeight)
+		}
+
+		return nil
+	}, testTimeout)
+	if err != nil {
+		t.Fatalf("block height wasn't updated: %v", err)
+	}
 }

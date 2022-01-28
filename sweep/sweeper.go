@@ -428,7 +428,7 @@ func (s *UtxoSweeper) Stop() error {
 		return nil
 	}
 
-	log.Debugf("Sweeper shutting down")
+	log.Info("Sweeper shutting down")
 
 	close(s.quit)
 	s.wg.Wait()
@@ -460,9 +460,11 @@ func (s *UtxoSweeper) SweepInput(input input.Input,
 		return nil, err
 	}
 
+	absoluteTimeLock, _ := input.RequiredLockTime()
 	log.Infof("Sweep request received: out_point=%v, witness_type=%v, "+
-		"time_lock=%v, amount=%v, params=(%v)",
-		input.OutPoint(), input.WitnessType(), input.BlocksToMaturity(),
+		"relative_time_lock=%v, absolute_time_lock=%v, amount=%v, "+
+		"params=(%v)", input.OutPoint(), input.WitnessType(),
+		input.BlocksToMaturity(), absoluteTimeLock,
 		btcutil.Amount(input.SignDesc().Output.Value), params)
 
 	sweeperInput := &sweepInputMessage{
@@ -535,6 +537,17 @@ func (s *UtxoSweeper) collector(blockEpochs <-chan *chainntnfs.BlockEpoch) {
 				log.Debugf("Already pending input %v received",
 					outpoint)
 
+				// Before updating the input details, check if
+				// an exclusive group was set, and if so, assume
+				// this input as finalized and remove all other
+				// inputs belonging to the same exclusive group.
+				var prevExclGroup *uint64
+				if pendInput.params.ExclusiveGroup != nil &&
+					input.params.ExclusiveGroup == nil {
+					prevExclGroup = new(uint64)
+					*prevExclGroup = *pendInput.params.ExclusiveGroup
+				}
+
 				// Update input details and sweep parameters.
 				// The re-offered input details may contain a
 				// change to the unconfirmed parent tx info.
@@ -546,6 +559,11 @@ func (s *UtxoSweeper) collector(blockEpochs <-chan *chainntnfs.BlockEpoch) {
 				pendInput.listeners = append(
 					pendInput.listeners, input.resultChan,
 				)
+
+				if prevExclGroup != nil {
+					s.removeExclusiveGroup(*prevExclGroup)
+				}
+
 				continue
 			}
 

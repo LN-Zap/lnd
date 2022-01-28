@@ -40,6 +40,13 @@ const (
 	// AnchorsZeroFeeHtlcTxCommitVersion is a version that denotes this
 	// channel is using the zero-fee second-level anchor commitment format.
 	AnchorsZeroFeeHtlcTxCommitVersion = 3
+
+	// ScriptEnforcedLeaseVersion is a version that denotes this channel is
+	// using the zero-fee second-level anchor commitment format along with
+	// an additional CLTV requirement of the channel lease maturity on any
+	// commitment and HTLC outputs that pay directly to the channel
+	// initiator.
+	ScriptEnforcedLeaseVersion = 4
 )
 
 // Single is a static description of an existing channel that can be used for
@@ -116,6 +123,16 @@ type Single struct {
 	// ShaChainRootDesc describes how to derive the private key that was
 	// used as the shachain root for this channel.
 	ShaChainRootDesc keychain.KeyDescriptor
+
+	// LeaseExpiry represents the absolute expiration as a height of the
+	// chain of a channel lease that is applied to every output that pays
+	// directly to the channel initiator in addition to the usual CSV
+	// requirement.
+	//
+	// NOTE: This field will only be present for the following versions:
+	//
+	// - ScriptEnforcedLeaseVersion
+	LeaseExpiry uint32
 }
 
 // NewSingle creates a new static channel backup based on an existing open
@@ -177,6 +194,10 @@ func NewSingle(channel *channeldb.OpenChannel,
 	}
 
 	switch {
+	case channel.ChanType.HasLeaseExpiration():
+		single.Version = ScriptEnforcedLeaseVersion
+		single.LeaseExpiry = channel.ThawHeight
+
 	case channel.ChanType.ZeroHtlcTxFee():
 		single.Version = AnchorsZeroFeeHtlcTxCommitVersion
 
@@ -203,6 +224,7 @@ func (s *Single) Serialize(w io.Writer) error {
 	case TweaklessCommitVersion:
 	case AnchorsCommitVersion:
 	case AnchorsZeroFeeHtlcTxCommitVersion:
+	case ScriptEnforcedLeaseVersion:
 	default:
 		return fmt.Errorf("unable to serialize w/ unknown "+
 			"version: %v", s.Version)
@@ -264,9 +286,22 @@ func (s *Single) Serialize(w io.Writer) error {
 	); err != nil {
 		return err
 	}
+	if s.Version == ScriptEnforcedLeaseVersion {
+		err := lnwire.WriteElements(&singleBytes, s.LeaseExpiry)
+		if err != nil {
+			return err
+		}
+	}
+
+	// TODO(yy): remove the type assertion when we finished refactoring db
+	// into using write buffer.
+	buf, ok := w.(*bytes.Buffer)
+	if !ok {
+		return fmt.Errorf("expect io.Writer to be *bytes.Buffer")
+	}
 
 	return lnwire.WriteElements(
-		w,
+		buf,
 		byte(s.Version),
 		uint16(len(singleBytes.Bytes())),
 		singleBytes.Bytes(),
@@ -363,6 +398,7 @@ func (s *Single) Deserialize(r io.Reader) error {
 	case TweaklessCommitVersion:
 	case AnchorsCommitVersion:
 	case AnchorsZeroFeeHtlcTxCommitVersion:
+	case ScriptEnforcedLeaseVersion:
 	default:
 		return fmt.Errorf("unable to de-serialize w/ unknown "+
 			"version: %v", s.Version)
@@ -456,8 +492,18 @@ func (s *Single) Deserialize(r io.Reader) error {
 		return err
 	}
 	s.ShaChainRootDesc.KeyLocator.Family = keychain.KeyFamily(shaKeyFam)
+	err = lnwire.ReadElements(r, &s.ShaChainRootDesc.KeyLocator.Index)
+	if err != nil {
+		return err
+	}
 
-	return lnwire.ReadElements(r, &s.ShaChainRootDesc.KeyLocator.Index)
+	if s.Version == ScriptEnforcedLeaseVersion {
+		if err := lnwire.ReadElement(r, &s.LeaseExpiry); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // UnpackFromReader is similar to Deserialize method, but it expects the passed

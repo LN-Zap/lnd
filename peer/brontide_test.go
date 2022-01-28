@@ -2,20 +2,24 @@ package peer
 
 import (
 	"bytes"
+	"io/ioutil"
 	"testing"
 	"time"
 
+	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/contractcourt"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/lntest/mock"
 	"github.com/lightningnetwork/lnd/lnwallet/chancloser"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/pool"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -39,8 +43,10 @@ func TestPeerChannelClosureAcceptFeeResponder(t *testing.T) {
 	}
 	broadcastTxChan := make(chan *wire.MsgTx)
 
+	mockSwitch := &mockMessageSwitch{}
+
 	alicePeer, bobChan, cleanUp, err := createTestPeer(
-		notifier, broadcastTxChan, noUpdate,
+		notifier, broadcastTxChan, noUpdate, mockSwitch,
 	)
 	if err != nil {
 		t.Fatalf("unable to create test channels: %v", err)
@@ -48,6 +54,9 @@ func TestPeerChannelClosureAcceptFeeResponder(t *testing.T) {
 	defer cleanUp()
 
 	chanID := lnwire.NewChanIDFromOutPoint(bobChan.ChannelPoint())
+
+	mockLink := newMockUpdateHandler(chanID)
+	mockSwitch.links = append(mockSwitch.links, mockLink)
 
 	// We send a shutdown request to Alice. She will now be the responding
 	// node in this shutdown procedure. We first expect Alice to answer
@@ -142,19 +151,25 @@ func TestPeerChannelClosureAcceptFeeInitiator(t *testing.T) {
 	}
 	broadcastTxChan := make(chan *wire.MsgTx)
 
+	mockSwitch := &mockMessageSwitch{}
+
 	alicePeer, bobChan, cleanUp, err := createTestPeer(
-		notifier, broadcastTxChan, noUpdate,
+		notifier, broadcastTxChan, noUpdate, mockSwitch,
 	)
 	if err != nil {
 		t.Fatalf("unable to create test channels: %v", err)
 	}
 	defer cleanUp()
 
+	chanID := lnwire.NewChanIDFromOutPoint(bobChan.ChannelPoint())
+	mockLink := newMockUpdateHandler(chanID)
+	mockSwitch.links = append(mockSwitch.links, mockLink)
+
 	// We make Alice send a shutdown request.
 	updateChan := make(chan interface{}, 1)
 	errChan := make(chan error, 1)
 	closeCommand := &htlcswitch.ChanClose{
-		CloseType:      htlcswitch.CloseRegular,
+		CloseType:      contractcourt.CloseRegular,
 		ChanPoint:      bobChan.ChannelPoint(),
 		Updates:        updateChan,
 		TargetFeePerKw: 12500,
@@ -179,7 +194,6 @@ func TestPeerChannelClosureAcceptFeeInitiator(t *testing.T) {
 	aliceDeliveryScript := shutdownMsg.Address
 
 	// Bob will respond with his own Shutdown message.
-	chanID := shutdownMsg.ChannelID
 	alicePeer.chanCloseMsgs <- &closeMsg{
 		cid: chanID,
 		msg: lnwire.NewShutdown(chanID,
@@ -264,8 +278,10 @@ func TestPeerChannelClosureFeeNegotiationsResponder(t *testing.T) {
 	}
 	broadcastTxChan := make(chan *wire.MsgTx)
 
+	mockSwitch := &mockMessageSwitch{}
+
 	alicePeer, bobChan, cleanUp, err := createTestPeer(
-		notifier, broadcastTxChan, noUpdate,
+		notifier, broadcastTxChan, noUpdate, mockSwitch,
 	)
 	if err != nil {
 		t.Fatalf("unable to create test channels: %v", err)
@@ -273,6 +289,9 @@ func TestPeerChannelClosureFeeNegotiationsResponder(t *testing.T) {
 	defer cleanUp()
 
 	chanID := lnwire.NewChanIDFromOutPoint(bobChan.ChannelPoint())
+
+	mockLink := newMockUpdateHandler(chanID)
+	mockSwitch.links = append(mockSwitch.links, mockLink)
 
 	// Bob sends a shutdown request to Alice. She will now be the responding
 	// node in this shutdown procedure. We first expect Alice to answer this
@@ -458,19 +477,25 @@ func TestPeerChannelClosureFeeNegotiationsInitiator(t *testing.T) {
 	}
 	broadcastTxChan := make(chan *wire.MsgTx)
 
+	mockSwitch := &mockMessageSwitch{}
+
 	alicePeer, bobChan, cleanUp, err := createTestPeer(
-		notifier, broadcastTxChan, noUpdate,
+		notifier, broadcastTxChan, noUpdate, mockSwitch,
 	)
 	if err != nil {
 		t.Fatalf("unable to create test channels: %v", err)
 	}
 	defer cleanUp()
 
+	chanID := lnwire.NewChanIDFromOutPoint(bobChan.ChannelPoint())
+	mockLink := newMockUpdateHandler(chanID)
+	mockSwitch.links = append(mockSwitch.links, mockLink)
+
 	// We make the initiator send a shutdown request.
 	updateChan := make(chan interface{}, 1)
 	errChan := make(chan error, 1)
 	closeCommand := &htlcswitch.ChanClose{
-		CloseType:      htlcswitch.CloseRegular,
+		CloseType:      contractcourt.CloseRegular,
 		ChanPoint:      bobChan.ChannelPoint(),
 		Updates:        updateChan,
 		TargetFeePerKw: 12500,
@@ -496,7 +521,6 @@ func TestPeerChannelClosureFeeNegotiationsInitiator(t *testing.T) {
 	aliceDeliveryScript := shutdownMsg.Address
 
 	// Bob will answer the Shutdown message with his own Shutdown.
-	chanID := lnwire.NewChanIDFromOutPoint(bobChan.ChannelPoint())
 	respShutdown := lnwire.NewShutdown(chanID, dummyDeliveryScript)
 	alicePeer.chanCloseMsgs <- &closeMsg{
 		cid: chanID,
@@ -793,22 +817,29 @@ func TestCustomShutdownScript(t *testing.T) {
 			}
 			broadcastTxChan := make(chan *wire.MsgTx)
 
+			mockSwitch := &mockMessageSwitch{}
+
 			// Open a channel.
 			alicePeer, bobChan, cleanUp, err := createTestPeer(
 				notifier, broadcastTxChan, test.update,
+				mockSwitch,
 			)
 			if err != nil {
 				t.Fatalf("unable to create test channels: %v", err)
 			}
 			defer cleanUp()
 
+			chanPoint := bobChan.ChannelPoint()
+			chanID := lnwire.NewChanIDFromOutPoint(chanPoint)
+			mockLink := newMockUpdateHandler(chanID)
+			mockSwitch.links = append(mockSwitch.links, mockLink)
+
 			// Request initiator to cooperatively close the channel, with
 			// a specified delivery address.
 			updateChan := make(chan interface{}, 1)
 			errChan := make(chan error, 1)
-			chanPoint := bobChan.ChannelPoint()
 			closeCommand := htlcswitch.ChanClose{
-				CloseType:      htlcswitch.CloseRegular,
+				CloseType:      contractcourt.CloseRegular,
 				ChanPoint:      chanPoint,
 				Updates:        updateChan,
 				TargetFeePerKw: 12500,
@@ -968,6 +999,7 @@ func TestStaticRemoteDowngrade(t *testing.T) {
 					Features:       test.features,
 					Conn:           mockConn,
 					WritePool:      writePool,
+					PongBuf:        make([]byte, lnwire.MaxPongBytes),
 				},
 			}
 
@@ -1002,4 +1034,124 @@ func genScript(t *testing.T, address string) lnwire.DeliveryAddress {
 	}
 
 	return script
+}
+
+// TestPeerCustomMessage tests custom message exchange between peers.
+func TestPeerCustomMessage(t *testing.T) {
+	t.Parallel()
+
+	// Set up node Alice.
+	alicePath, err := ioutil.TempDir("", "alicedb")
+	require.NoError(t, err)
+
+	dbAlice, err := channeldb.Open(alicePath)
+	require.NoError(t, err)
+
+	aliceKey, err := btcec.NewPrivateKey(btcec.S256())
+	require.NoError(t, err)
+
+	writeBufferPool := pool.NewWriteBuffer(
+		pool.DefaultWriteBufferGCInterval,
+		pool.DefaultWriteBufferExpiryInterval,
+	)
+
+	writePool := pool.NewWrite(
+		writeBufferPool, 1, timeout,
+	)
+	require.NoError(t, writePool.Start())
+
+	readBufferPool := pool.NewReadBuffer(
+		pool.DefaultReadBufferGCInterval,
+		pool.DefaultReadBufferExpiryInterval,
+	)
+
+	readPool := pool.NewRead(
+		readBufferPool, 1, timeout,
+	)
+	require.NoError(t, readPool.Start())
+
+	mockConn := newMockConn(t, 1)
+
+	receivedCustomChan := make(chan *customMsg)
+
+	remoteKey := [33]byte{8}
+
+	notifier := &mock.ChainNotifier{
+		SpendChan: make(chan *chainntnfs.SpendDetail),
+		EpochChan: make(chan *chainntnfs.BlockEpoch),
+		ConfChan:  make(chan *chainntnfs.TxConfirmation),
+	}
+
+	alicePeer := NewBrontide(Config{
+		PubKeyBytes: remoteKey,
+		ChannelDB:   dbAlice.ChannelStateDB(),
+		Addr: &lnwire.NetAddress{
+			IdentityKey: aliceKey.PubKey(),
+		},
+		PrunePersistentPeerConnection: func([33]byte) {},
+		Features:                      lnwire.EmptyFeatureVector(),
+		LegacyFeatures:                lnwire.EmptyFeatureVector(),
+		WritePool:                     writePool,
+		ReadPool:                      readPool,
+		Conn:                          mockConn,
+		ChainNotifier:                 notifier,
+		HandleCustomMessage: func(
+			peer [33]byte, msg *lnwire.Custom) error {
+
+			receivedCustomChan <- &customMsg{
+				peer: peer,
+				msg:  *msg,
+			}
+			return nil
+		},
+		PongBuf: make([]byte, lnwire.MaxPongBytes),
+	})
+
+	// Set up the init sequence.
+	go func() {
+		// Read init message.
+		<-mockConn.writtenMessages
+
+		// Write the init reply message.
+		initReplyMsg := lnwire.NewInitMessage(
+			lnwire.NewRawFeatureVector(
+				lnwire.DataLossProtectRequired,
+			),
+			lnwire.NewRawFeatureVector(),
+		)
+		var b bytes.Buffer
+		_, err = lnwire.WriteMessage(&b, initReplyMsg, 0)
+		assert.NoError(t, err)
+
+		mockConn.readMessages <- b.Bytes()
+	}()
+
+	// Start the peer.
+	require.NoError(t, alicePeer.Start())
+
+	// Send a custom message.
+	customMsg, err := lnwire.NewCustom(
+		lnwire.MessageType(40000), []byte{1, 2, 3},
+	)
+	require.NoError(t, err)
+
+	require.NoError(t, alicePeer.SendMessageLazy(false, customMsg))
+
+	// Verify that it is passed down to the noise layer correctly.
+	writtenMsg := <-mockConn.writtenMessages
+	require.Equal(t, []byte{0x9c, 0x40, 0x1, 0x2, 0x3}, writtenMsg)
+
+	// Receive a custom message.
+	receivedCustomMsg, err := lnwire.NewCustom(
+		lnwire.MessageType(40001), []byte{4, 5, 6},
+	)
+	require.NoError(t, err)
+
+	receivedData := []byte{0x9c, 0x41, 0x4, 0x5, 0x6}
+	mockConn.readMessages <- receivedData
+
+	// Verify that it is propagated up to the custom message handler.
+	receivedCustom := <-receivedCustomChan
+	require.Equal(t, remoteKey, receivedCustom.peer)
+	require.Equal(t, receivedCustomMsg, &receivedCustom.msg)
 }

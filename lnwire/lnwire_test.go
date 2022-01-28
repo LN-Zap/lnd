@@ -18,8 +18,8 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
-	"github.com/davecgh/go-spew/spew"
 	"github.com/lightningnetwork/lnd/tor"
+	"github.com/stretchr/testify/assert"
 )
 
 var (
@@ -232,7 +232,7 @@ func TestMaxOutPointIndex(t *testing.T) {
 	}
 
 	var b bytes.Buffer
-	if err := WriteElement(&b, op); err == nil {
+	if err := WriteOutPoint(&b, op); err == nil {
 		t.Fatalf("write of outPoint should fail, index exceeds 16-bits")
 	}
 }
@@ -240,7 +240,7 @@ func TestMaxOutPointIndex(t *testing.T) {
 func TestEmptyMessageUnknownType(t *testing.T) {
 	t.Parallel()
 
-	fakeType := MessageType(math.MaxUint16)
+	fakeType := CustomTypeStart - 1
 	if _, err := makeEmptyMessage(fakeType); err == nil {
 		t.Fatalf("should not be able to make an empty message of an " +
 			"unknown type")
@@ -284,9 +284,7 @@ func TestLightningWireProtocol(t *testing.T) {
 			t.Fatalf("unable to read msg: %v", err)
 			return false
 		}
-		if !reflect.DeepEqual(msg, newMsg) {
-			t.Fatalf("messages don't match after re-encoding: %v "+
-				"vs %v", spew.Sdump(msg), spew.Sdump(newMsg))
+		if !assert.Equalf(t, msg, newMsg, "message mismatch") {
 			return false
 		}
 
@@ -362,24 +360,26 @@ func TestLightningWireProtocol(t *testing.T) {
 				return
 			}
 
-			// 1/2 chance empty upfront shutdown script.
+			// 1/2 chance empty TLV records.
 			if r.Intn(2) == 0 {
 				req.UpfrontShutdownScript, err = randDeliveryAddress(r)
 				if err != nil {
 					t.Fatalf("unable to generate delivery address: %v", err)
 					return
 				}
+
+				req.ChannelType = new(ChannelType)
+				*req.ChannelType = ChannelType(*randRawFeatureVector(r))
+
+				req.LeaseExpiry = new(LeaseExpiry)
+				*req.LeaseExpiry = LeaseExpiry(1337)
 			} else {
 				req.UpfrontShutdownScript = []byte{}
 			}
 
-			// 1/2 chance how having more TLV data after the
-			// shutdown script.
+			// 1/2 chance additional TLV data.
 			if r.Intn(2) == 0 {
-				// TLV type 1 of length 2.
-				req.ExtraData = []byte{1, 2, 0xff, 0xff}
-			} else {
-				req.ExtraData = []byte{}
+				req.ExtraData = []byte{0xfd, 0x00, 0xff, 0x00}
 			}
 
 			v[0] = reflect.ValueOf(req)
@@ -432,23 +432,26 @@ func TestLightningWireProtocol(t *testing.T) {
 				return
 			}
 
-			// 1/2 chance empty upfront shutdown script.
+			// 1/2 chance empty TLV records.
 			if r.Intn(2) == 0 {
 				req.UpfrontShutdownScript, err = randDeliveryAddress(r)
 				if err != nil {
 					t.Fatalf("unable to generate delivery address: %v", err)
 					return
 				}
+
+				req.ChannelType = new(ChannelType)
+				*req.ChannelType = ChannelType(*randRawFeatureVector(r))
+
+				req.LeaseExpiry = new(LeaseExpiry)
+				*req.LeaseExpiry = LeaseExpiry(1337)
 			} else {
 				req.UpfrontShutdownScript = []byte{}
 			}
-			// 1/2 chance how having more TLV data after the
-			// shutdown script.
+
+			// 1/2 chance additional TLV data.
 			if r.Intn(2) == 0 {
-				// TLV type 1 of length 2.
-				req.ExtraData = []byte{1, 2, 0xff, 0xff}
-			} else {
-				req.ExtraData = []byte{}
+				req.ExtraData = []byte{0xfd, 0x00, 0xff, 0x00}
 			}
 
 			v[0] = reflect.ValueOf(req)
@@ -859,6 +862,22 @@ func TestLightningWireProtocol(t *testing.T) {
 			for i := int32(0); i < numChanIDs; i++ {
 				req.ShortChanIDs = append(req.ShortChanIDs,
 					NewShortChanIDFromInt(uint64(r.Int63())))
+			}
+
+			v[0] = reflect.ValueOf(req)
+		},
+		MsgPing: func(v []reflect.Value, r *rand.Rand) {
+			// We use a special message generator here to ensure we
+			// don't generate ping messages that are too large,
+			// which'll cause the test to fail.
+			//
+			// We'll allow the test to generate padding bytes up to
+			// the max message limit, factoring in the 2 bytes for
+			// the num pong bytes.
+			paddingBytes := make([]byte, r.Intn(MaxMsgBody-1))
+			req := Ping{
+				NumPongBytes: uint16(r.Intn(MaxPongBytes + 1)),
+				PaddingBytes: paddingBytes,
 			}
 
 			v[0] = reflect.ValueOf(req)

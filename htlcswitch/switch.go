@@ -89,26 +89,12 @@ type plexPacket struct {
 	err chan error
 }
 
-// ChannelCloseType is an enum which signals the type of channel closure the
-// peer should execute.
-type ChannelCloseType uint8
-
-const (
-	// CloseRegular indicates a regular cooperative channel closure
-	// should be attempted.
-	CloseRegular ChannelCloseType = iota
-
-	// CloseBreach indicates that a channel breach has been detected, and
-	// the link should immediately be marked as unavailable.
-	CloseBreach
-)
-
 // ChanClose represents a request which close a particular channel specified by
 // its id.
 type ChanClose struct {
 	// CloseType is a variable which signals the type of channel closure the
 	// peer should execute.
-	CloseType ChannelCloseType
+	CloseType contractcourt.ChannelCloseType
 
 	// ChanPoint represent the id of the channel which should be closed.
 	ChanPoint *wire.OutPoint
@@ -144,9 +130,18 @@ type Config struct {
 	// subsystem.
 	LocalChannelClose func(pubKey []byte, request *ChanClose)
 
-	// DB is the channeldb instance that will be used to back the switch's
+	// DB is the database backend that will be used to back the switch's
 	// persistent circuit map.
-	DB *channeldb.DB
+	DB kvdb.Backend
+
+	// FetchAllOpenChannels is a function that fetches all currently open
+	// channels from the channel database.
+	FetchAllOpenChannels func() ([]*channeldb.OpenChannel, error)
+
+	// FetchClosedChannels is a function that fetches all closed channels
+	// from the channel database.
+	FetchClosedChannels func(
+		pendingOnly bool) ([]*channeldb.ChannelCloseSummary, error)
 
 	// SwitchPackager provides access to the forwarding packages of all
 	// active channels. This gives the switch the ability to read arbitrary
@@ -232,8 +227,8 @@ type Switch struct {
 	cfg *Config
 
 	// networkResults stores the results of payments initiated by the user.
-	// results. The store is used to later look up the payments and notify
-	// the user of the result when they are complete. Each payment attempt
+	// The store is used to later look up the payments and notify the
+	// user of the result when they are complete. Each payment attempt
 	// should be given a unique integer ID when it is created, otherwise
 	// results might be overwritten.
 	networkResults *networkResultStore
@@ -308,6 +303,8 @@ type Switch struct {
 func New(cfg Config, currentHeight uint32) (*Switch, error) {
 	circuitMap, err := NewCircuitMap(&CircuitMapConfig{
 		DB:                    cfg.DB,
+		FetchAllOpenChannels:  cfg.FetchAllOpenChannels,
+		FetchClosedChannels:   cfg.FetchClosedChannels,
 		ExtractErrorEncrypter: cfg.ExtractErrorEncrypter,
 	})
 	if err != nil {
@@ -388,9 +385,9 @@ func (s *Switch) GetPaymentResult(attemptID uint64, paymentHash lntypes.Hash,
 	deobfuscator ErrorDecrypter) (<-chan *PaymentResult, error) {
 
 	var (
-		nChan  <-chan *networkResult
-		err    error
-		outKey = CircuitKey{
+		nChan <-chan *networkResult
+		err   error
+		inKey = CircuitKey{
 			ChanID: hop.Source,
 			HtlcID: attemptID,
 		}
@@ -399,7 +396,7 @@ func (s *Switch) GetPaymentResult(attemptID uint64, paymentHash lntypes.Hash,
 	// If the payment is not found in the circuit map, check whether a
 	// result is already available.
 	// Assumption: no one will add this payment ID other than the caller.
-	if s.circuits.LookupCircuit(outKey) == nil {
+	if s.circuits.LookupCircuit(inKey) == nil {
 		res, err := s.networkResults.getResult(attemptID)
 		if err != nil {
 			return nil, err
@@ -546,7 +543,7 @@ func (s *Switch) SendHTLC(firstHop lnwire.ShortChannelID, attemptID uint64,
 	// Send packet to link.
 	packet.circuit = circuit
 
-	return link.HandleLocalAddPacket(packet)
+	return link.handleLocalAddPacket(packet)
 }
 
 // UpdateForwardingPolicies sends a message to the switch to update the
@@ -885,9 +882,10 @@ func (s *Switch) handleLocalResponse(pkt *htlcPacket) {
 	key := newHtlcKey(pkt)
 	eventType := getEventType(pkt)
 
-	switch pkt.htlc.(type) {
+	switch htlc := pkt.htlc.(type) {
 	case *lnwire.UpdateFulfillHTLC:
-		s.cfg.HtlcNotifier.NotifySettleEvent(key, eventType)
+		s.cfg.HtlcNotifier.NotifySettleEvent(key, htlc.PaymentPreimage,
+			eventType)
 
 	case *lnwire.UpdateFailHTLC:
 		s.cfg.HtlcNotifier.NotifyForwardingFailEvent(key, eventType)
@@ -1181,7 +1179,7 @@ func (s *Switch) handlePacketForward(packet *htlcPacket) error {
 		// Send the packet to the destination channel link which
 		// manages the channel.
 		packet.outgoingChanID = destination.ShortChanID()
-		return destination.HandleSwitchPacket(packet)
+		return destination.handleSwitchPacket(packet)
 
 	case *lnwire.UpdateFailHTLC, *lnwire.UpdateFulfillHTLC:
 		// If the source of this packet has not been set, use the
@@ -1468,7 +1466,7 @@ func (s *Switch) closeCircuit(pkt *htlcPacket) (*PaymentCircuit, error) {
 // we're the originator of the payment, so the link stops attempting to
 // re-broadcast.
 func (s *Switch) ackSettleFail(settleFailRefs ...channeldb.SettleFailRef) error {
-	return kvdb.Batch(s.cfg.DB.Backend, func(tx kvdb.RwTx) error {
+	return kvdb.Batch(s.cfg.DB, func(tx kvdb.RwTx) error {
 		return s.cfg.SwitchPackager.AckSettleFails(tx, settleFailRefs...)
 	})
 }
@@ -1534,7 +1532,8 @@ func (s *Switch) teardownCircuit(pkt *htlcPacket) error {
 // a starting point for close negotiation. The deliveryScript parameter is an
 // optional parameter which sets a user specified script to close out to.
 func (s *Switch) CloseLink(chanPoint *wire.OutPoint,
-	closeType ChannelCloseType, targetFeePerKw chainfee.SatPerKWeight,
+	closeType contractcourt.ChannelCloseType,
+	targetFeePerKw chainfee.SatPerKWeight,
 	deliveryScript lnwire.DeliveryAddress) (chan interface{}, chan error) {
 
 	// TODO(roasbeef) abstract out the close updates.
@@ -1871,7 +1870,7 @@ func (s *Switch) Start() error {
 // forwarding packages and reforwards any Settle or Fail HTLCs found. This is
 // used to resurrect the switch's mailboxes after a restart.
 func (s *Switch) reforwardResponses() error {
-	openChannels, err := s.cfg.DB.FetchAllOpenChannels()
+	openChannels, err := s.cfg.FetchAllOpenChannels()
 	if err != nil {
 		return err
 	}
@@ -2022,7 +2021,7 @@ func (s *Switch) Stop() error {
 		return errors.New("htlc switch already shutdown")
 	}
 
-	log.Infof("HTLC Switch shutting down")
+	log.Info("HTLC Switch shutting down")
 
 	close(s.quit)
 
@@ -2034,6 +2033,15 @@ func (s *Switch) Stop() error {
 	s.mailOrchestrator.Stop()
 
 	return nil
+}
+
+// CreateAndAddLink will create a link and then add it to the internal maps
+// when given a ChannelLinkConfig and LightningChannel.
+func (s *Switch) CreateAndAddLink(linkCfg ChannelLinkConfig,
+	lnChan *lnwallet.LightningChannel) error {
+
+	link := NewChannelLink(linkCfg, lnChan)
+	return s.AddLink(link)
 }
 
 // AddLink is used to initiate the handling of the add link command. The
@@ -2102,7 +2110,9 @@ func (s *Switch) addLiveLink(link ChannelLink) {
 
 // GetLink is used to initiate the handling of the get link command. The
 // request will be propagated/handled to/in the main goroutine.
-func (s *Switch) GetLink(chanID lnwire.ChannelID) (ChannelLink, error) {
+func (s *Switch) GetLink(chanID lnwire.ChannelID) (ChannelUpdateHandler,
+	error) {
+
 	s.indexMtx.RLock()
 	defer s.indexMtx.RUnlock()
 
@@ -2121,6 +2131,17 @@ func (s *Switch) getLink(chanID lnwire.ChannelID) (ChannelLink, error) {
 	}
 
 	return link, nil
+}
+
+// GetLinkByShortID attempts to return the link which possesses the target short
+// channel ID.
+func (s *Switch) GetLinkByShortID(chanID lnwire.ShortChannelID) (ChannelLink,
+	error) {
+
+	s.indexMtx.RLock()
+	defer s.indexMtx.RUnlock()
+
+	return s.getLinkByShortID(chanID)
 }
 
 // getLinkByShortID attempts to return the link which possesses the target
@@ -2244,11 +2265,26 @@ func (s *Switch) UpdateShortChanID(chanID lnwire.ChannelID) error {
 
 // GetLinksByInterface fetches all the links connected to a particular node
 // identified by the serialized compressed form of its public key.
-func (s *Switch) GetLinksByInterface(hop [33]byte) ([]ChannelLink, error) {
+func (s *Switch) GetLinksByInterface(hop [33]byte) ([]ChannelUpdateHandler,
+	error) {
+
 	s.indexMtx.RLock()
 	defer s.indexMtx.RUnlock()
 
-	return s.getLinks(hop)
+	var handlers []ChannelUpdateHandler
+
+	links, err := s.getLinks(hop)
+	if err != nil {
+		return nil, err
+	}
+
+	// Range over the returned []ChannelLink to convert them into
+	// []ChannelUpdateHandler.
+	for _, link := range links {
+		handlers = append(handlers, link)
+	}
+
+	return handlers, nil
 }
 
 // getLinks is function which returns the channel links of the peer by hop
@@ -2286,18 +2322,6 @@ func (s *Switch) commitCircuits(circuits ...*PaymentCircuit) (
 	*CircuitFwdActions, error) {
 
 	return s.circuits.CommitCircuits(circuits...)
-}
-
-// openCircuits preemptively writes the keystones for Adds that are about to be
-// added to a commitment txn.
-func (s *Switch) openCircuits(keystones ...Keystone) error {
-	return s.circuits.OpenCircuits(keystones...)
-}
-
-// deleteCircuits persistently removes the circuit, and keystone if present,
-// from the circuit map.
-func (s *Switch) deleteCircuits(inKeys ...CircuitKey) error {
-	return s.circuits.DeleteCircuits(inKeys...)
 }
 
 // FlushForwardingEvents flushes out the set of pending forwarding events to

@@ -35,14 +35,11 @@ var (
 	//      |        |
 	//      |        |--payment-htlcs-bucket (shard-bucket)
 	//      |        |        |
-	//      |        |        |-- <htlc attempt ID>
-	//      |        |        |       |--htlc-attempt-info-key: <htlc attempt info>
-	//      |        |        |       |--htlc-settle-info-key: <(optional) settle info>
-	//      |        |        |       |--htlc-fail-info-key: <(optional) fail info>
+	//      |        |        |-- ai<htlc attempt ID>: <htlc attempt info>
+	//      |        |        |-- si<htlc attempt ID>: <(optional) settle info>
+	//      |        |        |-- fi<htlc attempt ID>: <(optional) fail info>
 	//      |        |        |
-	//      |        |        |-- <htlc attempt ID>
-	//      |        |        |       |
-	//      |        |       ...     ...
+	//      |        |       ...
 	//      |        |
 	//      |        |
 	//      |        |--duplicate-bucket (only for old, completed payments)
@@ -50,9 +47,9 @@ var (
 	//      |                 |-- <seq-num>
 	//      |                 |       |--sequence-key: <sequence number>
 	//      |                 |       |--creation-info-key: <creation info>
-	//      |                 |       |--attempt-info-key: <attempt info>
-	//      |                 |       |--settle-info-key: <settle info>
-	//      |                 |       |--fail-info-key: <fail info>
+	//      |                 |       |--ai: <attempt info>
+	//      |                 |       |--si: <settle info>
+	//      |                 |       |--fi: <fail info>
 	//      |                 |
 	//      |                 |-- <seq-num>
 	//      |                 |       |
@@ -77,17 +74,19 @@ var (
 	// about the HTLCs that were attempted for a payment.
 	paymentHtlcsBucket = []byte("payment-htlcs-bucket")
 
-	// htlcAttemptInfoKey is a key used in a HTLC's sub-bucket to store the
-	// info about the attempt that was done for the HTLC in question.
-	htlcAttemptInfoKey = []byte("htlc-attempt-info")
+	// htlcAttemptInfoKey is the key used as the prefix of an HTLC attempt
+	// to store the info about the attempt that was done for the HTLC in
+	// question. The HTLC attempt ID is concatenated at the end.
+	htlcAttemptInfoKey = []byte("ai")
 
-	// htlcSettleInfoKey is a key used in a HTLC's sub-bucket to store the
-	// settle info, if any.
-	htlcSettleInfoKey = []byte("htlc-settle-info")
+	// htlcSettleInfoKey is the key used as the prefix of an HTLC attempt
+	// settle info, if any. The HTLC attempt ID is concatenated at the end.
+	htlcSettleInfoKey = []byte("si")
 
-	// htlcFailInfoKey is a key used in a HTLC's sub-bucket to store
-	// failure information, if any.
-	htlcFailInfoKey = []byte("htlc-fail-info")
+	// htlcFailInfoKey is the key used as the prefix of an HTLC attempt
+	// failure information, if any.The  HTLC attempt ID is concatenated at
+	// the end.
+	htlcFailInfoKey = []byte("fi")
 
 	// paymentFailInfoKey is a key used in the payment's sub-bucket to
 	// store information about the reason a payment failed.
@@ -230,13 +229,22 @@ type PaymentCreationInfo struct {
 	PaymentRequest []byte
 }
 
+// htlcBucketKey creates a composite key from prefix and id where the result is
+// simply the two concatenated.
+func htlcBucketKey(prefix, id []byte) []byte {
+	key := make([]byte, len(prefix)+len(id))
+	copy(key, prefix)
+	copy(key[len(prefix):], id)
+	return key
+}
+
 // FetchPayments returns all sent payments found in the DB.
 //
 // nolint: dupl
-func (db *DB) FetchPayments() ([]*MPPayment, error) {
+func (d *DB) FetchPayments() ([]*MPPayment, error) {
 	var payments []*MPPayment
 
-	err := kvdb.View(db, func(tx kvdb.RTx) error {
+	err := kvdb.View(d, func(tx kvdb.RTx) error {
 		paymentsBucket := tx.ReadBucket(paymentsRootBucket)
 		if paymentsBucket == nil {
 			return nil
@@ -378,80 +386,93 @@ func fetchPayment(bucket kvdb.RBucket) (*MPPayment, error) {
 // fetchHtlcAttempts retrives all htlc attempts made for the payment found in
 // the given bucket.
 func fetchHtlcAttempts(bucket kvdb.RBucket) ([]HTLCAttempt, error) {
-	htlcs := make([]HTLCAttempt, 0)
+	htlcsMap := make(map[uint64]*HTLCAttempt)
 
-	err := bucket.ForEach(func(k, _ []byte) error {
-		aid := byteOrder.Uint64(k)
-		htlcBucket := bucket.NestedReadBucket(k)
+	attemptInfoCount := 0
+	err := bucket.ForEach(func(k, v []byte) error {
+		aid := byteOrder.Uint64(k[len(k)-8:])
 
-		attemptInfo, err := fetchHtlcAttemptInfo(
-			htlcBucket,
-		)
-		if err != nil {
-			return err
-		}
-		attemptInfo.AttemptID = aid
-
-		htlc := HTLCAttempt{
-			HTLCAttemptInfo: *attemptInfo,
+		if _, ok := htlcsMap[aid]; !ok {
+			htlcsMap[aid] = &HTLCAttempt{}
 		}
 
-		// Settle info might be nil.
-		htlc.Settle, err = fetchHtlcSettleInfo(htlcBucket)
-		if err != nil {
-			return err
+		var err error
+		switch {
+		case bytes.HasPrefix(k, htlcAttemptInfoKey):
+			attemptInfo, err := readHtlcAttemptInfo(v)
+			if err != nil {
+				return err
+			}
+
+			attemptInfo.AttemptID = aid
+			htlcsMap[aid].HTLCAttemptInfo = *attemptInfo
+			attemptInfoCount++
+
+		case bytes.HasPrefix(k, htlcSettleInfoKey):
+			htlcsMap[aid].Settle, err = readHtlcSettleInfo(v)
+			if err != nil {
+				return err
+			}
+
+		case bytes.HasPrefix(k, htlcFailInfoKey):
+			htlcsMap[aid].Failure, err = readHtlcFailInfo(v)
+			if err != nil {
+				return err
+			}
+
+		default:
+			return fmt.Errorf("unknown htlc attempt key")
 		}
 
-		// Failure info might be nil.
-		htlc.Failure, err = fetchHtlcFailInfo(htlcBucket)
-		if err != nil {
-			return err
-		}
-
-		htlcs = append(htlcs, htlc)
 		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	return htlcs, nil
-}
-
-// fetchHtlcAttemptInfo fetches the payment attempt info for this htlc from the
-// bucket.
-func fetchHtlcAttemptInfo(bucket kvdb.RBucket) (*HTLCAttemptInfo, error) {
-	b := bucket.Get(htlcAttemptInfoKey)
-	if b == nil {
+	// Sanity check that all htlcs have an attempt info.
+	if attemptInfoCount != len(htlcsMap) {
 		return nil, errNoAttemptInfo
 	}
 
+	keys := make([]uint64, len(htlcsMap))
+	i := 0
+	for k := range htlcsMap {
+		keys[i] = k
+		i++
+	}
+
+	// Sort HTLC attempts by their attempt ID. This is needed because in the
+	// DB we store the attempts with keys prefixed by their status which
+	// changes order (groups them together by status).
+	sort.Slice(keys, func(i, j int) bool {
+		return keys[i] < keys[j]
+	})
+
+	htlcs := make([]HTLCAttempt, len(htlcsMap))
+	for i, key := range keys {
+		htlcs[i] = *htlcsMap[key]
+	}
+
+	return htlcs, nil
+}
+
+// readHtlcAttemptInfo reads the payment attempt info for this htlc.
+func readHtlcAttemptInfo(b []byte) (*HTLCAttemptInfo, error) {
 	r := bytes.NewReader(b)
 	return deserializeHTLCAttemptInfo(r)
 }
 
-// fetchHtlcSettleInfo retrieves the settle info for the htlc. If the htlc isn't
+// readHtlcSettleInfo reads the settle info for the htlc. If the htlc isn't
 // settled, nil is returned.
-func fetchHtlcSettleInfo(bucket kvdb.RBucket) (*HTLCSettleInfo, error) {
-	b := bucket.Get(htlcSettleInfoKey)
-	if b == nil {
-		// Settle info is optional.
-		return nil, nil
-	}
-
+func readHtlcSettleInfo(b []byte) (*HTLCSettleInfo, error) {
 	r := bytes.NewReader(b)
 	return deserializeHTLCSettleInfo(r)
 }
 
-// fetchHtlcFailInfo retrieves the failure info for the htlc. If the htlc hasn't
+// readHtlcFailInfo reads the failure info for the htlc. If the htlc hasn't
 // failed, nil is returned.
-func fetchHtlcFailInfo(bucket kvdb.RBucket) (*HTLCFailInfo, error) {
-	b := bucket.Get(htlcFailInfoKey)
-	if b == nil {
-		// Fail info is optional.
-		return nil, nil
-	}
-
+func readHtlcFailInfo(b []byte) (*HTLCFailInfo, error) {
 	r := bytes.NewReader(b)
 	return deserializeHTLCFailInfo(r)
 }
@@ -541,10 +562,10 @@ type PaymentsResponse struct {
 // QueryPayments is a query to the payments database which is restricted
 // to a subset of payments by the payments query, containing an offset
 // index and a maximum number of returned payments.
-func (db *DB) QueryPayments(query PaymentsQuery) (PaymentsResponse, error) {
+func (d *DB) QueryPayments(query PaymentsQuery) (PaymentsResponse, error) {
 	var resp PaymentsResponse
 
-	if err := kvdb.View(db, func(tx kvdb.RTx) error {
+	if err := kvdb.View(d, func(tx kvdb.RTx) error {
 		// Get the root payments bucket.
 		paymentsBucket := tx.ReadBucket(paymentsRootBucket)
 		if paymentsBucket == nil {
@@ -711,8 +732,8 @@ func fetchPaymentWithSequenceNumber(tx kvdb.RTx, paymentHash lntypes.Hash,
 // DeletePayment deletes a payment from the DB given its payment hash. If
 // failedHtlcsOnly is set, only failed HTLC attempts of the payment will be
 // deleted.
-func (db *DB) DeletePayment(paymentHash lntypes.Hash, failedHtlcsOnly bool) error { // nolint:interfacer
-	return kvdb.Update(db, func(tx kvdb.RwTx) error {
+func (d *DB) DeletePayment(paymentHash lntypes.Hash, failedHtlcsOnly bool) error { // nolint:interfacer
+	return kvdb.Update(d, func(tx kvdb.RwTx) error {
 		payments := tx.ReadWriteBucket(paymentsRootBucket)
 		if payments == nil {
 			return nil
@@ -751,7 +772,23 @@ func (db *DB) DeletePayment(paymentHash lntypes.Hash, failedHtlcsOnly bool) erro
 			)
 
 			for _, htlcID := range toDelete {
-				err = htlcsBucket.DeleteNestedBucket(htlcID)
+				err = htlcsBucket.Delete(
+					htlcBucketKey(htlcAttemptInfoKey, htlcID),
+				)
+				if err != nil {
+					return err
+				}
+
+				err = htlcsBucket.Delete(
+					htlcBucketKey(htlcFailInfoKey, htlcID),
+				)
+				if err != nil {
+					return err
+				}
+
+				err = htlcsBucket.Delete(
+					htlcBucketKey(htlcSettleInfoKey, htlcID),
+				)
 				if err != nil {
 					return err
 				}
@@ -784,8 +821,8 @@ func (db *DB) DeletePayment(paymentHash lntypes.Hash, failedHtlcsOnly bool) erro
 // failedOnly is set, only failed payments will be considered for deletion. If
 // failedHtlsOnly is set, the payment itself won't be deleted, only failed HTLC
 // attempts.
-func (db *DB) DeletePayments(failedOnly, failedHtlcsOnly bool) error {
-	return kvdb.Update(db, func(tx kvdb.RwTx) error {
+func (d *DB) DeletePayments(failedOnly, failedHtlcsOnly bool) error {
+	return kvdb.Update(d, func(tx kvdb.RwTx) error {
 		payments := tx.ReadWriteBucket(paymentsRootBucket)
 		if payments == nil {
 			return nil
@@ -875,8 +912,21 @@ func (db *DB) DeletePayments(failedOnly, failedHtlcsOnly bool) error {
 			)
 
 			for _, aid := range htlcIDs {
-				err := htlcsBucket.DeleteNestedBucket(aid)
-				if err != nil {
+				if err := htlcsBucket.Delete(
+					htlcBucketKey(htlcAttemptInfoKey, aid),
+				); err != nil {
+					return err
+				}
+
+				if err := htlcsBucket.Delete(
+					htlcBucketKey(htlcFailInfoKey, aid),
+				); err != nil {
+					return err
+				}
+
+				if err := htlcsBucket.Delete(
+					htlcBucketKey(htlcSettleInfoKey, aid),
+				); err != nil {
 					return err
 				}
 			}

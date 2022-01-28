@@ -52,6 +52,7 @@ import (
 	"github.com/lightningnetwork/lnd/lnrpc/routerrpc"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwallet/chainfee"
+	"github.com/lightningnetwork/lnd/lnwallet/rpcwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/nat"
 	"github.com/lightningnetwork/lnd/netann"
@@ -95,6 +96,10 @@ const (
 	// value used or a particular peer will be chosen between 0s and this
 	// value.
 	maxInitReconnectDelay = 30
+
+	// multiAddrConnectionStagger is the number of seconds to wait between
+	// attempting to a peer with each of its advertised addresses.
+	multiAddrConnectionStagger = 10 * time.Second
 )
 
 var (
@@ -157,6 +162,9 @@ type server struct {
 	// to authenticate any incoming connections.
 	identityECDH keychain.SingleKeyECDH
 
+	// identityKeyLoc is the key locator for the above wrapped identity key.
+	identityKeyLoc keychain.KeyLocator
+
 	// nodeSigner is an implementation of the MessageSigner implementation
 	// that's backed by the identity private key of the running lnd node.
 	nodeSigner *netann.NodeSigner
@@ -192,8 +200,13 @@ type server struct {
 	peerConnectedListeners    map[string][]chan<- lnpeer.Peer
 	peerDisconnectedListeners map[string][]chan<- struct{}
 
+	// TODO(yy): the Brontide.Start doesn't know this value, which means it
+	// will continue to send messages even if there are no active channels
+	// and the value below is false. Once it's pruned, all its connections
+	// will be closed, thus the Brontide.Start will return an error.
 	persistentPeers        map[string]bool
 	persistentPeersBackoff map[string]time.Duration
+	persistentPeerAddrs    map[string][]*lnwire.NetAddress
 	persistentConnReqs     map[string][]*connmgr.ConnReq
 	persistentRetryCancels map[string]chan struct{}
 
@@ -216,13 +229,25 @@ type server struct {
 	// intended to replace it.
 	scheduledPeerConnection map[string]func()
 
+	// pongBuf is a shared pong reply buffer we'll use across all active
+	// peer goroutines. We know the max size of a pong message
+	// (lnwire.MaxPongBytes), so we can allocate this ahead of time, and
+	// avoid allocations each time we need to send a pong message.
+	pongBuf []byte
+
 	cc *chainreg.ChainControl
 
 	fundingMgr *funding.Manager
 
-	localChanDB *channeldb.DB
+	graphDB *channeldb.ChannelGraph
 
-	remoteChanDB *channeldb.DB
+	chanStateDB *channeldb.ChannelStateDB
+
+	addrSource chanbackup.AddressSource
+
+	// miscDB is the DB that contains all "other" databases within the main
+	// channel DB that haven't been separated out yet.
+	miscDB *channeldb.DB
 
 	htlcSwitch *htlcswitch.Switch
 
@@ -238,7 +263,7 @@ type server struct {
 
 	witnessBeacon contractcourt.WitnessBeacon
 
-	breachArbiter *breachArbiter
+	breachArbiter *contractcourt.BreachArbiter
 
 	missionControl *routing.MissionControl
 
@@ -250,7 +275,7 @@ type server struct {
 
 	localChanMgr *localchans.Manager
 
-	utxoNursery *utxoNursery
+	utxoNursery *contractcourt.UtxoNursery
 
 	sweeper *sweep.UtxoSweeper
 
@@ -297,9 +322,103 @@ type server struct {
 	// livelinessMonitor monitors that lnd has access to critical resources.
 	livelinessMonitor *healthcheck.Monitor
 
+	customMessageServer *subscribe.Server
+
 	quit chan struct{}
 
 	wg sync.WaitGroup
+}
+
+// updatePersistentPeerAddrs subscribes to topology changes and stores
+// advertised addresses for any NodeAnnouncements from our persisted peers.
+func (s *server) updatePersistentPeerAddrs() error {
+	graphSub, err := s.chanRouter.SubscribeTopology()
+	if err != nil {
+		return err
+	}
+
+	s.wg.Add(1)
+	go func() {
+		defer func() {
+			graphSub.Cancel()
+			s.wg.Done()
+		}()
+
+		for {
+			select {
+
+			case <-s.quit:
+				return
+
+			case topChange, ok := <-graphSub.TopologyChanges:
+				// If the router is shutting down, then we will
+				// as well.
+				if !ok {
+					return
+				}
+
+				for _, update := range topChange.NodeUpdates {
+					pubKeyStr := string(
+						update.IdentityKey.
+							SerializeCompressed(),
+					)
+
+					// We only care about updates from
+					// our persistentPeers.
+					s.mu.RLock()
+					_, ok := s.persistentPeers[pubKeyStr]
+					s.mu.RUnlock()
+					if !ok {
+						continue
+					}
+
+					addrs := make([]*lnwire.NetAddress, 0,
+						len(update.Addresses))
+
+					for _, addr := range update.Addresses {
+						addrs = append(addrs,
+							&lnwire.NetAddress{
+								IdentityKey: update.IdentityKey,
+								Address:     addr,
+								ChainNet:    s.cfg.ActiveNetParams.Net,
+							},
+						)
+					}
+
+					s.mu.Lock()
+
+					// Update the stored addresses for this
+					// to peer to reflect the new set.
+					s.persistentPeerAddrs[pubKeyStr] = addrs
+
+					// If there are no outstanding
+					// connection requests for this peer
+					// then our work is done since we are
+					// not currently trying to connect to
+					// them.
+					if len(s.persistentConnReqs[pubKeyStr]) == 0 {
+						s.mu.Unlock()
+						continue
+					}
+
+					s.mu.Unlock()
+
+					s.connectToPersistentPeer(pubKeyStr)
+				}
+			}
+		}
+	}()
+
+	return nil
+}
+
+// CustomMessage is a custom message that is received from a peer.
+type CustomMessage struct {
+	// Peer is the peer pubkey
+	Peer [33]byte
+
+	// Msg is the custom wire message.
+	Msg *lnwire.Custom
 }
 
 // parseAddr parses an address from its string format to a net.Addr.
@@ -352,18 +471,20 @@ func noiseDial(idKey keychain.SingleKeyECDH,
 // newServer creates a new instance of the server which is to listen using the
 // passed listener address.
 func newServer(cfg *Config, listenAddrs []net.Addr,
-	localChanDB, remoteChanDB *channeldb.DB,
-	towerClientDB wtclient.DB, cc *chainreg.ChainControl,
+	dbs *DatabaseInstances, cc *chainreg.ChainControl,
 	nodeKeyDesc *keychain.KeyDescriptor,
 	chansToRestore walletunlocker.ChannelsToRecover,
 	chanPredicate chanacceptor.ChannelAcceptor,
 	torController *tor.Controller) (*server, error) {
 
 	var (
-		err           error
-		nodeKeyECDH   = keychain.NewPubKeyECDH(*nodeKeyDesc, cc.KeyRing)
-		nodeKeySigner = keychain.NewPubKeyDigestSigner(
-			*nodeKeyDesc, cc.KeyRing,
+		err         error
+		nodeKeyECDH = keychain.NewPubKeyECDH(*nodeKeyDesc, cc.KeyRing)
+
+		// We just derived the full descriptor, so we know the public
+		// key is set on it.
+		nodeKeySigner = keychain.NewPubKeyMessageSigner(
+			nodeKeyDesc.PubKey, nodeKeyDesc.KeyLocator, cc.KeyRing,
 		)
 	)
 
@@ -381,14 +502,11 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	}
 
 	var serializedPubKey [33]byte
-	copy(serializedPubKey[:], nodeKeyECDH.PubKey().SerializeCompressed())
+	copy(serializedPubKey[:], nodeKeyDesc.PubKey.SerializeCompressed())
 
-	// Initialize the sphinx router, placing it's persistent replay log in
-	// the same directory as the channel graph database. We don't need to
-	// replicate this data, so we'll store it locally.
+	// Initialize the sphinx router.
 	replayLog := htlcswitch.NewDecayedLog(
-		cfg.localDatabaseDir(), defaultSphinxDbName, cfg.DB.Bolt,
-		cc.ChainNotifier,
+		dbs.DecayedLogDB, cc.ChainNotifier,
 	)
 	sphinxRouter := sphinx.NewRouter(
 		nodeKeyECDH, cfg.ActiveNetParams.Params, replayLog,
@@ -413,10 +531,11 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	)
 
 	featureMgr, err := feature.NewManager(feature.Config{
-		NoTLVOnion:        cfg.ProtocolOptions.LegacyOnion(),
-		NoStaticRemoteKey: cfg.ProtocolOptions.NoStaticRemoteKey(),
-		NoAnchors:         cfg.ProtocolOptions.NoAnchorCommitments(),
-		NoWumbo:           !cfg.ProtocolOptions.Wumbo(),
+		NoTLVOnion:               cfg.ProtocolOptions.LegacyOnion(),
+		NoStaticRemoteKey:        cfg.ProtocolOptions.NoStaticRemoteKey(),
+		NoAnchors:                cfg.ProtocolOptions.NoAnchorCommitments(),
+		NoWumbo:                  !cfg.ProtocolOptions.Wumbo(),
+		NoScriptEnforcementLease: cfg.ProtocolOptions.NoScriptEnforcementLease(),
 	})
 	if err != nil {
 		return nil, err
@@ -435,18 +554,23 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	s := &server{
 		cfg:            cfg,
-		localChanDB:    localChanDB,
-		remoteChanDB:   remoteChanDB,
+		graphDB:        dbs.GraphDB.ChannelGraph(),
+		chanStateDB:    dbs.ChanStateDB.ChannelStateDB(),
+		addrSource:     dbs.ChanStateDB,
+		miscDB:         dbs.ChanStateDB,
 		cc:             cc,
 		sigPool:        lnwallet.NewSigPool(cfg.Workers.Sig, cc.Signer),
 		writePool:      writePool,
 		readPool:       readPool,
 		chansToRestore: chansToRestore,
 
-		channelNotifier: channelnotifier.New(remoteChanDB),
+		channelNotifier: channelnotifier.New(
+			dbs.ChanStateDB.ChannelStateDB(),
+		),
 
-		identityECDH: nodeKeyECDH,
-		nodeSigner:   netann.NewNodeSigner(nodeKeySigner),
+		identityECDH:   nodeKeyECDH,
+		identityKeyLoc: nodeKeyDesc.KeyLocator,
+		nodeSigner:     netann.NewNodeSigner(nodeKeySigner),
 
 		listenAddrs: listenAddrs,
 
@@ -459,10 +583,12 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		persistentPeers:         make(map[string]bool),
 		persistentPeersBackoff:  make(map[string]time.Duration),
 		persistentConnReqs:      make(map[string][]*connmgr.ConnReq),
+		persistentPeerAddrs:     make(map[string][]*lnwire.NetAddress),
 		persistentRetryCancels:  make(map[string]chan struct{}),
 		peerErrors:              make(map[string]*queue.CircularBuffer),
 		ignorePeerTermination:   make(map[*peer.Brontide]struct{}),
 		scheduledPeerConnection: make(map[string]func()),
+		pongBuf:                 make([]byte, lnwire.MaxPongBytes),
 
 		peersByPub:                make(map[string]*peer.Brontide),
 		inboundPeers:              make(map[string]*peer.Brontide),
@@ -470,12 +596,14 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		peerConnectedListeners:    make(map[string][]chan<- lnpeer.Peer),
 		peerDisconnectedListeners: make(map[string][]chan<- struct{}),
 
+		customMessageServer: subscribe.NewServer(),
+
 		featureMgr: featureMgr,
 		quit:       make(chan struct{}),
 	}
 
 	s.witnessBeacon = &preimageBeacon{
-		wCache:      remoteChanDB.NewWitnessCache(),
+		wCache:      dbs.ChanStateDB.NewWitnessCache(),
 		subscribers: make(map[uint64]*preimageSubscriber),
 	}
 
@@ -489,7 +617,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		uint32(currentHeight), currentHash, cc.ChainNotifier,
 	)
 	s.invoices = invoices.NewRegistry(
-		remoteChanDB, expiryWatcher, &registryConfig,
+		dbs.ChanStateDB, expiryWatcher, &registryConfig,
 	)
 
 	s.htlcNotifier = htlcswitch.NewHtlcNotifier(time.Now)
@@ -498,7 +626,9 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	thresholdMSats := lnwire.NewMSatFromSatoshis(thresholdSats)
 
 	s.htlcSwitch, err = htlcswitch.New(htlcswitch.Config{
-		DB: remoteChanDB,
+		DB:                   dbs.ChanStateDB,
+		FetchAllOpenChannels: s.chanStateDB.FetchAllOpenChannels,
+		FetchClosedChannels:  s.chanStateDB.FetchClosedChannels,
 		LocalChannelClose: func(pubKey []byte,
 			request *htlcswitch.ChanClose) {
 
@@ -513,7 +643,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 			peer.HandleLocalCloseChanReqs(request)
 		},
-		FwdingLog:              remoteChanDB.ForwardingLog(),
+		FwdingLog:              dbs.ChanStateDB.ForwardingLog(),
 		SwitchPackager:         channeldb.NewSwitchPackager(),
 		ExtractErrorEncrypter:  s.sphinx.ExtractErrorEncrypter,
 		FetchLastChannelUpdate: s.fetchLastChanUpdate(),
@@ -537,12 +667,13 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		ChanStatusSampleInterval: cfg.ChanStatusSampleInterval,
 		ChanEnableTimeout:        cfg.ChanEnableTimeout,
 		ChanDisableTimeout:       cfg.ChanDisableTimeout,
-		OurPubKey:                nodeKeyECDH.PubKey(),
+		OurPubKey:                nodeKeyDesc.PubKey,
+		OurKeyLoc:                nodeKeyDesc.KeyLocator,
 		MessageSigner:            s.nodeSigner,
 		IsChannelActive:          s.htlcSwitch.HasActiveLink,
 		ApplyChannelUpdate:       s.applyChannelUpdate,
-		DB:                       remoteChanDB,
-		Graph:                    localChanDB.ChannelGraph(),
+		DB:                       s.chanStateDB,
+		Graph:                    dbs.GraphDB.ChannelGraph(),
 	}
 
 	chanStatusMgr, err := netann.NewChanStatusManager(chanStatusMgrCfg)
@@ -634,7 +765,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	// As the graph can be obtained at anytime from the network, we won't
 	// replicate it, and instead it'll only be stored locally.
-	chanGraph := localChanDB.ChannelGraph()
+	chanGraph := dbs.GraphDB.ChannelGraph()
 
 	// We'll now reconstruct a node announcement based on our current
 	// configuration so we can send it out as a sort of heart beat within
@@ -665,7 +796,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		Features:             s.featureMgr.Get(feature.SetNodeAnn),
 		Color:                color,
 	}
-	copy(selfNode.PubKeyBytes[:], nodeKeyECDH.PubKey().SerializeCompressed())
+	copy(selfNode.PubKeyBytes[:], nodeKeyDesc.PubKey.SerializeCompressed())
 
 	// Based on the disk representation of the node announcement generated
 	// above, we'll generate a node announcement that can go out on the
@@ -678,7 +809,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	// With the announcement generated, we'll sign it to properly
 	// authenticate the message on the network.
 	authSig, err := netann.SignAnnouncement(
-		s.nodeSigner, nodeKeyECDH.PubKey(), nodeAnn,
+		s.nodeSigner, nodeKeyDesc.KeyLocator, nodeAnn,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("unable to generate signature for "+
@@ -701,36 +832,9 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	// The router will get access to the payment ID sequencer, such that it
 	// can generate unique payment IDs.
-	sequencer, err := htlcswitch.NewPersistentSequencer(remoteChanDB)
+	sequencer, err := htlcswitch.NewPersistentSequencer(dbs.ChanStateDB)
 	if err != nil {
 		return nil, err
-	}
-
-	queryBandwidth := func(edge *channeldb.ChannelEdgeInfo) lnwire.MilliSatoshi {
-		cid := lnwire.NewChanIDFromOutPoint(&edge.ChannelPoint)
-		link, err := s.htlcSwitch.GetLink(cid)
-		if err != nil {
-			// If the link isn't online, then we'll report
-			// that it has zero bandwidth to the router.
-			return 0
-		}
-
-		// If the link is found within the switch, but it isn't
-		// yet eligible to forward any HTLCs, then we'll treat
-		// it as if it isn't online in the first place.
-		if !link.EligibleToForward() {
-			return 0
-		}
-
-		// If our link isn't currently in a state where it can
-		// add another outgoing htlc, treat the link as unusable.
-		if err := link.MayAddOutgoingHtlc(); err != nil {
-			return 0
-		}
-
-		// Otherwise, we'll return the current best estimate
-		// for the available bandwidth for the link.
-		return link.Bandwidth()
 	}
 
 	// Instantiate mission control with config from the sub server.
@@ -746,10 +850,11 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	}
 
 	s.missionControl, err = routing.NewMissionControl(
-		remoteChanDB, selfNode.PubKeyBytes,
+		dbs.ChanStateDB, selfNode.PubKeyBytes,
 		&routing.MissionControlConfig{
 			ProbabilityEstimatorCfg: estimatorCfg,
 			MaxMcHistory:            routingConfig.MaxMcHistory,
+			McFlushInterval:         routingConfig.McFlushInterval,
 			MinFailureRelaxInterval: routing.DefaultMinFailureRelaxInterval,
 		},
 	)
@@ -771,14 +876,19 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		MinProbability: routingConfig.MinRouteProbability,
 	}
 
+	sourceNode, err := chanGraph.SourceNode()
+	if err != nil {
+		return nil, fmt.Errorf("error getting source node: %v", err)
+	}
 	paymentSessionSource := &routing.SessionSource{
 		Graph:             chanGraph,
+		SourceNode:        sourceNode,
 		MissionControl:    s.missionControl,
-		QueryBandwidth:    queryBandwidth,
+		GetLink:           s.htlcSwitch.GetLinkByShortID,
 		PathFindingConfig: pathFindingConfig,
 	}
 
-	paymentControl := channeldb.NewPaymentControl(remoteChanDB)
+	paymentControl := channeldb.NewPaymentControl(dbs.ChanStateDB)
 
 	s.controlTower = routing.NewControlTower(paymentControl)
 
@@ -788,6 +898,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		Graph:               chanGraph,
 		Chain:               cc.ChainIO,
 		ChainView:           cc.ChainView,
+		Notifier:            cc.ChainNotifier,
 		Payer:               s.htlcSwitch,
 		Control:             s.controlTower,
 		MissionControl:      s.missionControl,
@@ -795,7 +906,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		ChannelPruneExpiry:  routing.DefaultChannelPruneExpiry,
 		GraphPruneInterval:  time.Hour,
 		FirstTimePruneDelay: routing.DefaultFirstTimePruneDelay,
-		QueryBandwidth:      queryBandwidth,
+		GetLink:             s.htlcSwitch.GetLinkByShortID,
 		AssumeChannelValid:  cfg.Routing.AssumeChannelValid,
 		NextPaymentID:       sequencer.NextID,
 		PathFindingConfig:   pathFindingConfig,
@@ -806,12 +917,12 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		return nil, fmt.Errorf("can't create router: %v", err)
 	}
 
-	chanSeries := discovery.NewChanSeries(s.localChanDB.ChannelGraph())
-	gossipMessageStore, err := discovery.NewMessageStore(s.remoteChanDB)
+	chanSeries := discovery.NewChanSeries(s.graphDB)
+	gossipMessageStore, err := discovery.NewMessageStore(dbs.ChanStateDB)
 	if err != nil {
 		return nil, err
 	}
-	waitingProofStore, err := channeldb.NewWaitingProofStore(s.remoteChanDB)
+	waitingProofStore, err := channeldb.NewWaitingProofStore(dbs.ChanStateDB)
 	if err != nil {
 		return nil, err
 	}
@@ -843,18 +954,18 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		PinnedSyncers:           cfg.Gossip.PinnedSyncers,
 		MaxChannelUpdateBurst:   cfg.Gossip.MaxChannelUpdateBurst,
 		ChannelUpdateInterval:   cfg.Gossip.ChannelUpdateInterval,
-	},
-		nodeKeyECDH.PubKey(),
-	)
+	}, nodeKeyDesc)
 
 	s.localChanMgr = &localchans.Manager{
 		ForAllOutgoingChannels:    s.chanRouter.ForAllOutgoingChannels,
 		PropagateChanPolicyUpdate: s.authGossiper.PropagateChanPolicyUpdate,
 		UpdateForwardingPolicies:  s.htlcSwitch.UpdateForwardingPolicies,
-		FetchChannel:              s.remoteChanDB.FetchChannel,
+		FetchChannel:              s.chanStateDB.FetchChannel,
 	}
 
-	utxnStore, err := newNurseryStore(s.cfg.ActiveNetParams.GenesisHash, remoteChanDB)
+	utxnStore, err := contractcourt.NewNurseryStore(
+		s.cfg.ActiveNetParams.GenesisHash, dbs.ChanStateDB,
+	)
 	if err != nil {
 		srvrLog.Errorf("unable to create nursery store: %v", err)
 		return nil, err
@@ -864,7 +975,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		sweep.DefaultBatchWindowDuration)
 
 	sweeperStore, err := sweep.NewSweeperStore(
-		remoteChanDB, s.cfg.ActiveNetParams.GenesisHash,
+		dbs.ChanStateDB, s.cfg.ActiveNetParams.GenesisHash,
 	)
 	if err != nil {
 		srvrLog.Errorf("unable to create sweeper store: %v", err)
@@ -888,11 +999,11 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		FeeRateBucketSize:    sweep.DefaultFeeRateBucketSize,
 	})
 
-	s.utxoNursery = newUtxoNursery(&NurseryConfig{
+	s.utxoNursery = contractcourt.NewUtxoNursery(&contractcourt.NurseryConfig{
 		ChainIO:             cc.ChainIO,
 		ConfDepth:           1,
-		FetchClosedChannels: remoteChanDB.FetchClosedChannels,
-		FetchClosedChannel:  remoteChanDB.FetchClosedChannel,
+		FetchClosedChannels: s.chanStateDB.FetchClosedChannels,
+		FetchClosedChannel:  s.chanStateDB.FetchClosedChannel,
 		Notifier:            cc.ChainNotifier,
 		PublishTransaction:  cc.Wallet.PublishTransaction,
 		Store:               utxnStore,
@@ -901,7 +1012,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	// Construct a closure that wraps the htlcswitch's CloseLink method.
 	closeLink := func(chanPoint *wire.OutPoint,
-		closureType htlcswitch.ChannelCloseType) {
+		closureType contractcourt.ChannelCloseType) {
 		// TODO(conner): Properly respect the update and error channels
 		// returned by CloseLink.
 
@@ -913,7 +1024,21 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	// We will use the following channel to reliably hand off contract
 	// breach events from the ChannelArbitrator to the breachArbiter,
-	contractBreaches := make(chan *ContractBreachEvent, 1)
+	contractBreaches := make(chan *contractcourt.ContractBreachEvent, 1)
+
+	s.breachArbiter = contractcourt.NewBreachArbiter(&contractcourt.BreachConfig{
+		CloseLink:          closeLink,
+		DB:                 s.chanStateDB,
+		Estimator:          s.cc.FeeEstimator,
+		GenSweepScript:     newSweepPkScriptGen(cc.Wallet),
+		Notifier:           cc.ChainNotifier,
+		PublishTransaction: cc.Wallet.PublishTransaction,
+		ContractBreaches:   contractBreaches,
+		Signer:             cc.Wallet.Cfg.Signer,
+		Store: contractcourt.NewRetributionStore(
+			dbs.ChanStateDB,
+		),
+	})
 
 	s.chainArb = contractcourt.NewChainArbitrator(contractcourt.ChainArbitratorConfig{
 		ChainHash:              *s.cfg.ActiveNetParams.GenesisHash,
@@ -963,8 +1088,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		},
 		IsOurAddress: cc.Wallet.IsOurAddress,
 		ContractBreach: func(chanPoint wire.OutPoint,
-			breachRet *lnwallet.BreachRetribution,
-			markClosed func() error) error {
+			breachRet *lnwallet.BreachRetribution) error {
 
 			// processACK will handle the breachArbiter ACKing the
 			// event.
@@ -976,11 +1100,12 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 				}
 
 				// If the breachArbiter successfully handled
-				// the event, we can mark the channel closed.
-				finalErr <- markClosed()
+				// the event, we can signal that the handoff
+				// was successful.
+				finalErr <- nil
 			}
 
-			event := &ContractBreachEvent{
+			event := &contractcourt.ContractBreachEvent{
 				ChanPoint:         chanPoint,
 				ProcessACK:        processACK,
 				BreachRetribution: breachRet,
@@ -993,9 +1118,8 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 				return ErrServerShuttingDown
 			}
 
-			// We'll wait for a final error to be available, either
-			// from the breachArbiter or from our markClosed
-			// function closure.
+			// We'll wait for a final error to be available from
+			// the breachArbiter.
 			select {
 			case err := <-finalErr:
 				return err
@@ -1009,23 +1133,13 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		Sweeper:                       s.sweeper,
 		Registry:                      s.invoices,
 		NotifyClosedChannel:           s.channelNotifier.NotifyClosedChannelEvent,
+		NotifyFullyResolvedChannel:    s.channelNotifier.NotifyFullyResolvedChannelEvent,
 		OnionProcessor:                s.sphinx,
 		PaymentsExpirationGracePeriod: cfg.PaymentsExpirationGracePeriod,
 		IsForwardedHTLC:               s.htlcSwitch.IsForwardedHTLC,
 		Clock:                         clock.NewDefaultClock(),
-	}, remoteChanDB)
-
-	s.breachArbiter = newBreachArbiter(&BreachConfig{
-		CloseLink:          closeLink,
-		DB:                 remoteChanDB,
-		Estimator:          s.cc.FeeEstimator,
-		GenSweepScript:     newSweepPkScriptGen(cc.Wallet),
-		Notifier:           cc.ChainNotifier,
-		PublishTransaction: cc.Wallet.PublishTransaction,
-		ContractBreaches:   contractBreaches,
-		Signer:             cc.Wallet.Cfg.Signer,
-		Store:              newRetributionStore(remoteChanDB),
-	})
+		SubscribeBreachComplete:       s.breachArbiter.SubscribeBreachComplete,
+	}, dbs.ChanStateDB)
 
 	// Select the configuration and furnding parameters for Bitcoin or
 	// Litecoin, depending on the primary registered chain.
@@ -1046,7 +1160,8 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 
 	s.fundingMgr, err = funding.NewFundingManager(funding.Config{
 		NoWumboChans:       !cfg.ProtocolOptions.Wumbo(),
-		IDKey:              nodeKeyECDH.PubKey(),
+		IDKey:              nodeKeyDesc.PubKey,
+		IDKeyLoc:           nodeKeyDesc.KeyLocator,
 		Wallet:             cc.Wallet,
 		PublishTransaction: cc.Wallet.PublishTransaction,
 		UpdateLabel: func(hash chainhash.Hash, label string) error {
@@ -1054,15 +1169,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		},
 		Notifier:     cc.ChainNotifier,
 		FeeEstimator: cc.FeeEstimator,
-		SignMessage: func(pubKey *btcec.PublicKey,
-			msg []byte) (input.Signature, error) {
-
-			if pubKey.IsEqual(nodeKeyECDH.PubKey()) {
-				return s.nodeSigner.SignMessage(pubKey, msg)
-			}
-
-			return cc.MsgSigner.SignMessage(pubKey, msg)
-		},
+		SignMessage:  cc.MsgSigner.SignMessage,
 		CurrentNodeAnnouncement: func() (lnwire.NodeAnnouncement, error) {
 			return s.genNodeAnnouncement(true)
 		},
@@ -1072,7 +1179,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		FindChannel: func(chanID lnwire.ChannelID) (
 			*channeldb.OpenChannel, error) {
 
-			dbChannels, err := remoteChanDB.FetchAllChannels()
+			dbChannels, err := s.chanStateDB.FetchAllChannels()
 			if err != nil {
 				return nil, err
 			}
@@ -1244,10 +1351,12 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 	// static backup of the latest channel state.
 	chanNotifier := &channelNotifier{
 		chanNotifier: s.channelNotifier,
-		addrs:        s.remoteChanDB,
+		addrs:        dbs.ChanStateDB,
 	}
 	backupFile := chanbackup.NewMultiFile(cfg.BackupFilePath)
-	startingChans, err := chanbackup.FetchStaticChanBackups(s.remoteChanDB)
+	startingChans, err := chanbackup.FetchStaticChanBackups(
+		s.chanStateDB, s.addrSource,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -1270,10 +1379,10 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		SubscribePeerEvents: func() (subscribe.Subscription, error) {
 			return s.peerNotifier.SubscribePeerEvents()
 		},
-		GetOpenChannels: s.remoteChanDB.FetchAllOpenChannels,
+		GetOpenChannels: s.chanStateDB.FetchAllOpenChannels,
 		Clock:           clock.NewDefaultClock(),
-		ReadFlapCount:   s.remoteChanDB.ReadFlapCount,
-		WriteFlapCount:  s.remoteChanDB.WriteFlapCounts,
+		ReadFlapCount:   s.miscDB.ReadFlapCount,
+		WriteFlapCount:  s.miscDB.WriteFlapCounts,
 		FlapCountTicker: ticker.New(chanfitness.FlapCountFlushRate),
 	})
 
@@ -1310,7 +1419,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			SecretKeyRing:  s.cc.KeyRing,
 			Dial:           cfg.net.Dial,
 			AuthDial:       authDial,
-			DB:             towerClientDB,
+			DB:             dbs.TowerClientDB,
 			Policy:         policy,
 			ChainHash:      *s.cfg.ActiveNetParams.GenesisHash,
 			MinBackoff:     10 * time.Second,
@@ -1333,7 +1442,7 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			SecretKeyRing:  s.cc.KeyRing,
 			Dial:           cfg.net.Dial,
 			AuthDial:       authDial,
-			DB:             towerClientDB,
+			DB:             dbs.TowerClientDB,
 			Policy:         anchorPolicy,
 			ChainHash:      *s.cfg.ActiveNetParams.GenesisHash,
 			MinBackoff:     10 * time.Second,
@@ -1365,9 +1474,40 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		})
 	}
 
-	// Create a set of health checks using our configured values. If a
-	// health check has been disabled by setting attempts to 0, our monitor
-	// will not run it.
+	// Create liveliness monitor.
+	s.createLivenessMonitor(cfg, cc)
+
+	// Create the connection manager which will be responsible for
+	// maintaining persistent outbound connections and also accepting new
+	// incoming connections
+	cmgr, err := connmgr.New(&connmgr.Config{
+		Listeners:      listeners,
+		OnAccept:       s.InboundPeerConnected,
+		RetryDuration:  time.Second * 5,
+		TargetOutbound: 100,
+		Dial: noiseDial(
+			nodeKeyECDH, s.cfg.net, s.cfg.ConnectionTimeout,
+		),
+		OnConnection: s.OutboundPeerConnected,
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.connMgr = cmgr
+
+	return s, nil
+}
+
+// createLivenessMonitor creates a set of health checks using our configured
+// values and uses these checks to create a liveliness monitor. Available
+// health checks,
+//   - chainHealthCheck
+//   - diskCheck
+//   - tlsHealthCheck
+//   - torController, only created when tor is enabled.
+// If a health check has been disabled by setting attempts to 0, our monitor
+// will not run it.
+func (s *server) createLivenessMonitor(cfg *Config, cc *chainreg.ChainControl) {
 	chainHealthCheck := healthcheck.NewObservation(
 		"chain backend",
 		cc.HealthCheck,
@@ -1416,11 +1556,12 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 			// If the current time is passed the certificate's
 			// expiry time, then it is considered expired
 			if time.Now().After(parsedCert.NotAfter) {
-				return fmt.Errorf("TLS certificate is expired as of %v", parsedCert.NotAfter)
+				return fmt.Errorf("TLS certificate is "+
+					"expired as of %v", parsedCert.NotAfter)
 			}
 
-			// If the certificate is not outdated, no error needs to
-			// be returned
+			// If the certificate is not outdated, no error needs
+			// to be returned
 			return nil
 		},
 		cfg.HealthChecks.TLSCheck.Interval,
@@ -1429,36 +1570,62 @@ func newServer(cfg *Config, listenAddrs []net.Addr,
 		cfg.HealthChecks.TLSCheck.Attempts,
 	)
 
+	checks := []*healthcheck.Observation{
+		chainHealthCheck, diskCheck, tlsHealthCheck,
+	}
+
+	// If Tor is enabled, add the healthcheck for tor connection.
+	if s.torController != nil {
+		torConnectionCheck := healthcheck.NewObservation(
+			"tor connection",
+			func() error {
+				return healthcheck.CheckTorServiceStatus(
+					s.torController,
+					s.createNewHiddenService,
+				)
+			},
+			cfg.HealthChecks.TorConnection.Interval,
+			cfg.HealthChecks.TorConnection.Timeout,
+			cfg.HealthChecks.TorConnection.Backoff,
+			cfg.HealthChecks.TorConnection.Attempts,
+		)
+		checks = append(checks, torConnectionCheck)
+	}
+
+	// If remote signing is enabled, add the healthcheck for the remote
+	// signing RPC interface.
+	if s.cfg.RemoteSigner != nil && s.cfg.RemoteSigner.Enable {
+		// Because we have two cascading timeouts here, we need to add
+		// some slack to the "outer" one of them in case the "inner"
+		// returns exactly on time.
+		overhead := time.Millisecond * 10
+
+		remoteSignerConnectionCheck := healthcheck.NewObservation(
+			"remote signer connection",
+			rpcwallet.HealthCheck(
+				s.cfg.RemoteSigner,
+
+				// For the health check we might to be even
+				// stricter than the initial/normal connect, so
+				// we use the health check timeout here.
+				cfg.HealthChecks.RemoteSigner.Timeout,
+			),
+			cfg.HealthChecks.RemoteSigner.Interval,
+			cfg.HealthChecks.RemoteSigner.Timeout+overhead,
+			cfg.HealthChecks.RemoteSigner.Backoff,
+			cfg.HealthChecks.RemoteSigner.Attempts,
+		)
+		checks = append(checks, remoteSignerConnectionCheck)
+	}
+
 	// If we have not disabled all of our health checks, we create a
 	// liveliness monitor with our configured checks.
 	s.livelinessMonitor = healthcheck.NewMonitor(
 		&healthcheck.Config{
-			Checks: []*healthcheck.Observation{
-				chainHealthCheck, diskCheck, tlsHealthCheck,
-			},
+			Checks:   checks,
 			Shutdown: srvrLog.Criticalf,
 		},
 	)
-
-	// Create the connection manager which will be responsible for
-	// maintaining persistent outbound connections and also accepting new
-	// incoming connections
-	cmgr, err := connmgr.New(&connmgr.Config{
-		Listeners:      listeners,
-		OnAccept:       s.InboundPeerConnected,
-		RetryDuration:  time.Second * 5,
-		TargetOutbound: 100,
-		Dial: noiseDial(
-			nodeKeyECDH, s.cfg.net, s.cfg.ConnectionTimeout,
-		),
-		OnConnection: s.OutboundPeerConnected,
-	})
-	if err != nil {
-		return nil, err
-	}
-	s.connMgr = cmgr
-
-	return s, nil
 }
 
 // Started returns true if the server has been started, and false otherwise.
@@ -1500,18 +1667,11 @@ func (s *server) Start() error {
 	cleanup := cleaner{}
 
 	s.start.Do(func() {
-		if s.torController != nil {
-			if err := s.createNewHiddenService(); err != nil {
-				startErr = err
-				return
-			}
-			cleanup = cleanup.add(s.torController.Stop)
+		if err := s.customMessageServer.Start(); err != nil {
+			startErr = err
+			return
 		}
-
-		if s.natTraversal != nil {
-			s.wg.Add(1)
-			go s.watchExternalIP()
-		}
+		cleanup = cleanup.add(s.customMessageServer.Stop)
 
 		if s.hostAnn != nil {
 			if err := s.hostAnn.Start(); err != nil {
@@ -1577,12 +1737,6 @@ func (s *server) Start() error {
 		}
 		cleanup = cleanup.add(s.htlcNotifier.Stop)
 
-		if err := s.sphinx.Start(); err != nil {
-			startErr = err
-			return
-		}
-		cleanup = cleanup.add(s.sphinx.Stop)
-
 		if s.towerClient != nil {
 			if err := s.towerClient.Start(); err != nil {
 				startErr = err
@@ -1598,12 +1752,6 @@ func (s *server) Start() error {
 			cleanup = cleanup.add(s.anchorTowerClient.Stop)
 		}
 
-		if err := s.htlcSwitch.Start(); err != nil {
-			startErr = err
-			return
-		}
-		cleanup = cleanup.add(s.htlcSwitch.Stop)
-
 		if err := s.sweeper.Start(); err != nil {
 			startErr = err
 			return
@@ -1616,17 +1764,23 @@ func (s *server) Start() error {
 		}
 		cleanup = cleanup.add(s.utxoNursery.Stop)
 
-		if err := s.chainArb.Start(); err != nil {
-			startErr = err
-			return
-		}
-		cleanup = cleanup.add(s.chainArb.Stop)
-
 		if err := s.breachArbiter.Start(); err != nil {
 			startErr = err
 			return
 		}
 		cleanup = cleanup.add(s.breachArbiter.Stop)
+
+		if err := s.fundingMgr.Start(); err != nil {
+			startErr = err
+			return
+		}
+		cleanup = cleanup.add(s.fundingMgr.Stop)
+
+		if err := s.chainArb.Start(); err != nil {
+			startErr = err
+			return
+		}
+		cleanup = cleanup.add(s.chainArb.Stop)
 
 		if err := s.authGossiper.Start(); err != nil {
 			startErr = err
@@ -1640,17 +1794,23 @@ func (s *server) Start() error {
 		}
 		cleanup = cleanup.add(s.chanRouter.Stop)
 
-		if err := s.fundingMgr.Start(); err != nil {
-			startErr = err
-			return
-		}
-		cleanup = cleanup.add(s.fundingMgr.Stop)
-
 		if err := s.invoices.Start(); err != nil {
 			startErr = err
 			return
 		}
 		cleanup = cleanup.add(s.invoices.Stop)
+
+		if err := s.sphinx.Start(); err != nil {
+			startErr = err
+			return
+		}
+		cleanup = cleanup.add(s.sphinx.Stop)
+
+		if err := s.htlcSwitch.Start(); err != nil {
+			startErr = err
+			return
+		}
+		cleanup = cleanup.add(s.htlcSwitch.Stop)
 
 		if err := s.chanStatusMgr.Start(); err != nil {
 			startErr = err
@@ -1667,12 +1827,18 @@ func (s *server) Start() error {
 			return nil
 		})
 
+		s.missionControl.RunStoreTicker()
+		cleanup.add(func() error {
+			s.missionControl.StopStoreTicker()
+			return nil
+		})
+
 		// Before we start the connMgr, we'll check to see if we have
 		// any backups to recover. We do this now as we want to ensure
 		// that have all the information we need to handle channel
 		// recovery _before_ we even accept connections from any peers.
 		chanRestorer := &chanDBRestorer{
-			db:         s.remoteChanDB,
+			db:         s.chanStateDB,
 			secretKeys: s.cc.KeyRing,
 			chainArb:   s.chainArb,
 		}
@@ -1705,11 +1871,32 @@ func (s *server) Start() error {
 		}
 		cleanup = cleanup.add(s.chanSubSwapper.Stop)
 
+		if s.torController != nil {
+			if err := s.createNewHiddenService(); err != nil {
+				startErr = err
+				return
+			}
+			cleanup = cleanup.add(s.torController.Stop)
+		}
+
+		if s.natTraversal != nil {
+			s.wg.Add(1)
+			go s.watchExternalIP()
+		}
+
+		// Start connmgr last to prevent connections before init.
 		s.connMgr.Start()
 		cleanup = cleanup.add(func() error {
 			s.connMgr.Stop()
 			return nil
 		})
+
+		// Subscribe to NodeAnnouncements that advertise new addresses
+		// our persistent peers.
+		if err := s.updatePersistentPeerAddrs(); err != nil {
+			startErr = err
+			return
+		}
 
 		// With all the relevant sub-systems started, we'll now attempt
 		// to establish persistent connections to our direct channel
@@ -1717,7 +1904,7 @@ func (s *server) Start() error {
 		// we'll prune our set of link nodes found within the database
 		// to ensure we don't reconnect to any nodes we no longer have
 		// open channels with.
-		if err := s.remoteChanDB.PruneLinkNodes(); err != nil {
+		if err := s.chanStateDB.PruneLinkNodes(); err != nil {
 			startErr = err
 			return
 		}
@@ -1787,10 +1974,7 @@ func (s *server) Start() error {
 		// configure the set of active bootstrappers, and launch a
 		// dedicated goroutine to maintain a set of persistent
 		// connections.
-		if !s.cfg.NoNetBootstrap &&
-			!(s.cfg.Bitcoin.SimNet || s.cfg.Litecoin.SimNet) &&
-			!(s.cfg.Bitcoin.RegTest || s.cfg.Litecoin.RegTest) {
-
+		if shouldPeerBootstrap(s.cfg) {
 			bootstrappers, err := initNetworkBootstrappers(s)
 			if err != nil {
 				startErr = err
@@ -1824,31 +2008,37 @@ func (s *server) Stop() error {
 
 		close(s.quit)
 
+		// Shutdown connMgr first to prevent conns during shutdown.
+		s.connMgr.Stop()
+
 		// Shutdown the wallet, funding manager, and the rpc server.
 		s.chanStatusMgr.Stop()
-		if err := s.cc.ChainNotifier.Stop(); err != nil {
-			srvrLog.Warnf("Unable to stop ChainNotifier: %v", err)
-		}
-		if err := s.chanRouter.Stop(); err != nil {
-			srvrLog.Warnf("failed to stop chanRouter: %v", err)
-		}
 		if err := s.htlcSwitch.Stop(); err != nil {
 			srvrLog.Warnf("failed to stop htlcSwitch: %v", err)
 		}
 		if err := s.sphinx.Stop(); err != nil {
 			srvrLog.Warnf("failed to stop sphinx: %v", err)
 		}
-		if err := s.utxoNursery.Stop(); err != nil {
-			srvrLog.Warnf("failed to stop utxoNursery: %v", err)
+		if err := s.invoices.Stop(); err != nil {
+			srvrLog.Warnf("failed to stop invoices: %v", err)
+		}
+		if err := s.chanRouter.Stop(); err != nil {
+			srvrLog.Warnf("failed to stop chanRouter: %v", err)
+		}
+		if err := s.chainArb.Stop(); err != nil {
+			srvrLog.Warnf("failed to stop chainArb: %v", err)
+		}
+		if err := s.fundingMgr.Stop(); err != nil {
+			srvrLog.Warnf("failed to stop fundingMgr: %v", err)
 		}
 		if err := s.breachArbiter.Stop(); err != nil {
 			srvrLog.Warnf("failed to stop breachArbiter: %v", err)
 		}
+		if err := s.utxoNursery.Stop(); err != nil {
+			srvrLog.Warnf("failed to stop utxoNursery: %v", err)
+		}
 		if err := s.authGossiper.Stop(); err != nil {
 			srvrLog.Warnf("failed to stop authGossiper: %v", err)
-		}
-		if err := s.chainArb.Stop(); err != nil {
-			srvrLog.Warnf("failed to stop chainArb: %v", err)
 		}
 		if err := s.sweeper.Stop(); err != nil {
 			srvrLog.Warnf("failed to stop sweeper: %v", err)
@@ -1862,17 +2052,14 @@ func (s *server) Stop() error {
 		if err := s.htlcNotifier.Stop(); err != nil {
 			srvrLog.Warnf("failed to stop htlcNotifier: %v", err)
 		}
-		s.connMgr.Stop()
-		if err := s.invoices.Stop(); err != nil {
-			srvrLog.Warnf("failed to stop invoices: %v", err)
-		}
-		if err := s.fundingMgr.Stop(); err != nil {
-			srvrLog.Warnf("failed to stop fundingMgr: %v", err)
-		}
 		if err := s.chanSubSwapper.Stop(); err != nil {
 			srvrLog.Warnf("failed to stop chanSubSwapper: %v", err)
 		}
+		if err := s.cc.ChainNotifier.Stop(); err != nil {
+			srvrLog.Warnf("Unable to stop ChainNotifier: %v", err)
+		}
 		s.chanEventStore.Stop()
+		s.missionControl.StopStoreTicker()
 
 		// Disconnect from each active peers to ensure that
 		// peerTerminationWatchers signal completion to each peer.
@@ -2126,7 +2313,7 @@ func initNetworkBootstrappers(s *server) ([]discovery.NetworkPeerBootstrapper, e
 	// First, we'll create an instance of the ChannelGraphBootstrapper as
 	// this can be used by default if we've already partially seeded the
 	// network.
-	chanGraph := autopilot.ChannelGraphFromDatabase(s.localChanDB.ChannelGraph())
+	chanGraph := autopilot.ChannelGraphFromDatabase(s.graphDB)
 	graphBootstrapper, err := discovery.NewGraphBootstrapper(chanGraph)
 	if err != nil {
 		return nil, err
@@ -2154,6 +2341,39 @@ func initNetworkBootstrappers(s *server) ([]discovery.NetworkPeerBootstrapper, e
 	return bootStrappers, nil
 }
 
+// createBootstrapIgnorePeers creates a map of peers that the bootstrap process
+// needs to ignore, which is made of three parts,
+//   - the node itself needs to be skipped as it doesn't make sense to connect
+//     to itself.
+//   - the peers that already have connections with, as in s.peersByPub.
+//   - the peers that we are attempting to connect, as in s.persistentPeers.
+func (s *server) createBootstrapIgnorePeers() map[autopilot.NodeID]struct{} {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	ignore := make(map[autopilot.NodeID]struct{})
+
+	// We should ignore ourselves from bootstrapping.
+	selfKey := autopilot.NewNodeID(s.identityECDH.PubKey())
+	ignore[selfKey] = struct{}{}
+
+	// Ignore all connected peers.
+	for _, peer := range s.peersByPub {
+		nID := autopilot.NewNodeID(peer.IdentityKey())
+		ignore[nID] = struct{}{}
+	}
+
+	// Ignore all persistent peers as they have a dedicated reconnecting
+	// process.
+	for pubKeyStr := range s.persistentPeers {
+		var nID autopilot.NodeID
+		copy(nID[:], []byte(pubKeyStr))
+		ignore[nID] = struct{}{}
+	}
+
+	return ignore
+}
+
 // peerBootstrapper is a goroutine which is tasked with attempting to establish
 // and maintain a target minimum number of outbound connections. With this
 // invariant, we ensure that our node is connected to a diverse set of peers
@@ -2164,13 +2384,12 @@ func (s *server) peerBootstrapper(numTargetPeers uint32,
 
 	defer s.wg.Done()
 
-	// ignore is a set used to keep track of peers already retrieved from
-	// our bootstrappers in order to avoid duplicates.
-	ignore := make(map[autopilot.NodeID]struct{})
+	// Before we continue, init the ignore peers map.
+	ignoreList := s.createBootstrapIgnorePeers()
 
 	// We'll start off by aggressively attempting connections to peers in
 	// order to be a part of the network as soon as possible.
-	s.initialPeerBootstrap(ignore, numTargetPeers, bootstrappers)
+	s.initialPeerBootstrap(ignoreList, numTargetPeers, bootstrappers)
 
 	// Once done, we'll attempt to maintain our target minimum number of
 	// peers.
@@ -2242,13 +2461,10 @@ func (s *server) peerBootstrapper(numTargetPeers uint32,
 			// With the number of peers we need calculated, we'll
 			// query the network bootstrappers to sample a set of
 			// random addrs for us.
-			s.mu.RLock()
-			ignoreList := make(map[autopilot.NodeID]struct{})
-			for _, peer := range s.peersByPub {
-				nID := autopilot.NewNodeID(peer.IdentityKey())
-				ignoreList[nID] = struct{}{}
-			}
-			s.mu.RUnlock()
+			//
+			// Before we continue, get a copy of the ignore peers
+			// map.
+			ignoreList = s.createBootstrapIgnorePeers()
 
 			peerAddrs, err := discovery.MultiSourceBootstrap(
 				ignoreList, numNeeded*2, bootstrappers...,
@@ -2301,7 +2517,11 @@ const bootstrapBackOffCeiling = time.Minute * 5
 // until the target number of peers has been reached. This ensures that nodes
 // receive an up to date network view as soon as possible.
 func (s *server) initialPeerBootstrap(ignore map[autopilot.NodeID]struct{},
-	numTargetPeers uint32, bootstrappers []discovery.NetworkPeerBootstrapper) {
+	numTargetPeers uint32,
+	bootstrappers []discovery.NetworkPeerBootstrapper) {
+
+	srvrLog.Debugf("Init bootstrap with targetPeers=%v, bootstrappers=%v, "+
+		"ignore=%v", numTargetPeers, len(bootstrappers), len(ignore))
 
 	// We'll start off by waiting 2 seconds between failed attempts, then
 	// double each time we fail until we hit the bootstrapBackOffCeiling.
@@ -2463,7 +2683,7 @@ func (s *server) createNewHiddenService() error {
 		AuthSigBytes: newNodeAnn.Signature.ToSignatureBytes(),
 	}
 	copy(selfNode.PubKeyBytes[:], s.identityECDH.PubKey().SerializeCompressed())
-	if err := s.localChanDB.ChannelGraph().SetSourceNode(selfNode); err != nil {
+	if err := s.graphDB.SetSourceNode(selfNode); err != nil {
 		return fmt.Errorf("can't set self node: %v", err)
 	}
 
@@ -2492,7 +2712,7 @@ func (s *server) genNodeAnnouncement(refresh bool,
 	// Otherwise, we'll sign a new update after applying all of the passed
 	// modifiers.
 	err := netann.SignNodeAnnouncement(
-		s.nodeSigner, s.identityECDH.PubKey(), s.currentNodeAnn,
+		s.nodeSigner, s.identityKeyLoc, s.currentNodeAnn,
 		modifiers...,
 	)
 	if err != nil {
@@ -2520,7 +2740,7 @@ func (s *server) establishPersistentConnections() error {
 	// Iterate through the list of LinkNodes to find addresses we should
 	// attempt to connect to based on our set of previous connections. Set
 	// the reconnection port to the default peer port.
-	linkNodes, err := s.remoteChanDB.FetchAllLinkNodes()
+	linkNodes, err := s.chanStateDB.LinkNodeDB().FetchAllLinkNodes()
 	if err != nil && err != channeldb.ErrLinkNodesNotFound {
 		return err
 	}
@@ -2536,8 +2756,7 @@ func (s *server) establishPersistentConnections() error {
 	// After checking our previous connections for addresses to connect to,
 	// iterate through the nodes in our channel graph to find addresses
 	// that have been added via NodeAnnouncement messages.
-	chanGraph := s.localChanDB.ChannelGraph()
-	sourceNode, err := chanGraph.SourceNode()
+	sourceNode, err := s.graphDB.SourceNode()
 	if err != nil {
 		return err
 	}
@@ -2627,6 +2846,9 @@ func (s *server) establishPersistentConnections() error {
 		return err
 	}
 
+	srvrLog.Debugf("Establishing %v persistent connections on start",
+		len(nodeAddrsMap))
+
 	// Acquire and hold server lock until all persistent connection requests
 	// have been recorded and sent to the connection manager.
 	s.mu.Lock()
@@ -2654,34 +2876,24 @@ func (s *server) establishPersistentConnections() error {
 				IdentityKey: nodeAddr.pubKey,
 				Address:     address,
 			}
-			srvrLog.Debugf("Attempting persistent connection to "+
-				"channel peer %v", lnAddr)
 
-			// Send the persistent connection request to the
-			// connection manager, saving the request itself so we
-			// can cancel/restart the process as needed.
-			connReq := &connmgr.ConnReq{
-				Addr:      lnAddr,
-				Permanent: true,
-			}
+			s.persistentPeerAddrs[pubStr] = append(
+				s.persistentPeerAddrs[pubStr], lnAddr)
+		}
 
-			s.persistentConnReqs[pubStr] = append(
-				s.persistentConnReqs[pubStr], connReq)
+		// We'll connect to the first 10 peers immediately, then
+		// randomly stagger any remaining connections if the
+		// stagger initial reconnect flag is set. This ensures
+		// that mobile nodes or nodes with a small number of
+		// channels obtain connectivity quickly, but larger
+		// nodes are able to disperse the costs of connecting to
+		// all peers at once.
+		if numOutboundConns < numInstantInitReconnect ||
+			!s.cfg.StaggerInitialReconnect {
 
-			// We'll connect to the first 10 peers immediately, then
-			// randomly stagger any remaining connections if the
-			// stagger initial reconnect flag is set. This ensures
-			// that mobile nodes or nodes with a small number of
-			// channels obtain connectivity quickly, but larger
-			// nodes are able to disperse the costs of connecting to
-			// all peers at once.
-			if numOutboundConns < numInstantInitReconnect ||
-				!s.cfg.StaggerInitialReconnect {
-
-				go s.connMgr.Connect(connReq)
-			} else {
-				go s.delayInitialReconnect(connReq)
-			}
+			go s.connectToPersistentPeer(pubStr)
+		} else {
+			go s.delayInitialReconnect(pubStr)
 		}
 
 		numOutboundConns++
@@ -2690,16 +2902,15 @@ func (s *server) establishPersistentConnections() error {
 	return nil
 }
 
-// delayInitialReconnect will attempt a reconnection using the passed connreq
-// after sampling a value for the delay between 0s and the
-// maxInitReconnectDelay.
+// delayInitialReconnect will attempt a reconnection to the given peer after
+// sampling a value for the delay between 0s and the maxInitReconnectDelay.
 //
 // NOTE: This method MUST be run as a goroutine.
-func (s *server) delayInitialReconnect(connReq *connmgr.ConnReq) {
+func (s *server) delayInitialReconnect(pubStr string) {
 	delay := time.Duration(prand.Intn(maxInitReconnectDelay)) * time.Second
 	select {
 	case <-time.After(delay):
-		s.connMgr.Connect(connReq)
+		s.connectToPersistentPeer(pubStr)
 	case <-s.quit:
 	}
 }
@@ -2714,6 +2925,7 @@ func (s *server) prunePersistentPeerConnection(compressedPubKey [33]byte) {
 	if perm, ok := s.persistentPeers[pubKeyStr]; ok && !perm {
 		delete(s.persistentPeers, pubKeyStr)
 		delete(s.persistentPeersBackoff, pubKeyStr)
+		delete(s.persistentPeerAddrs, pubKeyStr)
 		s.cancelConnReqs(pubKeyStr, nil)
 		s.mu.Unlock()
 
@@ -2955,10 +3167,10 @@ func (s *server) InboundPeerConnected(conn net.Conn) {
 
 	// If we already have an outbound connection to this peer, then ignore
 	// this new connection.
-	if _, ok := s.outboundPeers[pubStr]; ok {
-		srvrLog.Debugf("Already have outbound connection for %x, "+
-			"ignoring inbound connection",
-			nodePub.SerializeCompressed())
+	if p, ok := s.outboundPeers[pubStr]; ok {
+		srvrLog.Debugf("Already have outbound connection for %v, "+
+			"ignoring inbound connection from local=%v, remote=%v",
+			p, conn.LocalAddr(), conn.RemoteAddr())
 
 		conn.Close()
 		return
@@ -2967,8 +3179,9 @@ func (s *server) InboundPeerConnected(conn net.Conn) {
 	// If we already have a valid connection that is scheduled to take
 	// precedence once the prior peer has finished disconnecting, we'll
 	// ignore this connection.
-	if _, ok := s.scheduledPeerConnection[pubStr]; ok {
-		srvrLog.Debugf("Ignoring connection, peer already scheduled")
+	if p, ok := s.scheduledPeerConnection[pubStr]; ok {
+		srvrLog.Debugf("Ignoring connection from %v, peer %v already "+
+			"scheduled", conn.RemoteAddr(), p)
 		conn.Close()
 		return
 	}
@@ -3041,10 +3254,10 @@ func (s *server) OutboundPeerConnected(connReq *connmgr.ConnReq, conn net.Conn) 
 
 	// If we already have an inbound connection to this peer, then ignore
 	// this new connection.
-	if _, ok := s.inboundPeers[pubStr]; ok {
-		srvrLog.Debugf("Already have inbound connection for %x, "+
-			"ignoring outbound connection",
-			nodePub.SerializeCompressed())
+	if p, ok := s.inboundPeers[pubStr]; ok {
+		srvrLog.Debugf("Already have inbound connection for %v, "+
+			"ignoring outbound connection from local=%v, remote=%v",
+			p, conn.LocalAddr(), conn.RemoteAddr())
 
 		if connReq != nil {
 			s.connMgr.Remove(connReq.ID())
@@ -3165,6 +3378,8 @@ func (s *server) cancelConnReqs(pubStr string, skip *uint64) {
 	}
 
 	for _, connReq := range connReqs {
+		srvrLog.Tracef("Canceling %s:", connReqs)
+
 		// Atomically capture the current request identifier.
 		connID := connReq.ID()
 
@@ -3183,6 +3398,24 @@ func (s *server) cancelConnReqs(pubStr string, skip *uint64) {
 	}
 
 	delete(s.persistentConnReqs, pubStr)
+}
+
+// handleCustomMessage dispatches an incoming custom peers message to
+// subscribers.
+func (s *server) handleCustomMessage(peer [33]byte, msg *lnwire.Custom) error {
+	srvrLog.Debugf("Custom message received: peer=%x, type=%d",
+		peer, msg.Type)
+
+	return s.customMessageServer.SendUpdate(&CustomMessage{
+		Peer: peer,
+		Msg:  msg,
+	})
+}
+
+// SubscribeCustomMessages subscribes to a stream of incoming custom peer
+// messages.
+func (s *server) SubscribeCustomMessages() (*subscribe.Client, error) {
+	return s.customMessageServer.Subscribe()
 }
 
 // peerConnected is a function that handles initialization a newly connected
@@ -3243,8 +3476,8 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 		ReadPool:                s.readPool,
 		Switch:                  s.htlcSwitch,
 		InterceptSwitch:         s.interceptableSwitch,
-		ChannelDB:               s.remoteChanDB,
-		ChannelGraph:            s.localChanDB.ChannelGraph(),
+		ChannelDB:               s.chanStateDB,
+		ChannelGraph:            s.graphDB,
 		ChainArb:                s.chainArb,
 		AuthGossiper:            s.authGossiper,
 		ChanStatusMgr:           s.chanStatusMgr,
@@ -3265,6 +3498,8 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 		DisconnectPeer:          s.DisconnectPeer,
 		GenNodeAnnouncement:     s.genNodeAnnouncement,
 
+		PongBuf: s.pongBuf,
+
 		PrunePersistentPeerConnection: s.prunePersistentPeerConnection,
 
 		FetchLastChanUpdate: s.fetchLastChanUpdate(),
@@ -3280,6 +3515,7 @@ func (s *server) peerConnected(conn net.Conn, connReq *connmgr.ConnReq,
 			s.cfg.MaxCommitFeeRateAnchors * 1000).FeePerKWeight(),
 		ChannelCommitInterval:  s.cfg.ChannelCommitInterval,
 		ChannelCommitBatchSize: s.cfg.ChannelCommitBatchSize,
+		HandleCustomMessage:    s.handleCustomMessage,
 		Quit:                   s.quit,
 	}
 
@@ -3489,95 +3725,210 @@ func (s *server) peerTerminationWatcher(p *peer.Brontide, ready chan struct{}) {
 	s.removePeer(p)
 
 	// Next, check to see if this is a persistent peer or not.
-	_, ok := s.persistentPeers[pubStr]
-	if ok {
-		// We'll only need to re-launch a connection request if one
-		// isn't already currently pending.
-		if _, ok := s.persistentConnReqs[pubStr]; ok {
+	if _, ok := s.persistentPeers[pubStr]; !ok {
+		return
+	}
+
+	// Get the last address that we used to connect to the peer.
+	addrs := []net.Addr{
+		p.NetAddress().Address,
+	}
+
+	// We'll ensure that we locate all the peers advertised addresses for
+	// reconnection purposes.
+	advertisedAddrs, err := s.fetchNodeAdvertisedAddrs(pubKey)
+	switch {
+	// We found advertised addresses, so use them.
+	case err == nil:
+		addrs = advertisedAddrs
+
+	// The peer doesn't have an advertised address.
+	case err == errNoAdvertisedAddr:
+		// If it is an outbound peer then we fall back to the existing
+		// peer address.
+		if !p.Inbound() {
+			break
+		}
+
+		// Fall back to the existing peer address if
+		// we're not accepting connections over Tor.
+		if s.torController == nil {
+			break
+		}
+
+		// If we are, the peer's address won't be known
+		// to us (we'll see a private address, which is
+		// the address used by our onion service to dial
+		// to lnd), so we don't have enough information
+		// to attempt a reconnect.
+		srvrLog.Debugf("Ignoring reconnection attempt "+
+			"to inbound peer %v without "+
+			"advertised address", p)
+		return
+
+	// We came across an error retrieving an advertised
+	// address, log it, and fall back to the existing peer
+	// address.
+	default:
+		srvrLog.Errorf("Unable to retrieve advertised "+
+			"address for node %x: %v", p.PubKey(),
+			err)
+	}
+
+	// Make an easy lookup map so that we can check if an address
+	// is already in the address list that we have stored for this peer.
+	existingAddrs := make(map[string]bool)
+	for _, addr := range s.persistentPeerAddrs[pubStr] {
+		existingAddrs[addr.String()] = true
+	}
+
+	// Add any missing addresses for this peer to persistentPeerAddr.
+	for _, addr := range addrs {
+		if existingAddrs[addr.String()] {
+			continue
+		}
+
+		s.persistentPeerAddrs[pubStr] = append(
+			s.persistentPeerAddrs[pubStr],
+			&lnwire.NetAddress{
+				IdentityKey: p.IdentityKey(),
+				Address:     addr,
+				ChainNet:    p.NetAddress().ChainNet,
+			},
+		)
+	}
+
+	// Record the computed backoff in the backoff map.
+	backoff := s.nextPeerBackoff(pubStr, p.StartTime())
+	s.persistentPeersBackoff[pubStr] = backoff
+
+	// Initialize a retry canceller for this peer if one does not
+	// exist.
+	cancelChan, ok := s.persistentRetryCancels[pubStr]
+	if !ok {
+		cancelChan = make(chan struct{})
+		s.persistentRetryCancels[pubStr] = cancelChan
+	}
+
+	// We choose not to wait group this go routine since the Connect
+	// call can stall for arbitrarily long if we shutdown while an
+	// outbound connection attempt is being made.
+	go func() {
+		srvrLog.Debugf("Scheduling connection re-establishment to "+
+			"persistent peer %x in %s",
+			p.IdentityKey().SerializeCompressed(), backoff)
+
+		select {
+		case <-time.After(backoff):
+		case <-cancelChan:
+			return
+		case <-s.quit:
 			return
 		}
 
-		// We'll ensure that we locate an advertised address to use
-		// within the peer's address for reconnection purposes.
-		//
-		// TODO(roasbeef): use them all?
-		if p.Inbound() {
-			advertisedAddr, err := s.fetchNodeAdvertisedAddr(pubKey)
-			switch {
-			// We found an advertised address, so use it.
-			case err == nil:
-				p.SetAddress(advertisedAddr)
+		srvrLog.Debugf("Attempting to re-establish persistent "+
+			"connection to peer %x",
+			p.IdentityKey().SerializeCompressed())
 
-			// The peer doesn't have an advertised address.
-			case err == errNoAdvertisedAddr:
-				// Fall back to the existing peer address if
-				// we're not accepting connections over Tor.
-				if s.torController == nil {
-					break
-				}
+		s.connectToPersistentPeer(pubStr)
+	}()
+}
 
-				// If we are, the peer's address won't be known
-				// to us (we'll see a private address, which is
-				// the address used by our onion service to dial
-				// to lnd), so we don't have enough information
-				// to attempt a reconnect.
-				srvrLog.Debugf("Ignoring reconnection attempt "+
-					"to inbound peer %v without "+
-					"advertised address", p)
-				return
+// connectToPersistentPeer uses all the stored addresses for a peer to attempt
+// to connect to the peer. It creates connection requests if there are
+// currently none for a given address and it removes old connection requests
+// if the associated address is no longer in the latest address list for the
+// peer.
+func (s *server) connectToPersistentPeer(pubKeyStr string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-			// We came across an error retrieving an advertised
-			// address, log it, and fall back to the existing peer
-			// address.
-			default:
-				srvrLog.Errorf("Unable to retrieve advertised "+
-					"address for node %x: %v", p.PubKey(),
-					err)
+	// Create an easy lookup map of the addresses we have stored for the
+	// peer. We will remove entries from this map if we have existing
+	// connection requests for the associated address and then any leftover
+	// entries will indicate which addresses we should create new
+	// connection requests for.
+	addrMap := make(map[string]*lnwire.NetAddress)
+	for _, addr := range s.persistentPeerAddrs[pubKeyStr] {
+		addrMap[addr.String()] = addr
+	}
+
+	// Go through each of the existing connection requests and
+	// check if they correspond to the latest set of addresses. If
+	// there is a connection requests that does not use one of the latest
+	// advertised addresses then remove that connection request.
+	var updatedConnReqs []*connmgr.ConnReq
+	for _, connReq := range s.persistentConnReqs[pubKeyStr] {
+		lnAddr := connReq.Addr.(*lnwire.NetAddress).Address.String()
+
+		switch _, ok := addrMap[lnAddr]; ok {
+		// If the existing connection request is using one of the
+		// latest advertised addresses for the peer then we add it to
+		// updatedConnReqs and remove the associated address from
+		// addrMap so that we don't recreate this connReq later on.
+		case true:
+			updatedConnReqs = append(
+				updatedConnReqs, connReq,
+			)
+			delete(addrMap, lnAddr)
+
+		// If the existing connection request is using an address that
+		// is not one of the latest advertised addresses for the peer
+		// then we remove the connecting request from the connection
+		// manager.
+		case false:
+			srvrLog.Info(
+				"Removing conn req:", connReq.Addr.String(),
+			)
+			s.connMgr.Remove(connReq.ID())
+		}
+	}
+
+	s.persistentConnReqs[pubKeyStr] = updatedConnReqs
+
+	cancelChan, ok := s.persistentRetryCancels[pubKeyStr]
+	if !ok {
+		cancelChan = make(chan struct{})
+		s.persistentRetryCancels[pubKeyStr] = cancelChan
+	}
+
+	// Any addresses left in addrMap are new ones that we have not made
+	// connection requests for. So create new connection requests for those.
+	// If there is more than one address in the address map, stagger the
+	// creation of the connection requests for those.
+	go func() {
+		ticker := time.NewTicker(multiAddrConnectionStagger)
+		defer ticker.Stop()
+
+		for _, addr := range addrMap {
+			// Send the persistent connection request to the
+			// connection manager, saving the request itself so we
+			// can cancel/restart the process as needed.
+			connReq := &connmgr.ConnReq{
+				Addr:      addr,
+				Permanent: true,
 			}
-		}
 
-		// Otherwise, we'll launch a new connection request in order to
-		// attempt to maintain a persistent connection with this peer.
-		connReq := &connmgr.ConnReq{
-			Addr:      p.NetAddress(),
-			Permanent: true,
-		}
-		s.persistentConnReqs[pubStr] = append(
-			s.persistentConnReqs[pubStr], connReq)
+			s.mu.Lock()
+			s.persistentConnReqs[pubKeyStr] = append(
+				s.persistentConnReqs[pubKeyStr], connReq,
+			)
+			s.mu.Unlock()
 
-		// Record the computed backoff in the backoff map.
-		backoff := s.nextPeerBackoff(pubStr, p.StartTime())
-		s.persistentPeersBackoff[pubStr] = backoff
+			srvrLog.Debugf("Attempting persistent connection to "+
+				"channel peer %v", addr)
 
-		// Initialize a retry canceller for this peer if one does not
-		// exist.
-		cancelChan, ok := s.persistentRetryCancels[pubStr]
-		if !ok {
-			cancelChan = make(chan struct{})
-			s.persistentRetryCancels[pubStr] = cancelChan
-		}
-
-		// We choose not to wait group this go routine since the Connect
-		// call can stall for arbitrarily long if we shutdown while an
-		// outbound connection attempt is being made.
-		go func() {
-			srvrLog.Debugf("Scheduling connection re-establishment to "+
-				"persistent peer %v in %s", p, backoff)
+			go s.connMgr.Connect(connReq)
 
 			select {
-			case <-time.After(backoff):
-			case <-cancelChan:
-				return
 			case <-s.quit:
 				return
+			case <-cancelChan:
+				return
+			case <-ticker.C:
 			}
-
-			srvrLog.Debugf("Attempting to re-establish persistent "+
-				"connection to peer %v", p)
-
-			s.connMgr.Connect(connReq)
-		}()
-	}
+		}
+	}()
 }
 
 // removePeer removes the passed peer from the server's state of all active
@@ -3659,14 +4010,13 @@ func (s *server) ConnectToPeer(addr *lnwire.NetAddress,
 	// connection.
 	if reqs, ok := s.persistentConnReqs[targetPub]; ok {
 		srvrLog.Warnf("Already have %d persistent connection "+
-			"requests for %x@%v, connecting anyway.", len(reqs),
-			targetPub, addr)
+			"requests for %v, connecting anyway.", len(reqs), addr)
 	}
 
 	// If there's not already a pending or active connection to this node,
 	// then instruct the connection manager to attempt to establish a
 	// persistent connection to the peer.
-	srvrLog.Debugf("Connecting to %x@%v", targetPub, addr)
+	srvrLog.Debugf("Connecting to %v", addr)
 	if perm {
 		connReq := &connmgr.ConnReq{
 			Addr:      addr,
@@ -3726,6 +4076,9 @@ func (s *server) connectToPeer(addr *lnwire.NetAddress,
 	}
 
 	close(errChan)
+
+	srvrLog.Tracef("Brontide dialer made local=%v, remote=%v",
+		conn.LocalAddr(), conn.RemoteAddr())
 
 	s.OutboundPeerConnected(nil, conn)
 }
@@ -3895,14 +4248,14 @@ func computeNextBackoff(currBackoff, maxBackoff time.Duration) time.Duration {
 // advertised address of a node, but they don't have one.
 var errNoAdvertisedAddr = errors.New("no advertised address found")
 
-// fetchNodeAdvertisedAddr attempts to fetch an advertised address of a node.
-func (s *server) fetchNodeAdvertisedAddr(pub *btcec.PublicKey) (net.Addr, error) {
+// fetchNodeAdvertisedAddrs attempts to fetch the advertised addresses of a node.
+func (s *server) fetchNodeAdvertisedAddrs(pub *btcec.PublicKey) ([]net.Addr, error) {
 	vertex, err := route.NewVertexFromBytes(pub.SerializeCompressed())
 	if err != nil {
 		return nil, err
 	}
 
-	node, err := s.localChanDB.ChannelGraph().FetchLightningNode(nil, vertex)
+	node, err := s.graphDB.FetchLightningNode(vertex)
 	if err != nil {
 		return nil, err
 	}
@@ -3911,7 +4264,7 @@ func (s *server) fetchNodeAdvertisedAddr(pub *btcec.PublicKey) (net.Addr, error)
 		return nil, errNoAdvertisedAddr
 	}
 
-	return node.Addresses[0], nil
+	return node.Addresses, nil
 }
 
 // fetchLastChanUpdate returns a function which is able to retrieve our latest
@@ -3944,6 +4297,35 @@ func (s *server) applyChannelUpdate(update *lnwire.ChannelUpdate) error {
 	}
 }
 
+// SendCustomMessage sends a custom message to the peer with the specified
+// pubkey.
+func (s *server) SendCustomMessage(peerPub [33]byte, msgType lnwire.MessageType,
+	data []byte) error {
+
+	peer, err := s.FindPeerByPubStr(string(peerPub[:]))
+	if err != nil {
+		return err
+	}
+
+	// We'll wait until the peer is active.
+	select {
+	case <-peer.ActiveSignal():
+	case <-peer.QuitSignal():
+		return fmt.Errorf("peer %x disconnected", peerPub)
+	case <-s.quit:
+		return ErrServerShuttingDown
+	}
+
+	msg, err := lnwire.NewCustom(msgType, data)
+	if err != nil {
+		return err
+	}
+
+	// Send the message as low-priority. For now we assume that all
+	// application-defined message are low priority.
+	return peer.SendMessageLazy(true, msg)
+}
+
 // newSweepPkScriptGen creates closure that generates a new public key script
 // which should be used to sweep any funds into the on-chain wallet.
 // Specifically, the script generated is a version 0, pay-to-witness-pubkey-hash
@@ -3961,4 +4343,18 @@ func newSweepPkScriptGen(
 
 		return txscript.PayToAddrScript(sweepAddr)
 	}
+}
+
+// shouldPeerBootstrap returns true if we should attempt to perform peer
+// boostrapping to actively seek our peers using the set of active network
+// bootsrappers.
+func shouldPeerBootstrap(cfg *Config) bool {
+	isSimnet := (cfg.Bitcoin.SimNet || cfg.Litecoin.SimNet)
+	isSignet := (cfg.Bitcoin.SigNet || cfg.Litecoin.SigNet)
+	isRegtest := (cfg.Bitcoin.RegTest || cfg.Litecoin.RegTest)
+	isDevNetwork := isSimnet || isSignet || isRegtest
+
+	// TODO(yy): remove the check on simnet/regtest such that the itest is
+	// covering the bootstrapping process.
+	return !cfg.NoNetBootstrap && !isDevNetwork
 }

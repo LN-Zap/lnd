@@ -1,3 +1,4 @@
+//go:build !bitcoind && !neutrino
 // +build !bitcoind,!neutrino
 
 package lntest
@@ -6,7 +7,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
+	"strings"
 
 	"github.com/btcsuite/btcd/btcjson"
 	"github.com/btcsuite/btcd/chaincfg"
@@ -87,6 +90,8 @@ func NewBackend(miner string, netParams *chaincfg.Params) (
 		// its requested data are not found. We add a nobanning flag to
 		// make sure they stay connected if it happens.
 		"--nobanning",
+		// Don't disconnect if a reply takes too long.
+		"--nostalldetect",
 	}
 	chainBackend, err := rpctest.New(netParams, nil, args, GetBtcdBinary())
 	if err != nil {
@@ -118,15 +123,30 @@ func NewBackend(miner string, netParams *chaincfg.Params) (
 		}
 
 		// After shutting down the chain backend, we'll make a copy of
-		// the log file before deleting the temporary log dir.
-		logFile := baseLogDir + "/" + netParams.Name + "/btcd.log"
-		logDestination := fmt.Sprintf(
-			"%s/output_btcd_chainbackend.log", GetLogDir(),
-		)
-		err := CopyFile(logDestination, logFile)
+		// the log files, including any compressed log files from
+		// logrorate, before deleting the temporary log dir.
+		logDir := fmt.Sprintf("%s/%s", baseLogDir, netParams.Name)
+		files, err := ioutil.ReadDir(logDir)
 		if err != nil {
-			errStr += fmt.Sprintf("unable to copy file: %v\n", err)
+			errStr += fmt.Sprintf(
+				"unable to read log directory: %v\n", err,
+			)
 		}
+
+		for _, file := range files {
+			logFile := fmt.Sprintf("%s/%s", logDir, file.Name())
+			newFilename := strings.Replace(
+				file.Name(), "btcd.log", "output_btcd_chainbackend.log", 1,
+			)
+			logDestination := fmt.Sprintf(
+				"%s/%s", GetLogDir(), newFilename,
+			)
+			err := CopyFile(logDestination, logFile)
+			if err != nil {
+				errStr += fmt.Sprintf("unable to copy file: %v\n", err)
+			}
+		}
+
 		if err = os.RemoveAll(baseLogDir); err != nil {
 			errStr += fmt.Sprintf(
 				"cannot remove dir %s: %v\n", baseLogDir, err,

@@ -23,15 +23,13 @@ func testHtlcErrorPropagation(net *lntest.NetworkHarness, t *harnessTest) {
 
 	// First establish a channel with a capacity of 0.5 BTC between Alice
 	// and Bob.
-	ctxt, _ := context.WithTimeout(ctxb, channelOpenTimeout)
 	chanPointAlice := openChannelAndAssert(
-		ctxt, t, net, net.Alice, net.Bob,
+		t, net, net.Alice, net.Bob,
 		lntest.OpenChannelParams{
 			Amt: chanAmt,
 		},
 	)
-	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	if err := net.Alice.WaitForNetworkChannelOpen(ctxt, chanPointAlice); err != nil {
+	if err := net.Alice.WaitForNetworkChannelOpen(chanPointAlice); err != nil {
 		t.Fatalf("channel not seen by alice before timeout: %v", err)
 	}
 
@@ -40,7 +38,7 @@ func testHtlcErrorPropagation(net *lntest.NetworkHarness, t *harnessTest) {
 		t.Fatalf("unable to get channel type: %v", err)
 	}
 
-	commitFee := cType.calcStaticFee(0)
+	commitFee := calcStaticFee(cType, 0)
 	assertBaseBalance := func() {
 		// Alice has opened a channel with Bob with zero push amount, so
 		// it's remote balance is zero.
@@ -94,12 +92,10 @@ func testHtlcErrorPropagation(net *lntest.NetworkHarness, t *harnessTest) {
 	// channel between them so we have the topology: Alice -> Bob -> Carol.
 	// The channel created will be of lower capacity that the one created
 	// above.
-	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	net.ConnectNodes(ctxt, t.t, net.Bob, carol)
-	ctxt, _ = context.WithTimeout(ctxb, channelOpenTimeout)
+	net.ConnectNodes(t.t, net.Bob, carol)
 	const bobChanAmt = funding.MaxBtcFundingAmount
 	chanPointBob := openChannelAndAssert(
-		ctxt, t, net, net.Bob, carol,
+		t, net, net.Bob, carol,
 		lntest.OpenChannelParams{
 			Amt: chanAmt,
 		},
@@ -118,7 +114,7 @@ out:
 	for {
 		select {
 		case <-checkTableTicker.C:
-			ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
+			ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
 			_, err := net.Alice.GetNodeInfo(ctxt, nodeInfoReq)
 			if err != nil && strings.Contains(err.Error(),
 				"unable to find") {
@@ -141,7 +137,7 @@ out:
 		Memo:  "kek99",
 		Value: payAmt,
 	}
-	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
+	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
 	carolInvoice, err := carol.AddInvoice(ctxt, invoiceReq)
 	if err != nil {
 		t.Fatalf("unable to generate carol invoice: %v", err)
@@ -157,8 +153,7 @@ out:
 
 	// Before we send the payment, ensure that the announcement of the new
 	// channel has been processed by Alice.
-	ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
-	if err := net.Alice.WaitForNetworkChannelOpen(ctxt, chanPointBob); err != nil {
+	if err := net.Alice.WaitForNetworkChannelOpen(chanPointBob); err != nil {
 		t.Fatalf("channel not seen by alice before timeout: %v", err)
 	}
 
@@ -292,10 +287,8 @@ out:
 			t.Fatalf("unable to generate carol invoice: %v", err)
 		}
 
-		ctxt, _ = context.WithTimeout(ctxb, defaultTimeout)
 		sendAndAssertSuccess(
-			ctxt, t, net.Bob,
-			&routerrpc.SendPaymentRequest{
+			t, net.Bob, &routerrpc.SendPaymentRequest{
 				PaymentRequest: carolInvoice2.PaymentRequest,
 				TimeoutSeconds: 60,
 				FeeLimitMsat:   noFeeLimitMsat,
@@ -401,12 +394,10 @@ out:
 	// Finally, immediately close the channel. This function will also
 	// block until the channel is closed and will additionally assert the
 	// relevant channel closing post conditions.
-	ctxt, _ = context.WithTimeout(ctxb, channelCloseTimeout)
-	closeChannelAndAssert(ctxt, t, net, net.Alice, chanPointAlice, false)
+	closeChannelAndAssert(t, net, net.Alice, chanPointAlice, false)
 
 	// Force close Bob's final channel.
-	ctxt, _ = context.WithTimeout(ctxb, channelCloseTimeout)
-	closeChannelAndAssert(ctxt, t, net, net.Bob, chanPointBob, true)
+	closeChannelAndAssert(t, net, net.Bob, chanPointBob, true)
 
 	// Cleanup by mining the force close and sweep transaction.
 	cleanupForceClose(t, net, net.Bob, chanPointBob)

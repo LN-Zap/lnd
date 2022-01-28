@@ -2,9 +2,13 @@
 // implemented in this file:
 // https://github.com/etcd-io/bbolt/blob/master/cmd/bbolt/main.go
 
+//go:build !js
+// +build !js
+
 package kvdb
 
 import (
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path"
@@ -76,7 +80,7 @@ func (cmd *compacter) execute() (int64, int64, error) {
 		return 0, 0, fmt.Errorf("could not start compaction, "+
 			"destination folder %s only has %d bytes of free disk "+
 			"space available while we need at least %d for worst-"+
-			"case compaction", destFolder, freeSpace, initialSize)
+			"case compaction", destFolder, freeSpace, uint64(marginSize))
 	}
 
 	// Open source database. We open it in read only mode to avoid (and fix)
@@ -216,13 +220,38 @@ func (cmd *compacter) walk(db *bbolt.DB, walkFn walkFunc) error {
 		return tx.ForEach(func(name []byte, b *bbolt.Bucket) error {
 			// This will log the top level buckets only to give the
 			// user some sense of progress.
-			log.Debugf("Compacting top level bucket %s", name)
+			log.Debugf("Compacting top level bucket '%s'",
+				LoggableKeyName(name))
 
 			return cmd.walkBucket(
 				b, nil, name, nil, b.Sequence(), walkFn,
 			)
 		})
 	})
+}
+
+// LoggableKeyName returns a printable name of the given key.
+func LoggableKeyName(key []byte) string {
+	strKey := string(key)
+	if hasSpecialChars(strKey) {
+		return hex.EncodeToString(key)
+	}
+
+	return strKey
+}
+
+// hasSpecialChars returns true if any of the characters in the given string
+// cannot be printed.
+func hasSpecialChars(s string) bool {
+	for _, b := range s {
+		if !(b >= 'a' && b <= 'z') && !(b >= 'A' && b <= 'Z') &&
+			!(b >= '0' && b <= '9') && b != '-' && b != '_' {
+
+			return true
+		}
+	}
+
+	return false
 }
 
 // walkBucket recursively walks through a bucket.

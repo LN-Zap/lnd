@@ -1,17 +1,21 @@
+//go:build invoicesrpc
 // +build invoicesrpc
 
 package invoicesrpc
 
 import (
 	"context"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"gopkg.in/macaroon-bakery.v2/bakery"
 
-	"github.com/grpc-ecosystem/grpc-gateway/runtime"
+	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lntypes"
@@ -58,6 +62,10 @@ var (
 			Entity: "invoices",
 			Action: "write",
 		}},
+		"/invoicesrpc.Invoices/LookupInvoiceV2": {{
+			Entity: "invoices",
+			Action: "write",
+		}},
 	}
 
 	// DefaultInvoicesMacFilename is the default name of the invoices
@@ -77,6 +85,9 @@ type ServerShell struct {
 // RPC server allows external callers to access the status of the invoices
 // currently active within lnd, as well as configuring it at runtime.
 type Server struct {
+	// Required by the grpc-gateway/v2 library for forward compatibility.
+	UnimplementedInvoicesServer
+
 	quit chan struct{}
 
 	cfg *Config
@@ -313,8 +324,8 @@ func (s *Server) AddHoldInvoice(ctx context.Context,
 		ChainParams:           s.cfg.ChainParams,
 		NodeSigner:            s.cfg.NodeSigner,
 		DefaultCLTVExpiry:     s.cfg.DefaultCLTVExpiry,
-		ChanDB:                s.cfg.RemoteChanDB,
-		Graph:                 s.cfg.LocalChanDB.ChannelGraph(),
+		ChanDB:                s.cfg.ChanStateDB,
+		Graph:                 s.cfg.GraphDB,
 		GenInvoiceFeatures:    s.cfg.GenInvoiceFeatures,
 		GenAmpInvoiceFeatures: s.cfg.GenAmpInvoiceFeatures,
 	}
@@ -354,6 +365,76 @@ func (s *Server) AddHoldInvoice(ctx context.Context,
 	}
 
 	return &AddHoldInvoiceResp{
+		AddIndex:       dbInvoice.AddIndex,
 		PaymentRequest: string(dbInvoice.PaymentRequest),
+		PaymentAddr:    dbInvoice.Terms.PaymentAddr[:],
 	}, nil
+}
+
+// LookupInvoiceV2 attempts to look up at invoice. An invoice can be referenced
+// using either its payment hash, payment address, or set ID.
+func (s *Server) LookupInvoiceV2(ctx context.Context,
+	req *LookupInvoiceMsg) (*lnrpc.Invoice, error) {
+
+	var invoiceRef channeldb.InvoiceRef
+
+	// First, we'll attempt to parse out the invoice ref from the proto
+	// oneof.  If none of the three currently supported types was
+	// specified, then we'll exit with an error.
+	switch {
+	case req.GetPaymentHash() != nil:
+		payHash, err := lntypes.MakeHash(req.GetPaymentHash())
+		if err != nil {
+			return nil, status.Error(
+				codes.InvalidArgument,
+				fmt.Sprintf("unable to parse pay hash: %v", err),
+			)
+		}
+
+		invoiceRef = channeldb.InvoiceRefByHash(payHash)
+
+	case req.GetPaymentAddr() != nil &&
+		req.LookupModifier == LookupModifier_HTLC_SET_BLANK:
+
+		var payAddr [32]byte
+		copy(payAddr[:], req.GetPaymentAddr())
+
+		invoiceRef = channeldb.InvoiceRefByAddrBlankHtlc(payAddr)
+
+	case req.GetPaymentAddr() != nil:
+		var payAddr [32]byte
+		copy(payAddr[:], req.GetPaymentAddr())
+
+		invoiceRef = channeldb.InvoiceRefByAddr(payAddr)
+
+	case req.GetSetId() != nil &&
+		req.LookupModifier == LookupModifier_HTLC_SET_ONLY:
+
+		var setID [32]byte
+		copy(setID[:], req.GetSetId())
+
+		invoiceRef = channeldb.InvoiceRefBySetIDFiltered(setID)
+
+	case req.GetSetId() != nil:
+		var setID [32]byte
+		copy(setID[:], req.GetSetId())
+
+		invoiceRef = channeldb.InvoiceRefBySetID(setID)
+
+	default:
+		return nil, status.Error(codes.InvalidArgument,
+			"invoice ref must be set")
+	}
+
+	// Attempt to locate the invoice, returning a nice "not found" error if
+	// we can't find it in the database.
+	invoice, err := s.cfg.InvoiceRegistry.LookupInvoiceByRef(invoiceRef)
+	switch {
+	case err == channeldb.ErrInvoiceNotFound:
+		return nil, status.Error(codes.NotFound, err.Error())
+	case err != nil:
+		return nil, err
+	}
+
+	return CreateRPCInvoice(&invoice, s.cfg.ChainParams)
 }

@@ -1,3 +1,4 @@
+//go:build kvdb_etcd
 // +build kvdb_etcd
 
 package etcd
@@ -96,11 +97,6 @@ func (c *readWriteCursor) Prev() (key, value []byte) {
 // not exist, the cursor is moved to the next key after seek.  Returns
 // the new pair.
 func (c *readWriteCursor) Seek(seek []byte) (key, value []byte) {
-	// Return nil if trying to seek to an empty key.
-	if seek == nil {
-		return nil, nil
-	}
-
 	// Seek to the first key with prefix + seek. If that key is not present
 	// STM will seek to the next matching key with prefix.
 	kv, err := c.bucket.tx.stm.Seek(c.prefix, c.prefix+string(seek))
@@ -121,22 +117,10 @@ func (c *readWriteCursor) Seek(seek []byte) (key, value []byte) {
 // invalidating the cursor.  Returns ErrIncompatibleValue if attempted
 // when the cursor points to a nested bucket.
 func (c *readWriteCursor) Delete() error {
-	// Get the next key after the current one. We could do this
-	// after deletion too but it's one step more efficient here.
-	nextKey, err := c.bucket.tx.stm.Next(c.prefix, c.currKey)
-	if err != nil {
-		return err
-	}
-
 	if isBucketKey(c.currKey) {
 		c.bucket.DeleteNestedBucket(getKey(c.currKey))
 	} else {
 		c.bucket.Delete(getKey(c.currKey))
-	}
-
-	if nextKey != nil {
-		// Set current key to the next one.
-		c.currKey = nextKey.key
 	}
 
 	return nil

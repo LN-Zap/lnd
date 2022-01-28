@@ -9,12 +9,6 @@ import (
 
 	"github.com/btcsuite/btcwallet/chain"
 	"github.com/btcsuite/btcwallet/wallet"
-
-	// This is required to register bdb as a valid walletdb driver. In the
-	// init function of the package, it registers itself. The import is used
-	// to activate the side effects w/o actually binding the package name to
-	// a file-level variable.
-	_ "github.com/btcsuite/btcwallet/walletdb/bdb"
 )
 
 var (
@@ -78,6 +72,17 @@ type Config struct {
 	// CoinSelectionStrategy is the strategy that is used for selecting
 	// coins when funding a transaction.
 	CoinSelectionStrategy wallet.CoinSelectionStrategy
+
+	// WatchOnly indicates that the wallet was initialized with public key
+	// material only and does not contain any private keys.
+	WatchOnly bool
+
+	// MigrateWatchOnly indicates that if a wallet with private key material
+	// already exists, it should be attempted to be converted into a
+	// watch-only wallet on first startup. This flag has no effect if no
+	// wallet exists and a watch-only one is created directly, or, if the
+	// wallet was previously converted to a watch-only already.
+	MigrateWatchOnly bool
 }
 
 // NetworkDir returns the directory name of a network directory to hold wallet

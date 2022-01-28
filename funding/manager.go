@@ -23,7 +23,6 @@ import (
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/keychain"
-	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/labels"
 	"github.com/lightningnetwork/lnd/lnpeer"
 	"github.com/lightningnetwork/lnd/lnrpc"
@@ -147,6 +146,10 @@ type reservationWithCtx struct {
 	// maxLocalCsv is the maximum csv we will accept from the remote.
 	maxLocalCsv uint16
 
+	// channelType is the explicit channel type proposed by the initiator of
+	// the channel.
+	channelType *lnwire.ChannelType
+
 	updateMtx   sync.RWMutex
 	lastUpdated time.Time
 
@@ -240,6 +243,11 @@ type InitFundingMsg struct {
 	// protocol.
 	PendingChanID [32]byte
 
+	// ChannelType allows the caller to use an explicit channel type for the
+	// funding negotiation. This type will only be observed if BOTH sides
+	// support explicit channel type negotiation.
+	ChannelType *lnwire.ChannelType
+
 	// Updates is a channel which updates to the opening status of the channel
 	// are sent on.
 	Updates chan *lnrpc.OpenStatusUpdate
@@ -286,6 +294,10 @@ type Config struct {
 	// Lightning Network.
 	IDKey *btcec.PublicKey
 
+	// IDKeyLoc is the locator for the key that is used to identify this
+	// node within the LightningNetwork.
+	IDKeyLoc keychain.KeyLocator
+
 	// Wallet handles the parts of the funding process that involves moving
 	// funds from on-chain transaction outputs into Lightning channels.
 	Wallet *lnwallet.LightningWallet
@@ -314,8 +326,8 @@ type Config struct {
 	//
 	// TODO(roasbeef): should instead pass on this responsibility to a
 	// distinct sub-system?
-	SignMessage func(pubKey *btcec.PublicKey,
-		msg []byte) (input.Signature, error)
+	SignMessage func(keyLoc keychain.KeyLocator,
+		msg []byte, doubleHash bool) (*btcec.Signature, error)
 
 	// CurrentNodeAnnouncement should return the latest, fully signed node
 	// announcement from the backing Lightning Network node.
@@ -541,18 +553,18 @@ const (
 	addedToRouterGraph
 )
 
-var (
-	// channelOpeningStateBucket is the database bucket used to store the
-	// channelOpeningState for each channel that is currently in the process
-	// of being opened.
-	channelOpeningStateBucket = []byte("channelOpeningState")
-
-	// ErrChannelNotFound is an error returned when a channel is not known
-	// to us. In this case of the fundingManager, this error is returned
-	// when the channel in question is not considered being in an opening
-	// state.
-	ErrChannelNotFound = fmt.Errorf("channel not found")
-)
+func (c channelOpeningState) String() string {
+	switch c {
+	case markedOpen:
+		return "markedOpen"
+	case fundingLockedSent:
+		return "fundingLocked"
+	case addedToRouterGraph:
+		return "addedToRouterGraph"
+	default:
+		return "unknown"
+	}
+}
 
 // NewFundingManager creates and initializes a new instance of the
 // fundingManager.
@@ -878,7 +890,7 @@ func (f *Manager) advanceFundingState(channel *channeldb.OpenChannel,
 		channelState, shortChanID, err := f.getChannelOpeningState(
 			&channel.FundingOutpoint,
 		)
-		if err == ErrChannelNotFound {
+		if err == channeldb.ErrChannelNotFound {
 			// Channel not in fundingManager's opening database,
 			// meaning it was successfully announced to the
 			// network.
@@ -1132,43 +1144,6 @@ func (f *Manager) ProcessFundingMsg(msg lnwire.Message, peer lnpeer.Peer) {
 	}
 }
 
-// commitmentType returns the commitment type to use for the channel, based on
-// the features the two peers have available.
-func commitmentType(localFeatures,
-	remoteFeatures *lnwire.FeatureVector) lnwallet.CommitmentType {
-
-	// If both peers are signalling support for anchor commitments with
-	// zero-fee HTLC transactions, we'll use this type.
-	localZeroFee := localFeatures.HasFeature(
-		lnwire.AnchorsZeroFeeHtlcTxOptional,
-	)
-	remoteZeroFee := remoteFeatures.HasFeature(
-		lnwire.AnchorsZeroFeeHtlcTxOptional,
-	)
-	if localZeroFee && remoteZeroFee {
-		return lnwallet.CommitmentTypeAnchorsZeroFeeHtlcTx
-	}
-
-	// Since we don't want to support the "legacy" anchor type, we will
-	// fall back to static remote key if the nodes don't support the zero
-	// fee HTLC tx anchor type.
-	localTweakless := localFeatures.HasFeature(
-		lnwire.StaticRemoteKeyOptional,
-	)
-	remoteTweakless := remoteFeatures.HasFeature(
-		lnwire.StaticRemoteKeyOptional,
-	)
-
-	// If both nodes are signaling the proper feature bit for tweakless
-	// copmmitments, we'll use that.
-	if localTweakless && remoteTweakless {
-		return lnwallet.CommitmentTypeTweakless
-	}
-
-	// Otherwise we'll fall back to the legacy type.
-	return lnwallet.CommitmentTypeLegacy
-}
-
 // handleFundingOpen creates an initial 'ChannelReservation' within the wallet,
 // then responds to the source peer with an accept channel message progressing
 // the funding workflow.
@@ -1309,10 +1284,27 @@ func (f *Manager) handleFundingOpen(peer lnpeer.Peer,
 	//
 	// Before we init the channel, we'll also check to see what commitment
 	// format we can use with this peer. This is dependent on *both* us and
-	// the remote peer are signaling the proper feature bit.
-	commitType := commitmentType(
-		peer.LocalFeatures(), peer.RemoteFeatures(),
+	// the remote peer are signaling the proper feature bit if we're using
+	// implicit negotiation, and simply the channel type sent over if we're
+	// using explicit negotiation.
+	wasExplicit, _, commitType, err := negotiateCommitmentType(
+		msg.ChannelType, peer.LocalFeatures(), peer.RemoteFeatures(),
+		false,
 	)
+	if err != nil {
+		// TODO(roasbeef): should be using soft errors
+		log.Errorf("channel type negotiation failed: %v", err)
+		f.failFundingFlow(peer, msg.PendingChannelID, err)
+		return
+	}
+
+	// Only echo back a channel type in AcceptChannel if we actually used
+	// explicit negotiation above.
+	var chanTypeFeatureBits *lnwire.ChannelType
+	if wasExplicit {
+		chanTypeFeatureBits = msg.ChannelType
+	}
+
 	chainHash := chainhash.Hash(msg.ChainHash)
 	req := &lnwallet.InitFundingReserveMsg{
 		ChainHash:        &chainHash,
@@ -1393,6 +1385,28 @@ func (f *Manager) handleFundingOpen(peer lnpeer.Peer,
 	}
 	reservation.SetOurUpfrontShutdown(shutdown)
 
+	// If a script enforced channel lease is being proposed, we'll need to
+	// validate its custom TLV records.
+	if commitType == lnwallet.CommitmentTypeScriptEnforcedLease {
+		if msg.LeaseExpiry == nil {
+			err := errors.New("missing lease expiry")
+			f.failFundingFlow(peer, msg.PendingChannelID, err)
+			return
+		}
+
+		// If we had a shim registered for this channel prior to
+		// receiving its corresponding OpenChannel message, then we'll
+		// validate the proposed LeaseExpiry against what was registered
+		// in our shim.
+		if reservation.LeaseExpiry() != 0 {
+			if uint32(*msg.LeaseExpiry) != reservation.LeaseExpiry() {
+				err := errors.New("lease expiry mismatch")
+				f.failFundingFlow(peer, msg.PendingChannelID, err)
+				return
+			}
+		}
+	}
+
 	log.Infof("Requiring %v confirmations for pendingChan(%x): "+
 		"amt=%v, push_amt=%v, committype=%v, upfrontShutdown=%x", numConfsReq,
 		msg.PendingChannelID, amt, msg.PushAmount,
@@ -1454,6 +1468,7 @@ func (f *Manager) handleFundingOpen(peer lnpeer.Peer,
 		remoteMaxValue: remoteMaxValue,
 		remoteMaxHtlcs: maxHtlcs,
 		maxLocalCsv:    f.cfg.MaxLocalCSVDelay,
+		channelType:    msg.ChannelType,
 		err:            make(chan error, 1),
 		peer:           peer,
 	}
@@ -1526,6 +1541,8 @@ func (f *Manager) handleFundingOpen(peer lnpeer.Peer,
 		HtlcPoint:             ourContribution.HtlcBasePoint.PubKey,
 		FirstCommitmentPoint:  ourContribution.FirstCommitmentPoint,
 		UpfrontShutdownScript: ourContribution.UpfrontShutdown,
+		ChannelType:           chanTypeFeatureBits,
+		LeaseExpiry:           msg.LeaseExpiry,
 	}
 
 	if err := peer.SendMessage(true, &fundingAccept); err != nil {
@@ -1556,6 +1573,72 @@ func (f *Manager) handleFundingAccept(peer lnpeer.Peer,
 
 	log.Infof("Recv'd fundingResponse for pending_id(%x)",
 		pendingChanID[:])
+
+	// Perform some basic validation of any custom TLV records included.
+	//
+	// TODO: Return errors as funding.Error to give context to remote peer?
+	if resCtx.channelType != nil {
+		// We'll want to quickly check that the ChannelType echoed by
+		// the channel request recipient matches what we proposed.
+		if msg.ChannelType == nil {
+			err := errors.New("explicit channel type not echoed back")
+			f.failFundingFlow(peer, msg.PendingChannelID, err)
+			return
+		}
+		proposedFeatures := lnwire.RawFeatureVector(*resCtx.channelType)
+		ackedFeatures := lnwire.RawFeatureVector(*msg.ChannelType)
+		if !proposedFeatures.Equals(&ackedFeatures) {
+			err := errors.New("channel type mismatch")
+			f.failFundingFlow(peer, msg.PendingChannelID, err)
+			return
+		}
+
+		// We'll want to do the same with the LeaseExpiry if one should
+		// be set.
+		if resCtx.reservation.LeaseExpiry() != 0 {
+			if msg.LeaseExpiry == nil {
+				err := errors.New("lease expiry not echoed back")
+				f.failFundingFlow(peer, msg.PendingChannelID, err)
+				return
+			}
+			if uint32(*msg.LeaseExpiry) != resCtx.reservation.LeaseExpiry() {
+				err := errors.New("lease expiry mismatch")
+				f.failFundingFlow(peer, msg.PendingChannelID, err)
+				return
+			}
+		}
+	} else if msg.ChannelType != nil {
+		// The spec isn't too clear about whether it's okay to set the
+		// channel type in the accept_channel response if we didn't
+		// explicitly set it in the open_channel message. For now, let's
+		// just log the problem instead of failing the funding flow.
+		_, implicitChannelType := implicitNegotiateCommitmentType(
+			peer.LocalFeatures(), peer.RemoteFeatures(),
+		)
+
+		// We pass in false here as the funder since at this point, we
+		// didn't set a chan type ourselves, so falling back to
+		// implicit funding is acceptable.
+		_, _, negotiatedChannelType, err := negotiateCommitmentType(
+			msg.ChannelType, peer.LocalFeatures(),
+			peer.RemoteFeatures(), false,
+		)
+		if err != nil {
+			err := errors.New("received unexpected channel type")
+			f.failFundingFlow(peer, msg.PendingChannelID, err)
+			return
+		}
+
+		// Even though we don't expect a channel type to be set when we
+		// didn't send one in the first place, we check that it's the
+		// same type we'd have arrived through implicit negotiation. If
+		// it's another type, we fail the flow.
+		if implicitChannelType != negotiatedChannelType {
+			err := errors.New("negotiated unexpected channel type")
+			f.failFundingFlow(peer, msg.PendingChannelID, err)
+			return
+		}
+	}
 
 	// The required number of confirmations should not be greater than the
 	// maximum number of confirmations required by the ChainNotifier to
@@ -2531,7 +2614,7 @@ func (f *Manager) addToRouterGraph(completeChan *channeldb.OpenChannel,
 
 	ann, err := f.newChanAnnouncement(
 		f.cfg.IDKey, completeChan.IdentityPub,
-		completeChan.LocalChanCfg.MultiSigKey.PubKey,
+		&completeChan.LocalChanCfg.MultiSigKey,
 		completeChan.RemoteChanCfg.MultiSigKey.PubKey, *shortChanID,
 		chanID, fwdMinHTLC, fwdMaxHTLC,
 	)
@@ -2694,7 +2777,7 @@ func (f *Manager) annAfterSixConfs(completeChan *channeldb.OpenChannel,
 		// public and usable for other nodes for routing.
 		err = f.announceChannel(
 			f.cfg.IDKey, completeChan.IdentityPub,
-			completeChan.LocalChanCfg.MultiSigKey.PubKey,
+			&completeChan.LocalChanCfg.MultiSigKey,
 			completeChan.RemoteChanCfg.MultiSigKey.PubKey,
 			*shortChanID, chanID,
 		)
@@ -2703,7 +2786,7 @@ func (f *Manager) annAfterSixConfs(completeChan *channeldb.OpenChannel,
 		}
 
 		log.Debugf("Channel with ChannelPoint(%v), short_chan_id=%v "+
-			"announced", &fundingPoint, shortChanID)
+			"sent to gossiper", &fundingPoint, shortChanID)
 	}
 
 	return nil
@@ -2834,10 +2917,11 @@ type chanAnnouncement struct {
 // identity pub keys of both parties to the channel, and the second segment is
 // authenticated only by us and contains our directional routing policy for the
 // channel.
-func (f *Manager) newChanAnnouncement(localPubKey, remotePubKey,
-	localFundingKey, remoteFundingKey *btcec.PublicKey,
-	shortChanID lnwire.ShortChannelID, chanID lnwire.ChannelID,
-	fwdMinHTLC, fwdMaxHTLC lnwire.MilliSatoshi) (*chanAnnouncement, error) {
+func (f *Manager) newChanAnnouncement(localPubKey,
+	remotePubKey *btcec.PublicKey, localFundingKey *keychain.KeyDescriptor,
+	remoteFundingKey *btcec.PublicKey, shortChanID lnwire.ShortChannelID,
+	chanID lnwire.ChannelID, fwdMinHTLC,
+	fwdMaxHTLC lnwire.MilliSatoshi) (*chanAnnouncement, error) {
 
 	chainHash := *f.cfg.Wallet.Cfg.NetParams.GenesisHash
 
@@ -2865,7 +2949,7 @@ func (f *Manager) newChanAnnouncement(localPubKey, remotePubKey,
 	if bytes.Compare(selfBytes, remoteBytes) == -1 {
 		copy(chanAnn.NodeID1[:], localPubKey.SerializeCompressed())
 		copy(chanAnn.NodeID2[:], remotePubKey.SerializeCompressed())
-		copy(chanAnn.BitcoinKey1[:], localFundingKey.SerializeCompressed())
+		copy(chanAnn.BitcoinKey1[:], localFundingKey.PubKey.SerializeCompressed())
 		copy(chanAnn.BitcoinKey2[:], remoteFundingKey.SerializeCompressed())
 
 		// If we're the first node then update the chanFlags to
@@ -2875,7 +2959,7 @@ func (f *Manager) newChanAnnouncement(localPubKey, remotePubKey,
 		copy(chanAnn.NodeID1[:], remotePubKey.SerializeCompressed())
 		copy(chanAnn.NodeID2[:], localPubKey.SerializeCompressed())
 		copy(chanAnn.BitcoinKey1[:], remoteFundingKey.SerializeCompressed())
-		copy(chanAnn.BitcoinKey2[:], localFundingKey.SerializeCompressed())
+		copy(chanAnn.BitcoinKey2[:], localFundingKey.PubKey.SerializeCompressed())
 
 		// If we're the second node then update the chanFlags to
 		// indicate the "direction" of the update.
@@ -2914,7 +2998,7 @@ func (f *Manager) newChanAnnouncement(localPubKey, remotePubKey,
 	if err != nil {
 		return nil, err
 	}
-	sig, err := f.cfg.SignMessage(f.cfg.IDKey, chanUpdateMsg)
+	sig, err := f.cfg.SignMessage(f.cfg.IDKeyLoc, chanUpdateMsg, true)
 	if err != nil {
 		return nil, errors.Errorf("unable to generate channel "+
 			"update announcement signature: %v", err)
@@ -2936,12 +3020,14 @@ func (f *Manager) newChanAnnouncement(localPubKey, remotePubKey,
 	if err != nil {
 		return nil, err
 	}
-	nodeSig, err := f.cfg.SignMessage(f.cfg.IDKey, chanAnnMsg)
+	nodeSig, err := f.cfg.SignMessage(f.cfg.IDKeyLoc, chanAnnMsg, true)
 	if err != nil {
 		return nil, errors.Errorf("unable to generate node "+
 			"signature for channel announcement: %v", err)
 	}
-	bitcoinSig, err := f.cfg.SignMessage(localFundingKey, chanAnnMsg)
+	bitcoinSig, err := f.cfg.SignMessage(
+		localFundingKey.KeyLocator, chanAnnMsg, true,
+	)
 	if err != nil {
 		return nil, errors.Errorf("unable to generate bitcoin "+
 			"signature for node public key: %v", err)
@@ -2977,7 +3063,8 @@ func (f *Manager) newChanAnnouncement(localPubKey, remotePubKey,
 // the network during its next trickle.
 // This method is synchronous and will return when all the network requests
 // finish, either successfully or with an error.
-func (f *Manager) announceChannel(localIDKey, remoteIDKey, localFundingKey,
+func (f *Manager) announceChannel(localIDKey, remoteIDKey *btcec.PublicKey,
+	localFundingKey *keychain.KeyDescriptor,
 	remoteFundingKey *btcec.PublicKey, shortChanID lnwire.ShortChannelID,
 	chanID lnwire.ChannelID) error {
 
@@ -3184,9 +3271,15 @@ func (f *Manager) handleInitFundingMsg(msg *InitFundingMsg) {
 	// Before we init the channel, we'll also check to see what commitment
 	// format we can use with this peer. This is dependent on *both* us and
 	// the remote peer are signaling the proper feature bit.
-	commitType := commitmentType(
-		msg.Peer.LocalFeatures(), msg.Peer.RemoteFeatures(),
+	_, chanType, commitType, err := negotiateCommitmentType(
+		msg.ChannelType, msg.Peer.LocalFeatures(),
+		msg.Peer.RemoteFeatures(), true,
 	)
+	if err != nil {
+		log.Errorf("channel type negotiation failed: %v", err)
+		msg.Err <- err
+		return
+	}
 
 	// First, we'll query the fee estimator for a fee that should get the
 	// commitment transaction confirmed by the next few blocks (conf target
@@ -3200,9 +3293,8 @@ func (f *Manager) handleInitFundingMsg(msg *InitFundingMsg) {
 
 	// For anchor channels cap the initial commit fee rate at our defined
 	// maximum.
-	if commitType == lnwallet.CommitmentTypeAnchorsZeroFeeHtlcTx &&
+	if commitType.HasAnchors() &&
 		commitFeePerKw > f.cfg.MaxAnchorsCommitFeeRate {
-
 		commitFeePerKw = f.cfg.MaxAnchorsCommitFeeRate
 	}
 
@@ -3278,6 +3370,7 @@ func (f *Manager) handleInitFundingMsg(msg *InitFundingMsg) {
 		remoteMaxValue: maxValue,
 		remoteMaxHtlcs: maxHtlcs,
 		maxLocalCsv:    maxCSV,
+		channelType:    msg.ChannelType,
 		reservation:    reservation,
 		peer:           msg.Peer,
 		updates:        msg.Updates,
@@ -3304,6 +3397,14 @@ func (f *Manager) handleInitFundingMsg(msg *InitFundingMsg) {
 	// remote party.
 	chanReserve := f.cfg.RequiredRemoteChanReserve(capacity, ourDustLimit)
 
+	// When opening a script enforced channel lease, include the required
+	// expiry TLV record in our proposal.
+	var leaseExpiry *lnwire.LeaseExpiry
+	if commitType == lnwallet.CommitmentTypeScriptEnforcedLease {
+		leaseExpiry = new(lnwire.LeaseExpiry)
+		*leaseExpiry = lnwire.LeaseExpiry(reservation.LeaseExpiry())
+	}
+
 	log.Infof("Starting funding workflow with %v for pending_id(%x), "+
 		"committype=%v", msg.Peer.Address(), chanID, commitType)
 
@@ -3327,6 +3428,8 @@ func (f *Manager) handleInitFundingMsg(msg *InitFundingMsg) {
 		FirstCommitmentPoint:  ourContribution.FirstCommitmentPoint,
 		ChannelFlags:          channelFlags,
 		UpfrontShutdownScript: shutdown,
+		ChannelType:           chanType,
+		LeaseExpiry:           leaseExpiry,
 	}
 	if err := msg.Peer.SendMessage(true, &fundingOpen); err != nil {
 		e := fmt.Errorf("unable to send funding request message: %v",
@@ -3537,26 +3640,20 @@ func copyPubKey(pub *btcec.PublicKey) *btcec.PublicKey {
 // chanPoint to the channelOpeningStateBucket.
 func (f *Manager) saveChannelOpeningState(chanPoint *wire.OutPoint,
 	state channelOpeningState, shortChanID *lnwire.ShortChannelID) error {
-	return kvdb.Update(f.cfg.Wallet.Cfg.Database, func(tx kvdb.RwTx) error {
 
-		bucket, err := tx.CreateTopLevelBucket(channelOpeningStateBucket)
-		if err != nil {
-			return err
-		}
+	var outpointBytes bytes.Buffer
+	if err := WriteOutpoint(&outpointBytes, chanPoint); err != nil {
+		return err
+	}
 
-		var outpointBytes bytes.Buffer
-		if err = WriteOutpoint(&outpointBytes, chanPoint); err != nil {
-			return err
-		}
-
-		// Save state and the uint64 representation of the shortChanID
-		// for later use.
-		scratch := make([]byte, 10)
-		byteOrder.PutUint16(scratch[:2], uint16(state))
-		byteOrder.PutUint64(scratch[2:], shortChanID.ToUint64())
-
-		return bucket.Put(outpointBytes.Bytes(), scratch)
-	}, func() {})
+	// Save state and the uint64 representation of the shortChanID
+	// for later use.
+	scratch := make([]byte, 10)
+	byteOrder.PutUint16(scratch[:2], uint16(state))
+	byteOrder.PutUint64(scratch[2:], shortChanID.ToUint64())
+	return f.cfg.Wallet.Cfg.Database.SaveChannelOpeningState(
+		outpointBytes.Bytes(), scratch,
+	)
 }
 
 // getChannelOpeningState fetches the channelOpeningState for the provided
@@ -3565,51 +3662,31 @@ func (f *Manager) saveChannelOpeningState(chanPoint *wire.OutPoint,
 func (f *Manager) getChannelOpeningState(chanPoint *wire.OutPoint) (
 	channelOpeningState, *lnwire.ShortChannelID, error) {
 
-	var state channelOpeningState
-	var shortChanID lnwire.ShortChannelID
-	err := kvdb.View(f.cfg.Wallet.Cfg.Database, func(tx kvdb.RTx) error {
+	var outpointBytes bytes.Buffer
+	if err := WriteOutpoint(&outpointBytes, chanPoint); err != nil {
+		return 0, nil, err
+	}
 
-		bucket := tx.ReadBucket(channelOpeningStateBucket)
-		if bucket == nil {
-			// If the bucket does not exist, it means we never added
-			//  a channel to the db, so return ErrChannelNotFound.
-			return ErrChannelNotFound
-		}
-
-		var outpointBytes bytes.Buffer
-		if err := WriteOutpoint(&outpointBytes, chanPoint); err != nil {
-			return err
-		}
-
-		value := bucket.Get(outpointBytes.Bytes())
-		if value == nil {
-			return ErrChannelNotFound
-		}
-
-		state = channelOpeningState(byteOrder.Uint16(value[:2]))
-		shortChanID = lnwire.NewShortChanIDFromInt(byteOrder.Uint64(value[2:]))
-		return nil
-	}, func() {})
+	value, err := f.cfg.Wallet.Cfg.Database.GetChannelOpeningState(
+		outpointBytes.Bytes(),
+	)
 	if err != nil {
 		return 0, nil, err
 	}
 
+	state := channelOpeningState(byteOrder.Uint16(value[:2]))
+	shortChanID := lnwire.NewShortChanIDFromInt(byteOrder.Uint64(value[2:]))
 	return state, &shortChanID, nil
 }
 
 // deleteChannelOpeningState removes any state for chanPoint from the database.
 func (f *Manager) deleteChannelOpeningState(chanPoint *wire.OutPoint) error {
-	return kvdb.Update(f.cfg.Wallet.Cfg.Database, func(tx kvdb.RwTx) error {
-		bucket := tx.ReadWriteBucket(channelOpeningStateBucket)
-		if bucket == nil {
-			return fmt.Errorf("bucket not found")
-		}
+	var outpointBytes bytes.Buffer
+	if err := WriteOutpoint(&outpointBytes, chanPoint); err != nil {
+		return err
+	}
 
-		var outpointBytes bytes.Buffer
-		if err := WriteOutpoint(&outpointBytes, chanPoint); err != nil {
-			return err
-		}
-
-		return bucket.Delete(outpointBytes.Bytes())
-	}, func() {})
+	return f.cfg.Wallet.Cfg.Database.DeleteChannelOpeningState(
+		outpointBytes.Bytes(),
+	)
 }

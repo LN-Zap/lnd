@@ -1,3 +1,4 @@
+//go:build dev
 // +build dev
 
 package chainntnfstest
@@ -393,7 +394,6 @@ func testBlockEpochNotification(miner *rpctest.Harness,
 
 	// We'd like to test the case of multiple registered clients receiving
 	// block epoch notifications.
-
 	const numBlocks = 10
 	const numNtfns = numBlocks + 1
 	const numClients = 5
@@ -403,6 +403,7 @@ func testBlockEpochNotification(miner *rpctest.Harness,
 	// expect each client to receive 11 notifications, one for the current
 	// tip of the chain, and one for each of the ten blocks we generate
 	// below. So we'll use a WaitGroup to synchronize the test.
+	clientErrors := make(chan error, numClients)
 	for i := 0; i < numClients; i++ {
 		epochClient, err := notifier.RegisterBlockEpochNtfn(nil)
 		if err != nil {
@@ -412,7 +413,24 @@ func testBlockEpochNotification(miner *rpctest.Harness,
 		wg.Add(numNtfns)
 		go func() {
 			for i := 0; i < numNtfns; i++ {
-				<-epochClient.Epochs
+				// Ensure that each block epoch has a header,
+				// and that header matches the contained header
+				// hash.
+				blockEpoch := <-epochClient.Epochs
+				if blockEpoch.BlockHeader == nil {
+					fmt.Println(i)
+					clientErrors <- fmt.Errorf("block " +
+						"header is nil")
+					return
+				}
+				if blockEpoch.BlockHeader.BlockHash() !=
+					*blockEpoch.Hash {
+
+					clientErrors <- fmt.Errorf("block " +
+						"header hash mismatch")
+					return
+				}
+
 				wg.Done()
 			}
 		}()
@@ -431,6 +449,8 @@ func testBlockEpochNotification(miner *rpctest.Harness,
 	}
 
 	select {
+	case err := <-clientErrors:
+		t.Fatalf("block epoch case failed: %v", err)
 	case <-epochsSent:
 	case <-time.After(30 * time.Second):
 		t.Fatalf("all notifications not sent")
@@ -1926,7 +1946,9 @@ func TestInterfaces(t *testing.T, targetBackEnd string) {
 		testCfg := chainntnfs.CacheConfig{
 			QueryDisable: false,
 		}
-		hintCache, err := chainntnfs.NewHeightHintCache(testCfg, db)
+		hintCache, err := chainntnfs.NewHeightHintCache(
+			testCfg, db.Backend,
+		)
 		if err != nil {
 			t.Fatalf("unable to create height hint cache: %v", err)
 		}

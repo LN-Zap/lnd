@@ -144,13 +144,13 @@ type PaymentSession interface {
 	// a boolean to indicate whether the update has been applied without
 	// error.
 	UpdateAdditionalEdge(msg *lnwire.ChannelUpdate, pubKey *btcec.PublicKey,
-		policy *channeldb.ChannelEdgePolicy) bool
+		policy *channeldb.CachedEdgePolicy) bool
 
 	// GetAdditionalEdgePolicy uses the public key and channel ID to query
 	// the ephemeral channel edge policy for additional edges. Returns a nil
 	// if nothing found.
 	GetAdditionalEdgePolicy(pubKey *btcec.PublicKey,
-		channelID uint64) *channeldb.ChannelEdgePolicy
+		channelID uint64) *channeldb.CachedEdgePolicy
 }
 
 // paymentSession is used during an HTLC routings session to prune the local
@@ -162,9 +162,9 @@ type PaymentSession interface {
 // loop if payment attempts take long enough. An additional set of edges can
 // also be provided to assist in reaching the payment's destination.
 type paymentSession struct {
-	additionalEdges map[route.Vertex][]*channeldb.ChannelEdgePolicy
+	additionalEdges map[route.Vertex][]*channeldb.CachedEdgePolicy
 
-	getBandwidthHints func() (map[uint64]lnwire.MilliSatoshi, error)
+	getBandwidthHints func(routingGraph) (bandwidthHints, error)
 
 	payment *LightningPayment
 
@@ -192,7 +192,7 @@ type paymentSession struct {
 
 // newPaymentSession instantiates a new payment session.
 func newPaymentSession(p *LightningPayment,
-	getBandwidthHints func() (map[uint64]lnwire.MilliSatoshi, error),
+	getBandwidthHints func(routingGraph) (bandwidthHints, error),
 	getRoutingGraph func() (routingGraph, func(), error),
 	missionControl MissionController, pathFindingConfig PathFindingConfig) (
 	*paymentSession, error) {
@@ -274,24 +274,24 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 	}
 
 	for {
+		// Get a routing graph.
+		routingGraph, cleanup, err := p.getRoutingGraph()
+		if err != nil {
+			return nil, err
+		}
+
 		// We'll also obtain a set of bandwidthHints from the lower
 		// layer for each of our outbound channels. This will allow the
 		// path finding to skip any links that aren't active or just
 		// don't have enough bandwidth to carry the payment. New
 		// bandwidth hints are queried for every new path finding
 		// attempt, because concurrent payments may change balances.
-		bandwidthHints, err := p.getBandwidthHints()
+		bandwidthHints, err := p.getBandwidthHints(routingGraph)
 		if err != nil {
 			return nil, err
 		}
 
 		p.log.Debugf("pathfinding for amt=%v", maxAmt)
-
-		// Get a routing graph.
-		routingGraph, cleanup, err := p.getRoutingGraph()
-		if err != nil {
-			return nil, err
-		}
 
 		sourceVertex := routingGraph.sourceNode()
 
@@ -403,7 +403,7 @@ func (p *paymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 // updates to the supplied policy. It returns a boolean to indicate whether
 // there's an error when applying the updates.
 func (p *paymentSession) UpdateAdditionalEdge(msg *lnwire.ChannelUpdate,
-	pubKey *btcec.PublicKey, policy *channeldb.ChannelEdgePolicy) bool {
+	pubKey *btcec.PublicKey, policy *channeldb.CachedEdgePolicy) bool {
 
 	// Validate the message signature.
 	if err := VerifyChannelUpdateSignature(msg, pubKey); err != nil {
@@ -428,7 +428,7 @@ func (p *paymentSession) UpdateAdditionalEdge(msg *lnwire.ChannelUpdate,
 // ephemeral channel edge policy for additional edges. Returns a nil if nothing
 // found.
 func (p *paymentSession) GetAdditionalEdgePolicy(pubKey *btcec.PublicKey,
-	channelID uint64) *channeldb.ChannelEdgePolicy {
+	channelID uint64) *channeldb.CachedEdgePolicy {
 
 	target := route.NewVertex(pubKey)
 

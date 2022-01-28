@@ -45,6 +45,10 @@ const (
 	// DefaultMaxMcHistory is the default maximum history size.
 	DefaultMaxMcHistory = 1000
 
+	// DefaultMcFlushInterval is the defaul inteval we use to flush MC state
+	// to the database.
+	DefaultMcFlushInterval = time.Second
+
 	// prevSuccessProbability is the assumed probability for node pairs that
 	// successfully relayed the previous attempt.
 	prevSuccessProbability = 0.95
@@ -118,6 +122,10 @@ type MissionControlConfig struct {
 	// MaxMcHistory defines the maximum number of payment results that are
 	// held on disk.
 	MaxMcHistory int
+
+	// McFlushInterval defines the ticker interval when we flush the
+	// accumulated state to the DB.
+	McFlushInterval time.Duration
 
 	// MinFailureRelaxInterval is the minimum time that must have passed
 	// since the previously recorded failure before the failure amount may
@@ -209,7 +217,9 @@ func NewMissionControl(db kvdb.Backend, self route.Vertex,
 		return nil, err
 	}
 
-	store, err := newMissionControlStore(db, cfg.MaxMcHistory)
+	store, err := newMissionControlStore(
+		db, cfg.MaxMcHistory, cfg.McFlushInterval,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -232,6 +242,16 @@ func NewMissionControl(db kvdb.Backend, self route.Vertex,
 	}
 
 	return mc, nil
+}
+
+// RunStoreTicker runs the mission control store's ticker.
+func (m *MissionControl) RunStoreTicker() {
+	m.store.run()
+}
+
+// StopStoreTicker stops the mission control store's ticker.
+func (m *MissionControl) StopStoreTicker() {
+	m.store.stop()
 }
 
 // init initializes mission control with historical data.
@@ -265,6 +285,7 @@ func (m *MissionControl) GetConfig() *MissionControlConfig {
 	return &MissionControlConfig{
 		ProbabilityEstimatorCfg: m.estimator.ProbabilityEstimatorCfg,
 		MaxMcHistory:            m.store.maxRecords,
+		McFlushInterval:         m.store.flushInterval,
 		MinFailureRelaxInterval: m.state.minFailureRelaxInterval,
 	}
 }
@@ -342,7 +363,9 @@ func (m *MissionControl) GetHistorySnapshot() *MissionControlSnapshot {
 // ImportHistory imports the set of mission control results provided to our
 // in-memory state. These results are not persisted, so will not survive
 // restarts.
-func (m *MissionControl) ImportHistory(history *MissionControlSnapshot) error {
+func (m *MissionControl) ImportHistory(history *MissionControlSnapshot,
+	force bool) error {
+
 	if history == nil {
 		return errors.New("cannot import nil history")
 	}
@@ -353,7 +376,7 @@ func (m *MissionControl) ImportHistory(history *MissionControlSnapshot) error {
 	log.Infof("Importing history snapshot with %v pairs to mission control",
 		len(history.Pairs))
 
-	imported := m.state.importSnapshot(history)
+	imported := m.state.importSnapshot(history, force)
 
 	log.Infof("Imported %v results to mission control", imported)
 
@@ -429,9 +452,7 @@ func (m *MissionControl) processPaymentResult(result *paymentResult) (
 	*channeldb.FailureReason, error) {
 
 	// Store complete result in database.
-	if err := m.store.AddResult(result); err != nil {
-		return nil, err
-	}
+	m.store.AddResult(result)
 
 	m.Lock()
 	defer m.Unlock()
@@ -501,7 +522,7 @@ func (m *MissionControl) applyPaymentResult(
 		}
 
 		m.state.setLastPairResult(
-			pair.From, pair.To, result.timeReply, &pairResult,
+			pair.From, pair.To, result.timeReply, &pairResult, false,
 		)
 	}
 

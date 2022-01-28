@@ -34,7 +34,7 @@ const (
 // need the secret key chain in order obtain the prior shachain root so we can
 // verify the DLP protocol as initiated by the remote node.
 type chanDBRestorer struct {
-	db *channeldb.DB
+	db *channeldb.ChannelStateDB
 
 	secretKeys keychain.SecretKeyRing
 
@@ -149,6 +149,12 @@ func (c *chanDBRestorer) openChannelShell(backup chanbackup.Single) (
 		chanType |= channeldb.AnchorOutputsBit
 		chanType |= channeldb.SingleFunderTweaklessBit
 
+	case chanbackup.ScriptEnforcedLeaseVersion:
+		chanType = channeldb.LeaseExpirationBit
+		chanType |= channeldb.ZeroHtlcTxFeeBit
+		chanType |= channeldb.AnchorOutputsBit
+		chanType |= channeldb.SingleFunderTweaklessBit
+
 	default:
 		return nil, fmt.Errorf("unknown Single version: %v", err)
 	}
@@ -172,6 +178,7 @@ func (c *chanDBRestorer) openChannelShell(backup chanbackup.Single) (
 			RemoteCurrentRevocation: backup.RemoteNodePub,
 			RevocationStore:         shachain.NewRevocationStore(),
 			RevocationProducer:      shaChainProducer,
+			ThawHeight:              backup.LeaseExpiry,
 		},
 	}
 

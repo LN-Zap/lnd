@@ -1,3 +1,4 @@
+//go:build kvdb_etcd
 // +build kvdb_etcd
 
 package etcd
@@ -9,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"go.etcd.io/etcd/embed"
+	"go.etcd.io/etcd/server/v3/embed"
 )
 
 const (
@@ -60,8 +61,8 @@ func getFreePort() int {
 // NewEmbeddedEtcdInstance creates an embedded etcd instance for testing,
 // listening on random open ports. Returns the backend config and a cleanup
 // func that will stop the etcd instance.
-func NewEmbeddedEtcdInstance(path string, clientPort, peerPort uint16) (
-	*Config, func(), error) {
+func NewEmbeddedEtcdInstance(path string, clientPort, peerPort uint16,
+	logFile string) (*Config, func(), error) {
 
 	cfg := embed.NewConfig()
 	cfg.Dir = path
@@ -69,6 +70,13 @@ func NewEmbeddedEtcdInstance(path string, clientPort, peerPort uint16) (
 	// To ensure that we can submit large transactions.
 	cfg.MaxTxnOps = 8192
 	cfg.MaxRequestBytes = 16384 * 1024
+	cfg.Logger = "zap"
+	if logFile != "" {
+		cfg.LogLevel = "info"
+		cfg.LogOutputs = []string{logFile}
+	} else {
+		cfg.LogLevel = "error"
+	}
 
 	// Listen on random free ports if no ports were specified.
 	if clientPort == 0 {

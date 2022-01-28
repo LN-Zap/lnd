@@ -255,8 +255,6 @@ type mppTestContext struct {
 func newMppTestContext(t *harnessTest,
 	net *lntest.NetworkHarness) *mppTestContext {
 
-	ctxb := context.Background()
-
 	alice := net.NewNode(t.t, "alice", nil)
 	bob := net.NewNode(t.t, "bob", []string{"--accept-amp"})
 
@@ -270,8 +268,7 @@ func newMppTestContext(t *harnessTest,
 	nodes := []*lntest.HarnessNode{alice, bob, carol, dave, eve}
 	for i := 0; i < len(nodes); i++ {
 		for j := i + 1; j < len(nodes); j++ {
-			ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
-			net.EnsureConnected(ctxt, t.t, nodes[i], nodes[j])
+			net.EnsureConnected(t.t, nodes[i], nodes[j])
 		}
 	}
 
@@ -290,25 +287,18 @@ func newMppTestContext(t *harnessTest,
 }
 
 // openChannel is a helper to open a channel from->to.
-func (c *mppTestContext) openChannel(from, to *lntest.HarnessNode, chanSize btcutil.Amount) {
-	ctxb := context.Background()
+func (c *mppTestContext) openChannel(from, to *lntest.HarnessNode,
+	chanSize btcutil.Amount) {
 
-	ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
-	c.net.SendCoins(ctxt, c.t.t, btcutil.SatoshiPerBitcoin, from)
+	c.net.SendCoins(c.t.t, btcutil.SatoshiPerBitcoin, from)
 
-	ctxt, _ = context.WithTimeout(ctxb, channelOpenTimeout)
 	chanPoint := openChannelAndAssert(
-		ctxt, c.t, c.net, from, to,
-		lntest.OpenChannelParams{
-			Amt: chanSize,
-		},
+		c.t, c.net, from, to,
+		lntest.OpenChannelParams{Amt: chanSize},
 	)
 
 	c.closeChannelFuncs = append(c.closeChannelFuncs, func() {
-		ctxt, _ := context.WithTimeout(ctxb, channelCloseTimeout)
-		closeChannelAndAssert(
-			ctxt, c.t, c.net, from, chanPoint, false,
-		)
+		closeChannelAndAssert(c.t, c.net, from, chanPoint, false)
 	})
 
 	c.networkChans = append(c.networkChans, chanPoint)
@@ -329,8 +319,6 @@ func (c *mppTestContext) shutdownNodes() {
 }
 
 func (c *mppTestContext) waitForChannels() {
-	ctxb := context.Background()
-
 	// Wait for all nodes to have seen all channels.
 	for _, chanPoint := range c.networkChans {
 		for _, node := range c.nodes {
@@ -343,12 +331,11 @@ func (c *mppTestContext) waitForChannels() {
 				Index: chanPoint.OutputIndex,
 			}
 
-			ctxt, _ := context.WithTimeout(ctxb, defaultTimeout)
-			err = node.WaitForNetworkChannelOpen(ctxt, chanPoint)
+			err = node.WaitForNetworkChannelOpen(chanPoint)
 			if err != nil {
-				c.t.Fatalf("(%d): timeout waiting for "+
+				c.t.Fatalf("(%v:%d): timeout waiting for "+
 					"channel(%s) open: %v",
-					node.NodeID, point, err)
+					node.Cfg.Name, node.NodeID, point, err)
 			}
 		}
 	}

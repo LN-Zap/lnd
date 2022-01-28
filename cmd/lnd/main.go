@@ -23,6 +23,7 @@ func main() {
 	if err != nil {
 		if e, ok := err.(*flags.Error); !ok || e.Type != flags.ErrHelp {
 			// Print error if not due to help request.
+			err = fmt.Errorf("failed to load config: %w", err)
 			_, _ = fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
@@ -30,11 +31,12 @@ func main() {
 		// Help was requested, exit normally.
 		os.Exit(0)
 	}
+	implCfg := loadedConfig.ImplementationConfig(shutdownInterceptor)
 
 	// Call the "real" main in a nested manner so the defers will properly
 	// be executed in the case of a graceful shutdown.
 	if err = lnd.Main(
-		loadedConfig, lnd.ListenerCfg{}, shutdownInterceptor,
+		loadedConfig, lnd.ListenerCfg{}, implCfg, shutdownInterceptor,
 	); err != nil {
 		_, _ = fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

@@ -5,9 +5,11 @@ import (
 	"container/list"
 	"crypto/sha256"
 	"fmt"
+	"math/rand"
 	"reflect"
 	"runtime"
 	"testing"
+	"testing/quick"
 
 	"github.com/btcsuite/btcd/blockchain"
 	"github.com/btcsuite/btcd/btcec"
@@ -8003,16 +8005,28 @@ func TestForceCloseBorkedState(t *testing.T) {
 func TestChannelMaxFeeRate(t *testing.T) {
 	t.Parallel()
 
-	assertMaxFeeRate := func(c *LightningChannel,
-		maxAlloc float64, anchorMax, expFeeRate chainfee.SatPerKWeight) {
+	assertMaxFeeRate := func(c *LightningChannel, maxAlloc float64,
+		expFeeRate chainfee.SatPerKWeight) {
 
-		t.Helper()
-
-		maxFeeRate := c.MaxFeeRate(maxAlloc, anchorMax)
+		maxFeeRate := c.MaxFeeRate(maxAlloc)
 		if maxFeeRate != expFeeRate {
 			t.Fatalf("expected max fee rate of %v with max "+
 				"allocation of %v, got %v", expFeeRate,
 				maxAlloc, maxFeeRate)
+		}
+
+		if err := c.validateFeeRate(maxFeeRate); err != nil {
+			t.Fatalf("fee rate validation failed: %v", err)
+		}
+	}
+
+	// propertyTest tests that the validateFeeRate function always passes
+	// for the output returned by MaxFeeRate for any valid random inputs
+	// fed to MaxFeeRate.
+	propertyTest := func(c *LightningChannel) func(alloc maxAlloc) bool {
+		return func(ma maxAlloc) bool {
+			maxFeeRate := c.MaxFeeRate(float64(ma))
+			return c.validateFeeRate(maxFeeRate) == nil
 		}
 	}
 
@@ -8024,32 +8038,210 @@ func TestChannelMaxFeeRate(t *testing.T) {
 	}
 	defer cleanUp()
 
-	assertMaxFeeRate(aliceChannel, 1.0, 0, 690607734)
-	assertMaxFeeRate(aliceChannel, 0.001, 0, 690607)
-	assertMaxFeeRate(aliceChannel, 0.000001, 0, 690)
-	assertMaxFeeRate(aliceChannel, 0.0000001, 0, chainfee.FeePerKwFloor)
+	if err := quick.Check(propertyTest(aliceChannel), nil); err != nil {
+		t.Fatal(err)
+	}
+
+	assertMaxFeeRate(aliceChannel, 1.0, 676794154)
+	assertMaxFeeRate(aliceChannel, 0.001, 676794)
+	assertMaxFeeRate(aliceChannel, 0.000001, 676)
+	assertMaxFeeRate(aliceChannel, 0.0000001, chainfee.FeePerKwFloor)
 
 	// Check that anchor channels are capped at their max fee rate.
 	anchorChannel, _, cleanUp, err := CreateTestChannels(
-		channeldb.SingleFunderTweaklessBit | channeldb.AnchorOutputsBit,
+		channeldb.SingleFunderTweaklessBit |
+			channeldb.AnchorOutputsBit | channeldb.ZeroHtlcTxFeeBit,
 	)
 	if err != nil {
 		t.Fatalf("unable to create test channels: %v", err)
 	}
 	defer cleanUp()
 
+	if err = quick.Check(propertyTest(anchorChannel), nil); err != nil {
+		t.Fatal(err)
+	}
+
 	// Anchor commitments are heavier, hence will the same allocation lead
 	// to slightly lower fee rates.
-	assertMaxFeeRate(
-		anchorChannel, 1.0, chainfee.FeePerKwFloor,
-		chainfee.FeePerKwFloor,
-	)
-	assertMaxFeeRate(anchorChannel, 0.001, 1000000, 444839)
-	assertMaxFeeRate(anchorChannel, 0.001, 300000, 300000)
-	assertMaxFeeRate(anchorChannel, 0.000001, 700, 444)
-	assertMaxFeeRate(
-		anchorChannel, 0.0000001, 1000000, chainfee.FeePerKwFloor,
-	)
+	assertMaxFeeRate(anchorChannel, 1.0, 435941555)
+	assertMaxFeeRate(anchorChannel, 0.001, 435941)
+	assertMaxFeeRate(anchorChannel, 0.000001, 435)
+	assertMaxFeeRate(anchorChannel, 0.0000001, chainfee.FeePerKwFloor)
+}
+
+// TestIdealCommitFeeRate tests that we correctly compute the ideal commitment
+// fee of a channel given the current network fee, minimum relay fee, maximum
+// fee allocation and whether the channel has anchor outputs.
+func TestIdealCommitFeeRate(t *testing.T) {
+	t.Parallel()
+
+	assertIdealFeeRate := func(c *LightningChannel, netFee, minRelay,
+		maxAnchorCommit chainfee.SatPerKWeight,
+		maxFeeAlloc float64, expectedFeeRate chainfee.SatPerKWeight) {
+
+		feeRate := c.IdealCommitFeeRate(
+			netFee, minRelay, maxAnchorCommit, maxFeeAlloc,
+		)
+		if feeRate != expectedFeeRate {
+			t.Fatalf("expected fee rate of %v got %v",
+				expectedFeeRate, feeRate)
+		}
+
+		if err := c.validateFeeRate(feeRate); err != nil {
+			t.Fatalf("fee rate validation failed: %v", err)
+		}
+	}
+
+	// propertyTest tests that the validateFeeRate function always passes
+	// for the output returned by IdealCommitFeeRate for any valid random
+	// inputs fed to IdealCommitFeeRate.
+	propertyTest := func(c *LightningChannel) func(ma maxAlloc,
+		netFee, minRelayFee, maxAnchorFee fee) bool {
+
+		return func(ma maxAlloc, netFee, minRelayFee,
+			maxAnchorFee fee) bool {
+
+			idealFeeRate := c.IdealCommitFeeRate(
+				chainfee.SatPerKWeight(netFee),
+				chainfee.SatPerKWeight(minRelayFee),
+				chainfee.SatPerKWeight(maxAnchorFee),
+				float64(ma),
+			)
+
+			return c.validateFeeRate(idealFeeRate) == nil
+		}
+	}
+
+	// Test ideal fee rates for a non-anchor channel
+	t.Run("non-anchor-channel", func(t *testing.T) {
+		aliceChannel, _, cleanUp, err := CreateTestChannels(
+			channeldb.SingleFunderTweaklessBit,
+		)
+		if err != nil {
+			t.Fatalf("unable to create test channels: %v", err)
+		}
+		defer cleanUp()
+
+		err = quick.Check(propertyTest(aliceChannel), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// If the maximum fee is lower than the network fee and above
+		// the min relay fee, use the maximum fee.
+		assertIdealFeeRate(
+			aliceChannel, 700000000, 0, 0, 1.0, 676794154,
+		)
+
+		// If the network fee is lower than the max fee and above the
+		// min relay fee, use the network fee.
+		assertIdealFeeRate(
+			aliceChannel, 500000000, 0, 0, 1.0, 500000000,
+		)
+
+		// If the fee is below the minimum relay fee, and the min relay
+		// fee is less than our max fee, use the minimum relay fee.
+		assertIdealFeeRate(
+			aliceChannel, 500000000, 600000000, 0, 1.0, 600000000,
+		)
+
+		// The absolute maximum fee rate we can pay (ie, using a max
+		// allocation of 1) is still below the minimum relay fee. In
+		// this case, use the absolute max fee.
+		assertIdealFeeRate(
+			aliceChannel, 800000000, 700000000, 0, 0.001,
+			676794154,
+		)
+	})
+
+	// Test ideal fee rates for an anchor channel
+	t.Run("anchor-channel", func(t *testing.T) {
+		anchorChannel, _, cleanUp, err := CreateTestChannels(
+			channeldb.SingleFunderTweaklessBit |
+				channeldb.AnchorOutputsBit |
+				channeldb.ZeroHtlcTxFeeBit,
+		)
+		if err != nil {
+			t.Fatalf("unable to create test channels: %v", err)
+		}
+		defer cleanUp()
+
+		err = quick.Check(propertyTest(anchorChannel), nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// Anchor commitments are heavier, hence the same allocation
+		// leads to slightly lower fee rates.
+		assertIdealFeeRate(
+			anchorChannel, 700000000, 0, chainfee.FeePerKwFloor,
+			0.1, chainfee.FeePerKwFloor,
+		)
+
+		// If the maximum fee is lower than the network fee, use the
+		// maximum fee.
+		assertIdealFeeRate(
+			anchorChannel, 700000000, 0, 1000000, 0.001, 435941,
+		)
+
+		assertIdealFeeRate(
+			anchorChannel, 700000000, 0, 700, 0.000001, 435,
+		)
+
+		assertIdealFeeRate(
+			anchorChannel, 700000000, 0, 1000000, 0.0000001,
+			chainfee.FeePerKwFloor,
+		)
+
+		// If the maximum anchor commit fee rate is less than the
+		// maximum fee, use the max anchor commit fee since this is an
+		// anchor channel.
+		assertIdealFeeRate(
+			anchorChannel, 700000000, 0, 400000, 0.001, 400000,
+		)
+
+		// If the minimum relay fee is above the max anchor commitment
+		// fee rate but still below our max fee rate then use the min
+		// relay fee.
+		assertIdealFeeRate(
+			anchorChannel, 700000000, 400000, 300000, 0.001,
+			400000,
+		)
+
+		// If the min relay fee is above the ideal max fee rate but is
+		// below the max fee rate when the max fee allocation is set to
+		// 1, the minimum relay fee is used.
+		assertIdealFeeRate(
+			anchorChannel, 700000000, 500000, 300000, 0.001,
+			500000,
+		)
+
+		// The absolute maximum fee rate we can pay (ie, using a max
+		// allocation of 1) is still below the minimum relay fee. In
+		// this case, use the absolute max fee.
+		assertIdealFeeRate(
+			anchorChannel, 700000000, 450000000, 300000, 0.001,
+			435941555,
+		)
+	})
+}
+
+type maxAlloc float64
+
+// Generate ensures that the random value generated by the testing quick
+// package for maxAlloc is always a positive float64 between 0 and 1.
+func (maxAlloc) Generate(r *rand.Rand, _ int) reflect.Value {
+	ma := maxAlloc(r.Float64())
+	return reflect.ValueOf(ma)
+}
+
+type fee chainfee.SatPerKWeight
+
+// Generate ensures that the random value generated by the testing quick
+// package for a fee is always a positive int64.
+func (fee) Generate(r *rand.Rand, _ int) reflect.Value {
+	am := fee(r.Int63())
+	return reflect.ValueOf(am)
 }
 
 // TestChannelFeeRateFloor asserts that valid commitments can be proposed and
@@ -9649,10 +9841,9 @@ func TestChannelSignedAckRegression(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestMayAddOutgoingHtlcZeroValue tests that if the minHTLC value of the
-// channel is zero, then the MayAddOutgoingHtlc doesn't exit early due to
-// running into a zero valued HTLC.
-func TestMayAddOutgoingHtlcZeroValue(t *testing.T) {
+// TestMayAddOutgoingHtlc tests MayAddOutgoingHtlc against zero and non-zero
+// htlc amounts.
+func TestMayAddOutgoingHtlc(t *testing.T) {
 	t.Parallel()
 
 	// The default channel created as a part of the test fixture already
@@ -9665,9 +9856,176 @@ func TestMayAddOutgoingHtlcZeroValue(t *testing.T) {
 	defer cleanUp()
 
 	// The channels start out with a 50/50 balance, so both sides should be
-	// able to add an outgoing HTLC.
-	require.NoError(t, aliceChannel.MayAddOutgoingHtlc())
-	require.NoError(t, bobChannel.MayAddOutgoingHtlc())
+	// able to add an outgoing HTLC with no specific amount added.
+	require.NoError(t, aliceChannel.MayAddOutgoingHtlc(0))
+	require.NoError(t, bobChannel.MayAddOutgoingHtlc(0))
+
+	chanBal, err := btcutil.NewAmount(testChannelCapacity)
+	require.NoError(t, err)
+
+	// Each side should be able to add 1/4 of total channel balance since
+	// we're 50/50 split.
+	mayAdd := lnwire.MilliSatoshi(chanBal / 4 * 1000)
+	require.NoError(t, aliceChannel.MayAddOutgoingHtlc(mayAdd))
+	require.NoError(t, bobChannel.MayAddOutgoingHtlc(mayAdd))
+
+	// Both channels should fail if we try to add an amount more than
+	// their current balance.
+	mayNotAdd := lnwire.MilliSatoshi(chanBal * 1000)
+	require.Error(t, aliceChannel.MayAddOutgoingHtlc(mayNotAdd))
+	require.Error(t, bobChannel.MayAddOutgoingHtlc(mayNotAdd))
+
+	// Hard set alice's min htlc to zero and test the case where we just
+	// fall back to a non-zero value.
+	aliceChannel.channelState.LocalChanCfg.MinHTLC = 0
+	require.NoError(t, aliceChannel.MayAddOutgoingHtlc(0))
+}
+
+// TestIsChannelClean tests that IsChannelClean returns the expected values
+// in different channel states.
+func TestIsChannelClean(t *testing.T) {
+	t.Parallel()
+
+	aliceChannel, bobChannel, cleanUp, err := CreateTestChannels(
+		channeldb.ZeroHtlcTxFeeBit,
+	)
+	require.NoError(t, err)
+	defer cleanUp()
+
+	// Channel state should be clean at the start of the test.
+	assertCleanOrDirty(true, aliceChannel, bobChannel, t)
+
+	// Assert that neither side considers the channel clean when alice
+	// sends an htlc.
+	// ---add--->
+	htlc, preimage := createHTLC(0, lnwire.MilliSatoshi(5000000))
+	_, err = aliceChannel.AddHTLC(htlc, nil)
+	require.NoError(t, err)
+	_, err = bobChannel.ReceiveHTLC(htlc)
+	require.NoError(t, err)
+	assertCleanOrDirty(false, aliceChannel, bobChannel, t)
+
+	// Assert that the channel remains dirty until the HTLC is completely
+	// removed from both commitments.
+
+	// ---sig--->
+	aliceSig, aliceHtlcSigs, _, err := aliceChannel.SignNextCommitment()
+	require.NoError(t, err)
+	err = bobChannel.ReceiveNewCommitment(aliceSig, aliceHtlcSigs)
+	require.NoError(t, err)
+	assertCleanOrDirty(false, aliceChannel, bobChannel, t)
+
+	// <---rev---
+	bobRevocation, _, err := bobChannel.RevokeCurrentCommitment()
+	require.NoError(t, err)
+	_, _, _, _, err = aliceChannel.ReceiveRevocation(bobRevocation)
+	require.NoError(t, err)
+	assertCleanOrDirty(false, aliceChannel, bobChannel, t)
+
+	// <---sig---
+	bobSig, bobHtlcSigs, _, err := bobChannel.SignNextCommitment()
+	require.NoError(t, err)
+	err = aliceChannel.ReceiveNewCommitment(bobSig, bobHtlcSigs)
+	require.NoError(t, err)
+	assertCleanOrDirty(false, aliceChannel, bobChannel, t)
+
+	// ---rev--->
+	aliceRevocation, _, err := aliceChannel.RevokeCurrentCommitment()
+	require.NoError(t, err)
+	_, _, _, _, err = bobChannel.ReceiveRevocation(aliceRevocation)
+	require.NoError(t, err)
+	assertCleanOrDirty(false, aliceChannel, bobChannel, t)
+
+	// <--settle--
+	err = bobChannel.SettleHTLC(preimage, 0, nil, nil, nil)
+	require.NoError(t, err)
+	err = aliceChannel.ReceiveHTLCSettle(preimage, 0)
+	require.NoError(t, err)
+	assertCleanOrDirty(false, aliceChannel, bobChannel, t)
+
+	// <---sig---
+	bobSig, bobHtlcSigs, _, err = bobChannel.SignNextCommitment()
+	require.NoError(t, err)
+	err = aliceChannel.ReceiveNewCommitment(bobSig, bobHtlcSigs)
+	require.NoError(t, err)
+	assertCleanOrDirty(false, aliceChannel, bobChannel, t)
+
+	// ---rev--->
+	aliceRevocation, _, err = aliceChannel.RevokeCurrentCommitment()
+	require.NoError(t, err)
+	_, _, _, _, err = bobChannel.ReceiveRevocation(aliceRevocation)
+	require.NoError(t, err)
+	assertCleanOrDirty(false, aliceChannel, bobChannel, t)
+
+	// ---sig--->
+	aliceSig, aliceHtlcSigs, _, err = aliceChannel.SignNextCommitment()
+	require.NoError(t, err)
+	err = bobChannel.ReceiveNewCommitment(aliceSig, aliceHtlcSigs)
+	require.NoError(t, err)
+	assertCleanOrDirty(false, aliceChannel, bobChannel, t)
+
+	// <---rev---
+	bobRevocation, _, err = bobChannel.RevokeCurrentCommitment()
+	require.NoError(t, err)
+	_, _, _, _, err = aliceChannel.ReceiveRevocation(bobRevocation)
+	require.NoError(t, err)
+	assertCleanOrDirty(true, aliceChannel, bobChannel, t)
+
+	// Now we check that update_fee is handled and state is dirty until it
+	// is completely locked in.
+	// ---fee--->
+	fee := chainfee.SatPerKWeight(333)
+	err = aliceChannel.UpdateFee(fee)
+	require.NoError(t, err)
+	err = bobChannel.ReceiveUpdateFee(fee)
+	require.NoError(t, err)
+	assertCleanOrDirty(false, aliceChannel, bobChannel, t)
+
+	// ---sig--->
+	aliceSig, aliceHtlcSigs, _, err = aliceChannel.SignNextCommitment()
+	require.NoError(t, err)
+	err = bobChannel.ReceiveNewCommitment(aliceSig, aliceHtlcSigs)
+	require.NoError(t, err)
+	assertCleanOrDirty(false, aliceChannel, bobChannel, t)
+
+	// <---rev---
+	bobRevocation, _, err = bobChannel.RevokeCurrentCommitment()
+	require.NoError(t, err)
+	_, _, _, _, err = aliceChannel.ReceiveRevocation(bobRevocation)
+	require.NoError(t, err)
+	assertCleanOrDirty(false, aliceChannel, bobChannel, t)
+
+	// <---sig---
+	bobSig, bobHtlcSigs, _, err = bobChannel.SignNextCommitment()
+	require.NoError(t, err)
+	err = aliceChannel.ReceiveNewCommitment(bobSig, bobHtlcSigs)
+	require.NoError(t, err)
+	assertCleanOrDirty(false, aliceChannel, bobChannel, t)
+
+	// The state should finally be clean after alice sends her revocation.
+	// ---rev--->
+	aliceRevocation, _, err = aliceChannel.RevokeCurrentCommitment()
+	require.NoError(t, err)
+	_, _, _, _, err = bobChannel.ReceiveRevocation(aliceRevocation)
+	require.NoError(t, err)
+	assertCleanOrDirty(true, aliceChannel, bobChannel, t)
+}
+
+// assertCleanOrDirty is a helper function that asserts that both channels are
+// clean if clean is true, and dirty if clean is false.
+func assertCleanOrDirty(clean bool, alice, bob *LightningChannel,
+	t *testing.T) {
+
+	t.Helper()
+
+	if clean {
+		require.True(t, alice.IsChannelClean())
+		require.True(t, bob.IsChannelClean())
+		return
+	}
+
+	require.False(t, alice.IsChannelClean())
+	require.False(t, bob.IsChannelClean())
 }
 
 // TestChannelGetDustSum tests that we correctly calculate the channel's dust

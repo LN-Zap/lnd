@@ -1,3 +1,4 @@
+//go:build invoicesrpc
 // +build invoicesrpc
 
 package main
@@ -89,7 +90,7 @@ func settleInvoice(ctx *cli.Context) error {
 var cancelInvoiceCommand = cli.Command{
 	Name:     "cancelinvoice",
 	Category: "Invoices",
-	Usage:    "Cancels a (hold) invoice",
+	Usage:    "Cancels a (hold) invoice.",
 	Description: `
 	Todo.`,
 	ArgsUsage: "paymenthash",
@@ -227,10 +228,6 @@ func addHoldInvoice(ctx *cli.Context) error {
 		}
 	}
 
-	if err != nil {
-		return fmt.Errorf("unable to parse preimage: %v", err)
-	}
-
 	descHash, err = hex.DecodeString(ctx.String("description_hash"))
 	if err != nil {
 		return fmt.Errorf("unable to parse description_hash: %v", err)
@@ -252,11 +249,7 @@ func addHoldInvoice(ctx *cli.Context) error {
 		return err
 	}
 
-	printJSON(struct {
-		PayReq string `json:"pay_req"`
-	}{
-		PayReq: resp.PaymentRequest,
-	})
+	printRespJSON(resp)
 
 	return nil
 }

@@ -2764,7 +2764,8 @@ func TestInvalidFailure(t *testing.T) {
 // these tests.
 type htlcNotifierEvents func(channels *clusterChannels, htlcID uint64,
 	ts time.Time, htlc *lnwire.UpdateAddHTLC,
-	hops []*hop.Payload) ([]interface{}, []interface{}, []interface{})
+	hops []*hop.Payload,
+	preimage *lntypes.Preimage) ([]interface{}, []interface{}, []interface{})
 
 // TestHtlcNotifier tests the notifying of htlc events that are routed over a
 // three hop network. It sets up an Alice -> Bob -> Carol network and routes
@@ -2795,11 +2796,12 @@ func TestHtlcNotifier(t *testing.T) {
 			expectedEvents: func(channels *clusterChannels,
 				htlcID uint64, ts time.Time,
 				htlc *lnwire.UpdateAddHTLC,
-				hops []*hop.Payload) ([]interface{},
+				hops []*hop.Payload,
+				preimage *lntypes.Preimage) ([]interface{},
 				[]interface{}, []interface{}) {
 
 				return getThreeHopEvents(
-					channels, htlcID, ts, htlc, hops, nil,
+					channels, htlcID, ts, htlc, hops, nil, preimage,
 				)
 			},
 			iterations: 2,
@@ -2814,7 +2816,8 @@ func TestHtlcNotifier(t *testing.T) {
 			expectedEvents: func(channels *clusterChannels,
 				htlcID uint64, ts time.Time,
 				htlc *lnwire.UpdateAddHTLC,
-				hops []*hop.Payload) ([]interface{},
+				hops []*hop.Payload,
+				preimage *lntypes.Preimage) ([]interface{},
 				[]interface{}, []interface{}) {
 
 				return getThreeHopEvents(
@@ -2823,6 +2826,7 @@ func TestHtlcNotifier(t *testing.T) {
 						msg:           &lnwire.FailChannelDisabled{},
 						FailureDetail: OutgoingFailureForwardsDisabled,
 					},
+					preimage,
 				)
 			},
 			iterations: 1,
@@ -2944,11 +2948,12 @@ func testHtcNotifier(t *testing.T, testOpts []serverOption, iterations int,
 	// of htlc ids.
 	for i := 0; i < iterations; i++ {
 		// We'll start off by making a payment from
-		// Alice -> Bob -> Carol.
-		htlc, hops := n.sendThreeHopPayment(t)
+		// Alice -> Bob -> Carol. The preimage, generated
+		// by Carol's Invoice is expected in the Settle events
+		htlc, hops, preimage := n.sendThreeHopPayment(t)
 
 		alice, bob, carol := getEvents(
-			channels, uint64(i), now, htlc, hops,
+			channels, uint64(i), now, htlc, hops, preimage,
 		)
 
 		checkHtlcEvents(t, aliceEvents.Updates(), alice)
@@ -2983,7 +2988,7 @@ func checkHtlcEvents(t *testing.T, events <-chan interface{},
 // Alice -> Bob -> Carol in a three hop network and returns Alice's first htlc
 // and the remainder of the hops.
 func (n *threeHopNetwork) sendThreeHopPayment(t *testing.T) (*lnwire.UpdateAddHTLC,
-	[]*hop.Payload) {
+	[]*hop.Payload, *lntypes.Preimage) {
 
 	amount := lnwire.NewMSatFromSatoshis(btcutil.SatoshiPerBitcoin)
 
@@ -3011,7 +3016,7 @@ func (n *threeHopNetwork) sendThreeHopPayment(t *testing.T) (*lnwire.UpdateAddHT
 		t.Fatalf("could not send htlc")
 	}
 
-	return htlc, hops
+	return htlc, hops, invoice.Terms.PaymentPreimage
 }
 
 // getThreeHopEvents gets the set of htlc events that we expect for a payment
@@ -3019,7 +3024,8 @@ func (n *threeHopNetwork) sendThreeHopPayment(t *testing.T) (*lnwire.UpdateAddHT
 // of events will fail on Bob's outgoing link.
 func getThreeHopEvents(channels *clusterChannels, htlcID uint64,
 	ts time.Time, htlc *lnwire.UpdateAddHTLC, hops []*hop.Payload,
-	linkError *LinkError) ([]interface{}, []interface{}, []interface{}) {
+	linkError *LinkError,
+	preimage *lntypes.Preimage) ([]interface{}, []interface{}, []interface{}) {
 
 	aliceKey := HtlcKey{
 		IncomingCircuit: zeroCircuit,
@@ -3093,6 +3099,7 @@ func getThreeHopEvents(channels *clusterChannels, htlcID uint64,
 		aliceEvents,
 		&SettleEvent{
 			HtlcKey:       aliceKey,
+			Preimage:      *preimage,
 			HtlcEventType: HtlcEventTypeSend,
 			Timestamp:     ts,
 		},
@@ -3107,6 +3114,7 @@ func getThreeHopEvents(channels *clusterChannels, htlcID uint64,
 		},
 		&SettleEvent{
 			HtlcKey:       bobKey,
+			Preimage:      *preimage,
 			HtlcEventType: HtlcEventTypeForward,
 			Timestamp:     ts,
 		},
@@ -3121,6 +3129,7 @@ func getThreeHopEvents(channels *clusterChannels, htlcID uint64,
 				},
 				OutgoingCircuit: zeroCircuit,
 			},
+			Preimage:      *preimage,
 			HtlcEventType: HtlcEventTypeReceive,
 			Timestamp:     ts,
 		},
@@ -3440,16 +3449,11 @@ func TestSwitchDustForwarding(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	select {
-	case result, ok := <-carolResultChan:
-		require.True(t, ok)
-		assertFailureCode(
-			t, result.Error, lnwire.CodeTemporaryChannelFailure,
-		)
-
-	case <-time.After(5 * time.Second):
-		t.Fatal("no result arrived for carol's dust htlc")
-	}
+	result, ok := <-carolResultChan
+	require.True(t, ok)
+	assertFailureCode(
+		t, result.Error, lnwire.CodeTemporaryChannelFailure,
+	)
 
 	// Send an HTLC from Alice to Carol and assert that it is failed at the
 	// call to SendHTLC.

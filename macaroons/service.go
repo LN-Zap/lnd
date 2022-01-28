@@ -4,23 +4,15 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
-	"os"
-	"path"
-	"time"
 
 	"github.com/lightningnetwork/lnd/kvdb"
 	"google.golang.org/grpc/metadata"
-
 	"gopkg.in/macaroon-bakery.v2/bakery"
 	"gopkg.in/macaroon-bakery.v2/bakery/checkers"
 	macaroon "gopkg.in/macaroon.v2"
 )
 
 var (
-	// DBFilename is the filename within the data directory which contains
-	// the macaroon stores.
-	DBFilename = "macaroons.db"
-
 	// ErrMissingRootKeyID specifies the root key ID is missing.
 	ErrMissingRootKeyID = fmt.Errorf("missing root key ID")
 
@@ -68,34 +60,17 @@ type Service struct {
 	StatelessInit bool
 }
 
-// NewService returns a service backed by the macaroon Bolt DB stored in the
-// passed directory. The `checks` argument can be any of the `Checker` type
-// functions defined in this package, or a custom checker if desired. This
-// constructor prevents double-registration of checkers to prevent panics, so
-// listing the same checker more than once is not harmful. Default checkers,
-// such as those for `allow`, `time-before`, `declared`, and `error` caveats
-// are registered automatically and don't need to be added.
-func NewService(dir, location string, statelessInit bool,
-	dbTimeout time.Duration, checks ...Checker) (*Service, error) {
+// NewService returns a service backed by the macaroon DB backend. The `checks`
+// argument can be any of the `Checker` type functions defined in this package,
+// or a custom checker if desired. This constructor prevents double-registration
+// of checkers to prevent panics, so listing the same checker more than once is
+// not harmful. Default checkers, such as those for `allow`, `time-before`,
+// `declared`, and `error` caveats are registered automatically and don't need
+// to be added.
+func NewService(db kvdb.Backend, location string, statelessInit bool,
+	checks ...Checker) (*Service, error) {
 
-	// Ensure that the path to the directory exists.
-	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		if err := os.MkdirAll(dir, 0700); err != nil {
-			return nil, err
-		}
-	}
-
-	// Open the database that we'll use to store the primary macaroon key,
-	// and all generated macaroons+caveats.
-	macaroonDB, err := kvdb.Create(
-		kvdb.BoltBackendName, path.Join(dir, DBFilename), true,
-		dbTimeout,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	rootKeyStore, err := NewRootKeyStorage(macaroonDB)
+	rootKeyStore, err := NewRootKeyStorage(db)
 	if err != nil {
 		return nil, err
 	}
@@ -176,24 +151,31 @@ func (svc *Service) ValidateMacaroon(ctx context.Context,
 	requiredPermissions []bakery.Op, fullMethod string) error {
 
 	// Get macaroon bytes from context and unmarshal into macaroon.
-	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		return fmt.Errorf("unable to get metadata from context")
-	}
-	if len(md["macaroon"]) != 1 {
-		return fmt.Errorf("expected 1 macaroon, got %d",
-			len(md["macaroon"]))
-	}
-
-	// With the macaroon obtained, we'll now decode the hex-string
-	// encoding, then unmarshal it from binary into its concrete struct
-	// representation.
-	macBytes, err := hex.DecodeString(md["macaroon"][0])
+	macHex, err := RawMacaroonFromContext(ctx)
 	if err != nil {
 		return err
 	}
+
+	// With the macaroon obtained, we'll now decode the hex-string encoding.
+	macBytes, err := hex.DecodeString(macHex)
+	if err != nil {
+		return err
+	}
+
+	return svc.CheckMacAuth(
+		ctx, macBytes, requiredPermissions, fullMethod,
+	)
+}
+
+// CheckMacAuth checks that the macaroon is not disobeying any caveats and is
+// authorized to perform the operation the user wants to perform.
+func (svc *Service) CheckMacAuth(ctx context.Context, macBytes []byte,
+	requiredPermissions []bakery.Op, fullMethod string) error {
+
+	// With the macaroon obtained, we'll now unmarshal it from binary into
+	// its concrete struct representation.
 	mac := &macaroon.Macaroon{}
-	err = mac.UnmarshalBinary(macBytes)
+	err := mac.UnmarshalBinary(macBytes)
 	if err != nil {
 		return err
 	}
@@ -277,4 +259,38 @@ func (svc *Service) GenerateNewRootKey() error {
 // returns the result.
 func (svc *Service) ChangePassword(oldPw, newPw []byte) error {
 	return svc.rks.ChangePassword(oldPw, newPw)
+}
+
+// RawMacaroonFromContext is a helper function that extracts a raw macaroon
+// from the given incoming gRPC request context.
+func RawMacaroonFromContext(ctx context.Context) (string, error) {
+	// Get macaroon bytes from context and unmarshal into macaroon.
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return "", fmt.Errorf("unable to get metadata from context")
+	}
+	if len(md["macaroon"]) != 1 {
+		return "", fmt.Errorf("expected 1 macaroon, got %d",
+			len(md["macaroon"]))
+	}
+
+	return md["macaroon"][0], nil
+}
+
+// SafeCopyMacaroon creates a copy of a macaroon that is safe to be used and
+// modified. This is necessary because the macaroon library's own Clone() method
+// is unsafe for certain edge cases, resulting in both the cloned and the
+// original macaroons to be modified.
+func SafeCopyMacaroon(mac *macaroon.Macaroon) (*macaroon.Macaroon, error) {
+	macBytes, err := mac.MarshalBinary()
+	if err != nil {
+		return nil, err
+	}
+
+	newMac := &macaroon.Macaroon{}
+	if err := newMac.UnmarshalBinary(macBytes); err != nil {
+		return nil, err
+	}
+
+	return newMac, nil
 }

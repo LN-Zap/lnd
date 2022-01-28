@@ -27,7 +27,7 @@ Developing cryptocurrencies is an exciting endeavor that touches a wide variety
 of areas such as wire protocols, peer-to-peer networking, databases,
 cryptography, language interpretation (transaction scripts), adversarial
 threat-modeling, and RPC systems. They also represent a radical shift to the
-current fiscal system and as a result provide an opportunity to help reshape
+current monetary system and as a result provide an opportunity to help reshape
 the entire financial system. With the advent of the [Lightning Network
 (LN)](https://lightning.network/), new layers are being constructed upon the
 base blockchain layer which have the potential to alleviate many of the
@@ -316,6 +316,9 @@ Examples of common patterns w.r.t commit structures within the project:
     be a single commit which adds the new functionality, with follow up
     induvidual commits that begin to intergrate the functionality within the
     codebase.
+  * If a PR only fixes a trivial issue, such as updating documentation on a
+    small scale, fix typos, or any changes that do not modify the code, the
+    commit message should end with `[skip ci]` to skip the CI checks.
 
 ## Code Spacing 
 
@@ -433,12 +436,6 @@ _exact same_ version of `protoc`. As of the writing of this article, the `lnd`
 project uses [v3.4.0](https://github.com/google/protobuf/releases/tag/v3.4.0)
 of `protoc`.
 
-The following two libraries must be installed with the exact commit hash as
-described in [lnrpc README](https://github.com/lightningnetwork/lnd/blob/master/lnrpc/README.md)
-otherwise the CI pipeline on Travis will fail:
-- grpc-ecosystem/grpc-gateway
-- golang/protobuf
-
 For detailed instructions on how to compile modifications to `lnd`'s `protobuf`
 definitions, check out the [lnrpc README](https://github.com/lightningnetwork/lnd/blob/master/lnrpc/README.md).
 
@@ -468,15 +465,15 @@ to `gofmt` we've opted to enforce the following style guidelines.
      )
      ```
 
-Note that the above guidelines don't apply to log messages. For log messages,
-committers should attempt to minimize the of number lines utilized, while still
-adhering to the 80-character column limit.
+**Note that the above guidelines don't apply to log or error messages.** For
+log and error messages, committers should attempt to minimize the number of
+lines utilized, while still adhering to the 80-character column limit.
 
 ## Pointing to Remote Dependant Branches in Go Modules
 
 It's common that a developer may need to make a change in a dependent project
 of `lnd` such as `btcd`, `neutrino`, `btcwallet`, etc. In order to test changes
-with out testing infrastructure, or simply make a PR into `lnd` that will build
+without testing infrastructure, or simply make a PR into `lnd` that will build
 without any further work, the `go.mod` and `go.sum` files will need to be
 updated. Luckily, the `go mod` command has a handy tool to do this
 automatically so developers don't need to manually edit the `go.mod` file:
@@ -556,6 +553,12 @@ can set it to auto squash the fix up commits on rebase.
 This process will continue until the code is finally accepted.
 
 ## Acceptance
+
+Before your code is accepted, the [release notes we keep in-tree for the next
+upcoming milestone should be extended to describe the changes contained in your
+PR](https://github.com/lightningnetwork/lnd/tree/master/docs/release-notes).
+Unless otherwise mentioned by the reviewers of your PR, the description of your
+changes should live in the document set for the _next_ major release. 
 
 Once your code is accepted, it will be integrated with the master branch. After
 2+ (sometimes 1) LGTM's (approvals) are given on a PR, it's eligible to land in
