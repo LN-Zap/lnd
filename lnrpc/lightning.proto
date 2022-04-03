@@ -676,6 +676,12 @@ message Transaction {
 
     // A label that was optionally set on transaction broadcast.
     string label = 10;
+
+    // Copy of DestOuputs field above.
+    // Note: Interim solution to upgrade nodes and middleware to make use of
+    // OutputDetails merged upstream:
+    // https://github.com/lightningnetwork/lnd/pull/5476
+    repeated DestOutput dest_outputs_copy = 99;
 }
 message GetTransactionRequest {
     // The id of the transaction to request data on.
