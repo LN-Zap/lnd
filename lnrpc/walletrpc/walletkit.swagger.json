@@ -833,6 +833,13 @@
         "label": {
           "type": "string",
           "description": "A label that was optionally set on transaction broadcast."
+        },
+        "dest_outputs_copy": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/lnrpcDestOutput"
+          },
+          "title": "Copy of DestOuputs field above.\nNote: Interim solution to upgrade nodes and middleware to make use of\nOutputDetails merged upstream:\nhttps://github.com/lightningnetwork/lnd/pull/5476"
         }
       }
     },

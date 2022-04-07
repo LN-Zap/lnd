@@ -51,6 +51,7 @@ func RPCTransaction(tx *lnwallet.TransactionDetail) *Transaction {
 		TimeStamp:        tx.Timestamp,
 		DestAddresses:    destAddresses,
 		DestOutputs:      destOutputs,
+		DestOutputsCopy:  destOutputs,
 		RawTxHex:         hex.EncodeToString(tx.RawTx),
 		Label:            tx.Label,
 	}
