@@ -19,13 +19,35 @@ const (
 // RPCTransaction returns a rpc transaction.
 func RPCTransaction(tx *lnwallet.TransactionDetail) *Transaction {
 	var destAddresses []string
-	for _, destAddress := range tx.DestAddresses {
-		destAddresses = append(destAddresses, destAddress.EncodeAddress())
+	// Re-package destination output information.
+	var outputDetails []*OutputDetail
+	for _, o := range tx.OutputDetails {
+		// Note: DestAddresses is deprecated but we keep
+		// populating it with addresses for backwards
+		// compatibility.
+		for _, a := range o.Addresses {
+			destAddresses = append(destAddresses,
+				a.EncodeAddress())
+		}
+
+		var address string
+		if len(o.Addresses) == 1 {
+			address = o.Addresses[0].EncodeAddress()
+		}
+
+		outputDetails = append(outputDetails, &OutputDetail{
+			OutputType:   MarshallOutputType(o.OutputType),
+			Address:      address,
+			PkScript:     hex.EncodeToString(o.PkScript),
+			OutputIndex:  int64(o.OutputIndex),
+			Amount:       int64(o.Value),
+			IsOurAddress: o.IsOurAddress,
+		})
 	}
 
 	// Re-package destination output information.
 	var destOutputs []*DestOutput
-	for _, o := range tx.DestOutputs {
+	for _, o := range tx.OutputDetails {
 		destOutputs = append(destOutputs, &DestOutput{
 			PkScript:     hex.EncodeToString(o.PkScript),
 			OutputIndex:  int64(o.OutputIndex),
@@ -50,7 +72,7 @@ func RPCTransaction(tx *lnwallet.TransactionDetail) *Transaction {
 		TotalFees:        tx.TotalFees,
 		TimeStamp:        tx.Timestamp,
 		DestAddresses:    destAddresses,
-		DestOutputs:      destOutputs,
+		OutputDetails:    outputDetails,
 		DestOutputsCopy:  destOutputs,
 		RawTxHex:         hex.EncodeToString(tx.RawTx),
 		Label:            tx.Label,
