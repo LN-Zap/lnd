@@ -8,6 +8,7 @@ import (
 
 	"github.com/btcsuite/btcd/btcec"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcutil/hdkeychain"
@@ -83,8 +84,10 @@ type Utxo struct {
 	PrevTx     *wire.MsgTx
 }
 
-// DestOutput contains additional information on a destination address.
-type DestOutput struct {
+// OutputDetail contains additional information on a destination address.
+type OutputDetail struct {
+	OutputType   txscript.ScriptClass
+	Addresses    []btcutil.Address
 	PkScript     []byte
 	OutputIndex  int
 	Value        btcutil.Amount
@@ -128,9 +131,9 @@ type TransactionDetail struct {
 	// DestAddresses are the destinations for a transaction
 	DestAddresses []btcutil.Address
 
-	// DestOutputs contains output data for each destination address, such
+	// OutputDetails contains output data for each destination address, such
 	// as the output script and amount.
-	DestOutputs []DestOutput
+	OutputDetails []OutputDetail
 
 	// RawTx returns the raw serialized transaction.
 	RawTx []byte
