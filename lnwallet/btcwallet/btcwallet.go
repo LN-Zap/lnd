@@ -1025,19 +1025,21 @@ func minedTransactionsToDetails(
 		}
 
 		var destAddresses []btcutil.Address
-		var destOutputs []lnwallet.DestOutput
+		var outputDetails []lnwallet.OutputDetail
 		for i, txOut := range wireTx.TxOut {
-			_, outAddresses, _, err := txscript.ExtractPkScriptAddrs(
+			var addresses []btcutil.Address
+			sc, outAddresses, _, err := txscript.ExtractPkScriptAddrs(
 				txOut.PkScript, chainParams,
 			)
-			if err != nil {
-				// Skip any unsupported addresses to prevent
-				// other transactions from not being returned.
-				continue
+			if err == nil {
+				// Add supported addresses.
+				destAddresses = append(destAddresses, outAddresses...)
+				addresses = outAddresses
 			}
 
-			destAddresses = append(destAddresses, outAddresses...)
-			destOutputs = append(destOutputs, lnwallet.DestOutput{
+			outputDetails = append(outputDetails, lnwallet.OutputDetail{
+				OutputType:   sc,
+				Addresses:    addresses,
 				PkScript:     txOut.PkScript,
 				OutputIndex:  i,
 				Value:        btcutil.Amount(txOut.Value),
@@ -1053,7 +1055,7 @@ func minedTransactionsToDetails(
 			Timestamp:        block.Timestamp,
 			TotalFees:        int64(tx.Fee),
 			DestAddresses:    destAddresses,
-			DestOutputs:      destOutputs,
+			OutputDetails:    outputDetails,
 			RawTx:            tx.Transaction,
 			Label:            tx.Label,
 		}
@@ -1096,18 +1098,21 @@ func unminedTransactionsToDetail(
 	}
 
 	var destAddresses []btcutil.Address
-	var destOutputs []lnwallet.DestOutput
+	var outputDetails []lnwallet.OutputDetail
 	for i, txOut := range wireTx.TxOut {
-		_, outAddresses, _, err :=
-			txscript.ExtractPkScriptAddrs(txOut.PkScript, chainParams)
-		if err != nil {
-			// Skip any unsupported addresses to prevent other
-			// transactions from not being returned.
-			continue
+		var addresses []btcutil.Address
+		sc, outAddresses, _, err := txscript.ExtractPkScriptAddrs(
+			txOut.PkScript, chainParams,
+		)
+		if err == nil {
+			// Add supported addresses.
+			destAddresses = append(destAddresses, outAddresses...)
+			addresses = outAddresses
 		}
 
-		destAddresses = append(destAddresses, outAddresses...)
-		destOutputs = append(destOutputs, lnwallet.DestOutput{
+		outputDetails = append(outputDetails, lnwallet.OutputDetail{
+			OutputType:   sc,
+			Addresses:    addresses,
 			PkScript:     txOut.PkScript,
 			OutputIndex:  i,
 			Value:        btcutil.Amount(txOut.Value),
@@ -1120,7 +1125,7 @@ func unminedTransactionsToDetail(
 		TotalFees:     int64(summary.Fee),
 		Timestamp:     summary.Timestamp,
 		DestAddresses: destAddresses,
-		DestOutputs:   destOutputs,
+		OutputDetails: outputDetails,
 		RawTx:         summary.Transaction,
 		Label:         summary.Label,
 	}
