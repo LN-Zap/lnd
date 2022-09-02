@@ -204,10 +204,6 @@ func (r *RPCKeyRing) SignPsbt(packet *psbt.Packet) error {
 		considerShutdown(err)
 		return fmt.Errorf("error signing PSBT in remote signer "+
 			"instance: %v", err)
-
-		// Log as critical as we should shut down if there is no signer.
-		log.Criticalf("RPC signer error: %v", err)
-		return err
 	}
 
 	signedPacket, err := psbt.NewFromRawBytes(
