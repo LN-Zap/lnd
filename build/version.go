@@ -44,14 +44,14 @@ const (
 	AppMinor uint = 15
 
 	// AppPatch defines the application patch for this binary.
-	AppPatch uint = 2
+	AppPatch uint = 1
 
 	// AppPreRelease MUST only contain characters from semanticAlphabet
 	// per the semantic versioning spec.
 	AppPreRelease = "beta"
 
 	// StrikeMajor defines the major version for LND-Strike
-	StrikeMajor uint = 2
+	StrikeMajor uint = 3
 
 	// StrikeMinor defines the minor version for LND-Strike
 	StrikeMinor uint = 99
