@@ -1,6 +1,6 @@
 // Copyright (c) 2013-2017 The btcsuite developers
 // Copyright (c) 2015-2016 The Decred developers
-// Copyright (C) 2015-2017 The Lightning Network Developers
+// Copyright (C) 2015-2022 The Lightning Network Developers
 
 package lnd
 
@@ -12,22 +12,15 @@ import (
 	"io/ioutil"
 	"net"
 	"net/http"
-	_ "net/http/pprof" // Blank import to set up profiling HTTP handlers.
+	_ "net/http/pprof" // nolint:gosec // used to set up profiling HTTP handlers.
 	"os"
 	"runtime/pprof"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/btcsuite/btcutil"
+	"github.com/btcsuite/btcd/btcutil"
 	proxy "github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
-	"golang.org/x/crypto/acme/autocert"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/protobuf/encoding/protojson"
-	"gopkg.in/macaroon-bakery.v2/bakery"
-	"gopkg.in/macaroon.v2"
-
 	"github.com/lightningnetwork/lnd/autopilot"
 	"github.com/lightningnetwork/lnd/build"
 	"github.com/lightningnetwork/lnd/cert"
@@ -44,6 +37,12 @@ import (
 	"github.com/lightningnetwork/lnd/tor"
 	"github.com/lightningnetwork/lnd/walletunlocker"
 	"github.com/lightningnetwork/lnd/watchtower"
+	"golang.org/x/crypto/acme/autocert"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/protobuf/encoding/protojson"
+	"gopkg.in/macaroon-bakery.v2/bakery"
+	"gopkg.in/macaroon.v2"
 )
 
 const (
@@ -268,6 +267,9 @@ func Main(cfg *Config, lisCfg ListenerCfg, implCfg *ImplementationCfg,
 
 	rpcServerOpts := interceptorChain.CreateServerOpts()
 	serverOpts = append(serverOpts, rpcServerOpts...)
+	serverOpts = append(
+		serverOpts, grpc.MaxRecvMsgSize(lnrpc.MaxGrpcMsgSize),
+	)
 
 	grpcServer := grpc.NewServer(serverOpts...)
 	defer grpcServer.Stop()
@@ -456,7 +458,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, implCfg *ImplementationCfg,
 			Net:            cfg.net,
 			NewAddress: func() (btcutil.Address, error) {
 				return activeChainControl.Wallet.NewAddress(
-					lnwallet.WitnessPubKey, false,
+					lnwallet.TaprootPubkey, false,
 					lnwallet.DefaultAccountName,
 				)
 			},
@@ -494,15 +496,22 @@ func Main(cfg *Config, lisCfg ListenerCfg, implCfg *ImplementationCfg,
 		}
 	}
 
-	// Initialize the ChainedAcceptor.
-	chainedAcceptor := chanacceptor.NewChainedAcceptor()
+	// Initialize the MultiplexAcceptor. If lnd was started with the
+	// zero-conf feature bit, then this will be a ZeroConfAcceptor.
+	// Otherwise, this will be a ChainedAcceptor.
+	var multiAcceptor chanacceptor.MultiplexAcceptor
+	if cfg.ProtocolOptions.ZeroConf() {
+		multiAcceptor = chanacceptor.NewZeroConfAcceptor()
+	} else {
+		multiAcceptor = chanacceptor.NewChainedAcceptor()
+	}
 
 	// Set up the core server which will listen for incoming peer
 	// connections.
 	server, err := newServer(
 		cfg, cfg.Listeners, dbs, activeChainControl, &idKeyDesc,
 		activeChainControl.Cfg.WalletUnlockParams.ChansToRestore,
-		chainedAcceptor, torController,
+		multiAcceptor, torController,
 	)
 	if err != nil {
 		return mkErr("unable to create server: %v", err)
@@ -532,7 +541,7 @@ func Main(cfg *Config, lisCfg ListenerCfg, implCfg *ImplementationCfg,
 	// start the RPC server.
 	err = rpcServer.addDeps(
 		server, interceptorChain.MacaroonService(), cfg.SubRPCServers,
-		atplManager, server.invoices, tower, chainedAcceptor,
+		atplManager, server.invoices, tower, multiAcceptor,
 	)
 	if err != nil {
 		return mkErr("unable to add deps to RPC server: %v", err)
@@ -645,7 +654,7 @@ func getTLSConfig(cfg *Config) ([]grpc.ServerOption, []grpc.DialOption,
 		return nil, nil, nil, nil, err
 	}
 
-	// We check whether the certifcate we have on disk match the IPs and
+	// We check whether the certificate we have on disk match the IPs and
 	// domains specified by the config. If the extra IPs or domains have
 	// changed from when the certificate was created, we will refresh the
 	// certificate if auto refresh is active.
@@ -771,7 +780,7 @@ func getTLSConfig(cfg *Config) ([]grpc.ServerOption, []grpc.DialOption,
 	restDialOpts := []grpc.DialOption{
 		grpc.WithTransportCredentials(restCreds),
 		grpc.WithDefaultCallOptions(
-			grpc.MaxCallRecvMsgSize(1 * 1024 * 1024 * 200),
+			grpc.MaxCallRecvMsgSize(lnrpc.MaxGrpcMsgSize),
 		),
 	}
 
@@ -971,7 +980,16 @@ func startRestProxy(cfg *Config, rpcServer *rpcServer, restDialOpts []grpc.DialO
 			},
 		},
 	)
-	mux := proxy.NewServeMux(customMarshalerOption)
+	mux := proxy.NewServeMux(
+		customMarshalerOption,
+
+		// Don't allow falling back to other HTTP methods, we want exact
+		// matches only. The actual method to be used can be overwritten
+		// by setting X-HTTP-Method-Override so there should be no
+		// reason for not specifying the correct method in the first
+		// place.
+		proxy.WithDisablePathLengthFallback(),
+	)
 
 	// Register our services with the REST proxy.
 	err := lnrpc.RegisterStateHandlerFromEndpoint(

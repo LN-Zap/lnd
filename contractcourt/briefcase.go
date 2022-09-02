@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
@@ -181,7 +181,7 @@ const (
 	// |   |
 	// |   |-> StateFullyResolved: contract resolutions empty
 	// |
-	// |-> StateFullyResolved: coop/breach(legacy) close trigger
+	// |-> StateFullyResolved: coop/breach(legacy) close trigger.
 
 	// StateDefault is the default state. In this state, no major actions
 	// need to be executed.
@@ -378,7 +378,7 @@ var (
 	// chain resolutions.
 	errNoResolutions = fmt.Errorf("no contract resolutions exist")
 
-	// errNoActions is retuned when the log doesn't contain any stored
+	// errNoActions is returned when the log doesn't contain any stored
 	// chain actions.
 	errNoActions = fmt.Errorf("no chain actions exist")
 
@@ -1145,7 +1145,7 @@ func (b *boltArbitratorLog) checkpointContract(c ContractResolver,
 	}, func() {})
 }
 
-// encodeSignDetails encodes the gived SignDetails struct to the writer.
+// encodeSignDetails encodes the given SignDetails struct to the writer.
 // SignDetails is allowed to be nil, in which we will encode that it is not
 // present.
 func encodeSignDetails(w io.Writer, s *input.SignDetails) error {
@@ -1209,7 +1209,7 @@ func decodeSignDetails(r io.Reader) (*input.SignDetails, error) {
 	if err != nil {
 		return nil, err
 	}
-	sig, err := btcec.ParseDERSignature(rawSig, btcec.S256())
+	sig, err := ecdsa.ParseDERSignature(rawSig)
 	if err != nil {
 		return nil, err
 	}

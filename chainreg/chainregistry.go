@@ -7,15 +7,16 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/rpcclient"
-	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcwallet/chain"
 	"github.com/lightninglabs/neutrino"
 	"github.com/lightningnetwork/lnd/blockcache"
@@ -398,19 +399,31 @@ func NewPartialChainControl(cfg *Config) (*PartialChainControl, func(), error) {
 			}
 		}
 
-		// Establish the connection to bitcoind and create the clients
-		// required for our relevant subsystems.
-		bitcoindConn, err := chain.NewBitcoindConn(&chain.BitcoindConfig{
+		bitcoindCfg := &chain.BitcoindConfig{
 			ChainParams:        cfg.ActiveNetParams.Params,
 			Host:               bitcoindHost,
 			User:               bitcoindMode.RPCUser,
 			Pass:               bitcoindMode.RPCPass,
-			ZMQBlockHost:       bitcoindMode.ZMQPubRawBlock,
-			ZMQTxHost:          bitcoindMode.ZMQPubRawTx,
-			ZMQReadDeadline:    5 * time.Second,
 			Dialer:             cfg.Dialer,
 			PrunedModeMaxPeers: bitcoindMode.PrunedNodeMaxPeers,
-		})
+		}
+
+		if bitcoindMode.RPCPolling {
+			bitcoindCfg.PollingConfig = &chain.PollingConfig{
+				BlockPollingInterval: bitcoindMode.BlockPollingInterval,
+				TxPollingInterval:    bitcoindMode.TxPollingInterval,
+			}
+		} else {
+			bitcoindCfg.ZMQConfig = &chain.ZMQConfig{
+				ZMQBlockHost:    bitcoindMode.ZMQPubRawBlock,
+				ZMQTxHost:       bitcoindMode.ZMQPubRawTx,
+				ZMQReadDeadline: bitcoindMode.ZMQReadDeadline,
+			}
+		}
+
+		// Establish the connection to bitcoind and create the clients
+		// required for our relevant subsystems.
+		bitcoindConn, err := chain.NewBitcoindConn(bitcoindCfg)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -483,11 +496,100 @@ func NewPartialChainControl(cfg *Config) (*PartialChainControl, func(), error) {
 			return nil, nil, err
 		}
 
+		// Before we continue any further, we'll ensure that the
+		// backend understands Taproot. If not, then all the default
+		// features can't be used.
+		if !backendSupportsTaproot(chainConn) {
+			return nil, nil, fmt.Errorf("node backend does not " +
+				"support taproot")
+		}
+
 		// The api we will use for our health check depends on the
 		// bitcoind version.
-		cmd, err := getBitcoindHealthCheckCmd(chainConn)
+		cmd, ver, err := getBitcoindHealthCheckCmd(chainConn)
 		if err != nil {
 			return nil, nil, err
+		}
+
+		// If the getzmqnotifications api is available (was added in
+		// version 0.17.0) we make sure lnd subscribes to the correct
+		// zmq events. We do this to avoid a situation in which we are
+		// not notified of new transactions or blocks.
+		if ver >= 170000 && !bitcoindMode.RPCPolling {
+			zmqPubRawBlockURL, err := url.Parse(bitcoindMode.ZMQPubRawBlock)
+			if err != nil {
+				return nil, nil, err
+			}
+			zmqPubRawTxURL, err := url.Parse(bitcoindMode.ZMQPubRawTx)
+			if err != nil {
+				return nil, nil, err
+			}
+
+			// Fetch all active zmq notifications from the bitcoind client.
+			resp, err := chainConn.RawRequest("getzmqnotifications", nil)
+			if err != nil {
+				return nil, nil, err
+			}
+
+			zmq := []struct {
+				Type    string `json:"type"`
+				Address string `json:"address"`
+			}{}
+
+			if err = json.Unmarshal([]byte(resp), &zmq); err != nil {
+				return nil, nil, err
+			}
+
+			pubRawBlockActive := false
+			pubRawTxActive := false
+
+			for i := range zmq {
+				if zmq[i].Type == "pubrawblock" {
+					url, err := url.Parse(zmq[i].Address)
+					if err != nil {
+						return nil, nil, err
+					}
+					if url.Port() != zmqPubRawBlockURL.Port() {
+						log.Warnf(
+							"unable to subscribe to zmq block events on "+
+								"%s (bitcoind is running on %s)",
+							zmqPubRawBlockURL.Host,
+							url.Host,
+						)
+					}
+					pubRawBlockActive = true
+				}
+				if zmq[i].Type == "pubrawtx" {
+					url, err := url.Parse(zmq[i].Address)
+					if err != nil {
+						return nil, nil, err
+					}
+					if url.Port() != zmqPubRawTxURL.Port() {
+						log.Warnf(
+							"unable to subscribe to zmq tx events on "+
+								"%s (bitcoind is running on %s)",
+							zmqPubRawTxURL.Host,
+							url.Host,
+						)
+					}
+					pubRawTxActive = true
+				}
+			}
+
+			// Return an error if raw tx or raw block notification over
+			// zmq is inactive.
+			if !pubRawBlockActive {
+				return nil, nil, errors.New(
+					"block notification over zmq is inactive on " +
+						"bitcoind",
+				)
+			}
+			if !pubRawTxActive {
+				return nil, nil, errors.New(
+					"tx notification over zmq is inactive on " +
+						"bitcoind",
+				)
+			}
 		}
 
 		cc.HealthCheck = func() error {
@@ -579,6 +681,21 @@ func NewPartialChainControl(cfg *Config) (*PartialChainControl, func(), error) {
 		)
 		if err != nil {
 			return nil, nil, err
+		}
+
+		// Before we continue any further, we'll ensure that the
+		// backend understands Taproot. If not, then all the default
+		// features can't be used.
+		restConfCopy := *rpcConfig
+		restConfCopy.Endpoint = ""
+		restConfCopy.HTTPPostMode = true
+		chainConn, err := rpcclient.New(&restConfCopy, nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !backendSupportsTaproot(chainConn) {
+			return nil, nil, fmt.Errorf("node backend does not " +
+				"support taproot")
 		}
 
 		cc.ChainSource = chainRPC
@@ -727,11 +844,11 @@ func NewChainControl(walletConfig lnwallet.Config,
 // command, because it has no locking and is an inexpensive call, which was
 // added in version 0.15. If we are on an earlier version, we fallback to using
 // getblockchaininfo.
-func getBitcoindHealthCheckCmd(client *rpcclient.Client) (string, error) {
+func getBitcoindHealthCheckCmd(client *rpcclient.Client) (string, int64, error) {
 	// Query bitcoind to get our current version.
 	resp, err := client.RawRequest("getnetworkinfo", nil)
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 
 	// Parse the response to retrieve bitcoind's version.
@@ -739,7 +856,7 @@ func getBitcoindHealthCheckCmd(client *rpcclient.Client) (string, error) {
 		Version int64 `json:"version"`
 	}{}
 	if err := json.Unmarshal(resp, &info); err != nil {
-		return "", err
+		return "", 0, err
 	}
 
 	// Bitcoind returns a single value representing the semantic version:
@@ -749,10 +866,10 @@ func getBitcoindHealthCheckCmd(client *rpcclient.Client) (string, error) {
 	// The uptime call was added in version 0.15.0, so we return it for
 	// any version value >= 150000, as per the above calculation.
 	if info.Version >= 150000 {
-		return "uptime", nil
+		return "uptime", info.Version, nil
 	}
 
-	return "getblockchaininfo", nil
+	return "getblockchaininfo", info.Version, nil
 }
 
 var (
@@ -819,7 +936,7 @@ var (
 	// the network seed.
 	//
 	// TODO(roasbeef): extend and collapse these and chainparams.go into
-	// struct like chaincfg.Params
+	// struct like chaincfg.Params.
 	ChainDNSSeeds = map[chainhash.Hash][][2]string{
 		BitcoinMainnetGenesis: {
 			{
@@ -853,7 +970,7 @@ var (
 	}
 )
 
-// ChainRegistry keeps track of the current chains
+// ChainRegistry keeps track of the current chains.
 type ChainRegistry struct {
 	sync.RWMutex
 

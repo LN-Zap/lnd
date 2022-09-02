@@ -14,18 +14,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcjson"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/integration/rpctest"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcwallet/chain"
 	"github.com/btcsuite/btcwallet/walletdb"
 	"github.com/lightninglabs/neutrino"
 	"github.com/lightningnetwork/lnd/kvdb"
+	"github.com/lightningnetwork/lnd/lntest/wait"
+	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -42,7 +44,7 @@ var (
 // randPubKeyHashScript generates a P2PKH script that pays to the public key of
 // a randomly-generated private key.
 func randPubKeyHashScript() ([]byte, *btcec.PrivateKey, error) {
-	privKey, err := btcec.NewPrivateKey(btcec.S256())
+	privKey, err := btcec.NewPrivateKey()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -126,14 +128,10 @@ func CreateSpendableOutput(t *testing.T,
 	// Create a transaction that only has one output, the one destined for
 	// the recipient.
 	pkScript, privKey, err := randPubKeyHashScript()
-	if err != nil {
-		t.Fatalf("unable to generate pkScript: %v", err)
-	}
+	require.NoError(t, err, "unable to generate pkScript")
 	output := &wire.TxOut{Value: 2e8, PkScript: pkScript}
 	txid, err := miner.SendOutputsWithoutChange([]*wire.TxOut{output}, 10)
-	if err != nil {
-		t.Fatalf("unable to create tx: %v", err)
-	}
+	require.NoError(t, err, "unable to create tx")
 
 	// Mine the transaction to mark the output as spendable.
 	if err := WaitForMempoolTx(miner, txid); err != nil {
@@ -160,9 +158,7 @@ func CreateSpendTx(t *testing.T, prevOutPoint *wire.OutPoint,
 		spendingTx, 0, prevOutput.PkScript, txscript.SigHashAll,
 		privKey, true,
 	)
-	if err != nil {
-		t.Fatalf("unable to sign tx: %v", err)
-	}
+	require.NoError(t, err, "unable to sign tx")
 	spendingTx.TxIn[0].SignatureScript = sigScript
 
 	return spendingTx
@@ -180,9 +176,7 @@ func NewMiner(t *testing.T, extraArgs []string, createChain bool,
 	extraArgs = append(extraArgs, trickle)
 
 	node, err := rpctest.New(NetParams, nil, extraArgs, "")
-	if err != nil {
-		t.Fatalf("unable to create backend node: %v", err)
-	}
+	require.NoError(t, err, "unable to create backend node")
 	if err := node.SetUp(createChain, spendableOutputs); err != nil {
 		node.TearDown()
 		t.Fatalf("unable to set up backend node: %v", err)
@@ -193,17 +187,17 @@ func NewMiner(t *testing.T, extraArgs []string, createChain bool,
 
 // NewBitcoindBackend spawns a new bitcoind node that connects to a miner at the
 // specified address. The txindex boolean can be set to determine whether the
-// backend node should maintain a transaction index. A connection to the newly
-// spawned bitcoind node is returned.
-func NewBitcoindBackend(t *testing.T, minerAddr string,
-	txindex bool) (*chain.BitcoindConn, func()) {
+// backend node should maintain a transaction index. The rpcpolling boolean
+// can be set to determine whether bitcoind's RPC polling interface should be
+// used for block and tx notifications or if its ZMQ interface should be used.
+// A connection to the newly spawned bitcoind node is returned.
+func NewBitcoindBackend(t *testing.T, minerAddr string, txindex,
+	rpcpolling bool) (*chain.BitcoindConn, func()) {
 
 	t.Helper()
 
 	tempBitcoindDir, err := ioutil.TempDir("", "bitcoind")
-	if err != nil {
-		t.Fatalf("unable to create temp dir: %v", err)
-	}
+	require.NoError(t, err, "unable to create temp dir")
 
 	rpcPort := rand.Intn(65536-1024) + 1024
 	zmqBlockHost := "ipc:///" + tempBitcoindDir + "/blocks.socket"
@@ -231,29 +225,41 @@ func NewBitcoindBackend(t *testing.T, minerAddr string,
 	}
 
 	// Wait for the bitcoind instance to start up.
-	time.Sleep(time.Second)
-
 	host := fmt.Sprintf("127.0.0.1:%d", rpcPort)
-	conn, err := chain.NewBitcoindConn(&chain.BitcoindConfig{
-		ChainParams:     NetParams,
-		Host:            host,
-		User:            "weks",
-		Pass:            "weks",
-		ZMQBlockHost:    zmqBlockHost,
-		ZMQTxHost:       zmqTxHost,
-		ZMQReadDeadline: 5 * time.Second,
+	cfg := &chain.BitcoindConfig{
+		ChainParams: NetParams,
+		Host:        host,
+		User:        "weks",
+		Pass:        "weks",
 		// Fields only required for pruned nodes, not needed for these
 		// tests.
 		Dialer:             nil,
 		PrunedModeMaxPeers: 0,
-	})
-	if err != nil {
-		bitcoind.Process.Kill()
-		bitcoind.Wait()
-		os.RemoveAll(tempBitcoindDir)
-		t.Fatalf("unable to establish connection to bitcoind: %v", err)
 	}
-	if err := conn.Start(); err != nil {
+
+	if rpcpolling {
+		cfg.ZMQConfig = &chain.ZMQConfig{
+			ZMQBlockHost:    zmqBlockHost,
+			ZMQTxHost:       zmqTxHost,
+			ZMQReadDeadline: 5 * time.Second,
+		}
+	} else {
+		cfg.PollingConfig = &chain.PollingConfig{
+			BlockPollingInterval: time.Millisecond * 20,
+			TxPollingInterval:    time.Millisecond * 20,
+		}
+	}
+
+	var conn *chain.BitcoindConn
+	err = wait.NoError(func() error {
+		conn, err = chain.NewBitcoindConn(cfg)
+		if err != nil {
+			return err
+		}
+
+		return conn.Start()
+	}, 10*time.Second)
+	if err != nil {
 		bitcoind.Process.Kill()
 		bitcoind.Wait()
 		os.RemoveAll(tempBitcoindDir)
@@ -274,9 +280,7 @@ func NewNeutrinoBackend(t *testing.T, minerAddr string) (*neutrino.ChainService,
 	t.Helper()
 
 	spvDir, err := ioutil.TempDir("", "neutrino")
-	if err != nil {
-		t.Fatalf("unable to create temp dir: %v", err)
-	}
+	require.NoError(t, err, "unable to create temp dir")
 
 	dbName := filepath.Join(spvDir, "neutrino.db")
 	spvDatabase, err := walletdb.Create(

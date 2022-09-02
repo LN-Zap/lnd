@@ -20,7 +20,8 @@ import (
 // HTLC directly on-chain using the preimage in order to ensure that we don't
 // lose any funds.
 func testMultiHopHtlcRemoteChainClaim(net *lntest.NetworkHarness, t *harnessTest,
-	alice, bob *lntest.HarnessNode, c lnrpc.CommitmentType) {
+	alice, bob *lntest.HarnessNode, c lnrpc.CommitmentType,
+	zeroConf bool) {
 
 	ctxb := context.Background()
 
@@ -28,7 +29,7 @@ func testMultiHopHtlcRemoteChainClaim(net *lntest.NetworkHarness, t *harnessTest
 	// Carol refusing to actually settle or directly cancel any HTLC's
 	// self.
 	aliceChanPoint, bobChanPoint, carol := createThreeHopNetwork(
-		t, net, alice, bob, false, c,
+		t, net, alice, bob, false, c, zeroConf,
 	)
 
 	// Clean up carol's node when the test finishes.
@@ -184,7 +185,7 @@ func testMultiHopHtlcRemoteChainClaim(net *lntest.NetworkHarness, t *harnessTest
 	err = restartBob()
 	require.NoError(t.t, err)
 
-	// After the force close transacion is mined, we should expect Bob and
+	// After the force close transaction is mined, we should expect Bob and
 	// Carol to broadcast some transactions depending on the channel
 	// commitment type.
 	switch c {

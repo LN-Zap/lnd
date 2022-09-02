@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
 	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/htlcswitch"
@@ -38,12 +38,13 @@ const (
 	// timeout is a timeout value to use for tests which need to wait for
 	// a return value on a channel.
 	timeout = time.Second * 5
+
+	// testCltvRejectDelta is the minimum delta between expiry and current
+	// height below which htlcs are rejected.
+	testCltvRejectDelta = 13
 )
 
 var (
-	// Just use some arbitrary bytes as delivery script.
-	dummyDeliveryScript = channels.AlicesPrivKey
-
 	testKeyLoc = keychain.KeyLocator{Family: keychain.KeyFamilyNodeKey}
 )
 
@@ -64,13 +65,13 @@ func createTestPeer(notifier chainntnfs.ChainNotifier,
 		Family: keychain.KeyFamilyNodeKey,
 	}
 	aliceKeyPriv, aliceKeyPub := btcec.PrivKeyFromBytes(
-		btcec.S256(), channels.AlicesPrivKey,
+		channels.AlicesPrivKey,
 	)
 	aliceKeySigner := keychain.NewPrivKeyMessageSigner(
 		aliceKeyPriv, nodeKeyLocator,
 	)
 	bobKeyPriv, bobKeyPub := btcec.PrivKeyFromBytes(
-		btcec.S256(), channels.BobsPrivKey,
+		channels.BobsPrivKey,
 	)
 
 	channelCapacity := btcutil.Amount(10 * 1e8)
@@ -336,7 +337,11 @@ func createTestPeer(notifier chainntnfs.ChainNotifier,
 		OurPubKey:                aliceKeyPub,
 		OurKeyLoc:                testKeyLoc,
 		IsChannelActive:          func(lnwire.ChannelID) bool { return true },
-		ApplyChannelUpdate:       func(*lnwire.ChannelUpdate) error { return nil },
+		ApplyChannelUpdate: func(*lnwire.ChannelUpdate,
+			*wire.OutPoint, bool) error {
+
+			return nil
+		},
 	})
 	if err != nil {
 		return nil, nil, nil, err
@@ -360,24 +365,26 @@ func createTestPeer(notifier chainntnfs.ChainNotifier,
 	}
 
 	cfg := &Config{
-		Addr:        cfgAddr,
-		PubKeyBytes: pubKey,
-		ErrorBuffer: errBuffer,
-		ChainIO:     chainIO,
-		Switch:      mockSwitch,
-
+		Addr:              cfgAddr,
+		PubKeyBytes:       pubKey,
+		ErrorBuffer:       errBuffer,
+		ChainIO:           chainIO,
+		Switch:            mockSwitch,
 		ChanActiveTimeout: chanActiveTimeout,
-		InterceptSwitch:   htlcswitch.NewInterceptableSwitch(nil),
-
+		InterceptSwitch: htlcswitch.NewInterceptableSwitch(
+			nil, testCltvRejectDelta, false,
+		),
 		ChannelDB:      dbAlice.ChannelStateDB(),
 		FeeEstimator:   estimator,
 		Wallet:         wallet,
 		ChainNotifier:  notifier,
 		ChanStatusMgr:  chanStatusMgr,
+		Features:       lnwire.NewFeatureVector(nil, lnwire.Features),
 		DisconnectPeer: func(b *btcec.PublicKey) error { return nil },
 	}
 
 	alicePeer := NewBrontide(*cfg)
+	alicePeer.remoteFeatures = lnwire.NewFeatureVector(nil, lnwire.Features)
 
 	chanID := lnwire.NewChanIDFromOutPoint(channelAlice.ChannelPoint())
 	alicePeer.activeChannels[chanID] = channelAlice

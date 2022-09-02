@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwallet/chainfee"
@@ -139,7 +139,7 @@ func newTxInputSet(wallet Wallet, feePerKW chainfee.SatPerKWeight,
 func (t *txInputSet) enoughInput() bool {
 	// If we have a change output above dust, then we certainly have enough
 	// inputs to the transaction.
-	if t.changeOutput >= lnwallet.DustLimitForSize(input.P2WPKHSize) {
+	if t.changeOutput >= lnwallet.DustLimitForSize(input.P2TRSize) {
 		return true
 	}
 
@@ -210,7 +210,6 @@ func (t *txInputSet) addToState(inp input.Input, constraints addConstraints) *tx
 	inputYield := s.totalOutput() - t.totalOutput()
 
 	switch constraints {
-
 	// Don't sweep inputs that cost us more to sweep than they give us.
 	case constraintsRegular:
 		if inputYield <= 0 {
@@ -356,23 +355,26 @@ func (t *txInputSet) tryAddWalletInputsIfNeeded() error {
 // createWalletTxInput converts a wallet utxo into an object that can be added
 // to the other inputs to sweep.
 func createWalletTxInput(utxo *lnwallet.Utxo) (input.Input, error) {
-	var witnessType input.WitnessType
-	switch utxo.AddressType {
-	case lnwallet.WitnessPubKey:
-		witnessType = input.WitnessKeyHash
-	case lnwallet.NestedWitnessPubKey:
-		witnessType = input.NestedWitnessKeyHash
-	default:
-		return nil, fmt.Errorf("unknown address type %v",
-			utxo.AddressType)
-	}
-
 	signDesc := &input.SignDescriptor{
 		Output: &wire.TxOut{
 			PkScript: utxo.PkScript,
 			Value:    int64(utxo.Value),
 		},
 		HashType: txscript.SigHashAll,
+	}
+
+	var witnessType input.WitnessType
+	switch utxo.AddressType {
+	case lnwallet.WitnessPubKey:
+		witnessType = input.WitnessKeyHash
+	case lnwallet.NestedWitnessPubKey:
+		witnessType = input.NestedWitnessKeyHash
+	case lnwallet.TaprootPubkey:
+		witnessType = input.TaprootPubKeySpend
+		signDesc.HashType = txscript.SigHashDefault
+	default:
+		return nil, fmt.Errorf("unknown address type %v",
+			utxo.AddressType)
 	}
 
 	// A height hint doesn't need to be set, because we don't monitor these

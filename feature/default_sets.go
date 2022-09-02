@@ -64,7 +64,22 @@ var defaultSetDesc = setDesc{
 		SetInit:    {}, // I
 		SetNodeAnn: {}, // N
 	},
+	lnwire.KeysendOptional: {
+		SetNodeAnn: {}, // N
+	},
 	lnwire.ScriptEnforcedLeaseOptional: {
+		SetInit:    {}, // I
+		SetNodeAnn: {}, // N
+	},
+	lnwire.ScidAliasOptional: {
+		SetInit:    {}, // I
+		SetNodeAnn: {}, // N
+	},
+	lnwire.ZeroConfOptional: {
+		SetInit:    {}, // I
+		SetNodeAnn: {}, // N
+	},
+	lnwire.ShutdownAnySegwitOptional: {
 		SetInit:    {}, // I
 		SetNodeAnn: {}, // N
 	},

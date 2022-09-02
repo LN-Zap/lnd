@@ -1,8 +1,11 @@
 package mock
 
 import (
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/txscript"
 	"github.com/lightningnetwork/lnd/keychain"
 )
 
@@ -45,7 +48,7 @@ func (s *SecretKeyRing) ECDH(_ keychain.KeyDescriptor,
 
 // SignMessage signs the passed message and ignores the KeyDescriptor.
 func (s *SecretKeyRing) SignMessage(_ keychain.KeyLocator,
-	msg []byte, doubleHash bool) (*btcec.Signature, error) {
+	msg []byte, doubleHash bool) (*ecdsa.Signature, error) {
 
 	var digest []byte
 	if doubleHash {
@@ -53,7 +56,7 @@ func (s *SecretKeyRing) SignMessage(_ keychain.KeyLocator,
 	} else {
 		digest = chainhash.HashB(msg)
 	}
-	return s.RootKey.Sign(digest)
+	return ecdsa.Sign(s.RootKey, digest), nil
 }
 
 // SignMessageCompact signs the passed message.
@@ -66,5 +69,25 @@ func (s *SecretKeyRing) SignMessageCompact(_ keychain.KeyLocator,
 	} else {
 		digest = chainhash.HashB(msg)
 	}
-	return btcec.SignCompact(btcec.S256(), s.RootKey, digest, true)
+	return ecdsa.SignCompact(s.RootKey, digest, true)
+}
+
+// SignMessageSchnorr signs the passed message and ignores the KeyDescriptor.
+func (s *SecretKeyRing) SignMessageSchnorr(_ keychain.KeyLocator,
+	msg []byte, doubleHash bool, taprootTweak []byte) (*schnorr.Signature,
+	error) {
+
+	var digest []byte
+	if doubleHash {
+		digest = chainhash.DoubleHashB(msg)
+	} else {
+		digest = chainhash.HashB(msg)
+	}
+
+	privKey := s.RootKey
+	if len(taprootTweak) > 0 {
+		privKey = txscript.TweakTaprootPrivKey(privKey, taprootTweak)
+	}
+
+	return schnorr.Sign(privKey, digest)
 }

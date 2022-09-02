@@ -6,10 +6,10 @@ import (
 	"io"
 	"net"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -160,7 +160,7 @@ func NewSingle(channel *channeldb.OpenChannel,
 		// the backups plaintext don't carry any private information. When
 		// we go to recover, we'll present this in order to derive the
 		// private key.
-		_, shaChainPoint := btcec.PrivKeyFromBytes(btcec.S256(), b.Bytes())
+		_, shaChainPoint := btcec.PrivKeyFromBytes(b.Bytes())
 
 		shaChainRootDesc = keychain.KeyDescriptor{
 			PubKey: shaChainPoint,
@@ -177,7 +177,25 @@ func NewSingle(channel *channeldb.OpenChannel,
 	// to the channel ID so we can use that as height hint on restore.
 	chanID := channel.ShortChanID()
 	if chanID.BlockHeight == 0 {
-		chanID.BlockHeight = channel.FundingBroadcastHeight
+		chanID.BlockHeight = channel.BroadcastHeight()
+	}
+
+	// If this is a zero-conf channel, we'll need to have separate logic
+	// depending on whether it's confirmed or not. This is because the
+	// ShortChanID is an alias.
+	if channel.IsZeroConf() {
+		// If the channel is confirmed, we'll use the confirmed SCID.
+		if channel.ZeroConfConfirmed() {
+			chanID = channel.ZeroConfRealScid()
+		} else {
+			// Else if the zero-conf channel is unconfirmed, we'll
+			// need to use the broadcast height and zero out the
+			// TxIndex and TxPosition fields. This is so
+			// openChannelShell works properly.
+			chanID.BlockHeight = channel.BroadcastHeight()
+			chanID.TxIndex = 0
+			chanID.TxPosition = 0
+		}
 	}
 
 	single := Single{
@@ -369,12 +387,10 @@ func readRemoteKeyDesc(r io.Reader) (keychain.KeyDescriptor, error) {
 		return keychain.KeyDescriptor{}, err
 	}
 
-	keyDesc.PubKey, err = btcec.ParsePubKey(pub[:], btcec.S256())
+	keyDesc.PubKey, err = btcec.ParsePubKey(pub[:])
 	if err != nil {
 		return keychain.KeyDescriptor{}, err
 	}
-
-	keyDesc.PubKey.Curve = nil
 
 	return keyDesc, nil
 }
@@ -480,7 +496,7 @@ func (s *Single) Deserialize(r io.Reader) error {
 	// been specified or not.
 	if !bytes.Equal(shaChainPub[:], zeroPub[:]) {
 		s.ShaChainRootDesc.PubKey, err = btcec.ParsePubKey(
-			shaChainPub[:], btcec.S256(),
+			shaChainPub[:],
 		)
 		if err != nil {
 			return err

@@ -2,13 +2,12 @@ package chanacceptor
 
 import (
 	"errors"
-	"math/big"
 	"testing"
 	"time"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcutil"
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lnwallet/chancloser"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -126,10 +125,10 @@ func (c *channelAcceptorCtx) stop() {
 // request in a goroutine and then asserts that we get the outcome we expect.
 func (c *channelAcceptorCtx) queryAndAssert(queries map[*lnwire.OpenChannel]*ChannelAcceptResponse) {
 	var (
-		node = &btcec.PublicKey{
-			X: big.NewInt(1),
-			Y: big.NewInt(1),
-		}
+		node = btcec.NewPublicKey(
+			new(btcec.FieldVal).SetInt(1),
+			new(btcec.FieldVal).SetInt(1),
+		)
 
 		responses = make(chan struct{})
 	)
@@ -185,13 +184,15 @@ func TestMultipleAcceptClients(t *testing.T) {
 		queries = map[*lnwire.OpenChannel]*ChannelAcceptResponse{
 			chan1: NewChannelAcceptResponse(
 				true, nil, testUpfront, 1, 2, 3, 4, 5, 6,
+				false,
 			),
 			chan2: NewChannelAcceptResponse(
 				false, errChannelRejected, nil, 0, 0, 0,
-				0, 0, 0,
+				0, 0, 0, false,
 			),
 			chan3: NewChannelAcceptResponse(
 				false, customError, nil, 0, 0, 0, 0, 0, 0,
+				false,
 			),
 		}
 
@@ -246,7 +247,7 @@ func TestInvalidResponse(t *testing.T) {
 				PendingChannelID: chan1,
 			}: NewChannelAcceptResponse(
 				false, errChannelRejected, nil, 0, 0,
-				0, 0, 0, 0,
+				0, 0, 0, 0, false,
 			),
 		}
 
@@ -289,7 +290,7 @@ func TestInvalidReserve(t *testing.T) {
 				DustLimit:        dustLimit,
 			}: NewChannelAcceptResponse(
 				false, errChannelRejected, nil, 0, 0,
-				0, reserve, 0, 0,
+				0, reserve, 0, 0, false,
 			),
 		}
 

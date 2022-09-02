@@ -9,9 +9,9 @@ import (
 	"math"
 	"net"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
 	"github.com/lightningnetwork/lnd/tor"
 )
 
@@ -32,6 +32,9 @@ var (
 	// ErrNilNetAddress is returned when a nil value is used in []net.Addr.
 	ErrNilNetAddress = errors.New("cannot write nil address")
 
+	// ErrNilOpaqueAddrs is returned when the supplied address is nil.
+	ErrNilOpaqueAddrs = errors.New("cannot write nil OpaqueAddrs")
+
 	// ErrNilPublicKey is returned when a nil pubkey is used.
 	ErrNilPublicKey = errors.New("cannot write nil pubkey")
 
@@ -50,32 +53,20 @@ func ErrOutpointIndexTooBig(index uint32) error {
 }
 
 // WriteBytes appends the given bytes to the provided buffer.
-//
-// Note: We intentionally skip the interfacer linter check here because we want
-// to have concrete type (bytes.Buffer) rather than interface type (io.Write)
-// due to performance concern.
-func WriteBytes(buf *bytes.Buffer, b []byte) error { // nolint: interfacer
+func WriteBytes(buf *bytes.Buffer, b []byte) error {
 	_, err := buf.Write(b)
 	return err
 }
 
 // WriteUint8 appends the uint8 to the provided buffer.
-//
-// Note: We intentionally skip the interfacer linter check here because we want
-// to have concrete type (bytes.Buffer) rather than interface type (io.Write)
-// due to performance concern.
-func WriteUint8(buf *bytes.Buffer, n uint8) error { // nolint: interfacer
+func WriteUint8(buf *bytes.Buffer, n uint8) error {
 	_, err := buf.Write([]byte{n})
 	return err
 }
 
 // WriteUint16 appends the uint16 to the provided buffer. It encodes the
 // integer using big endian byte order.
-//
-// Note: We intentionally skip the interfacer linter check here because we want
-// to have concrete type (bytes.Buffer) rather than interface type (io.Write)
-// due to performance concern.
-func WriteUint16(buf *bytes.Buffer, n uint16) error { // nolint: interfacer
+func WriteUint16(buf *bytes.Buffer, n uint16) error {
 	var b [2]byte
 	binary.BigEndian.PutUint16(b[:], n)
 	_, err := buf.Write(b[:])
@@ -93,11 +84,7 @@ func WriteUint32(buf *bytes.Buffer, n uint32) error {
 
 // WriteUint64 appends the uint64 to the provided buffer. It encodes the
 // integer using big endian byte order.
-//
-// Note: We intentionally skip the interfacer linter check here because we want
-// to have concrete type (bytes.Buffer) rather than interface type (io.Write)
-// due to performance concern.
-func WriteUint64(buf *bytes.Buffer, n uint64) error { // nolint: interfacer
+func WriteUint64(buf *bytes.Buffer, n uint64) error {
 	var b [8]byte
 	binary.BigEndian.PutUint64(b[:], n)
 	_, err := buf.Write(b[:])
@@ -122,7 +109,6 @@ func WritePublicKey(buf *bytes.Buffer, pub *btcec.PublicKey) error {
 
 	serializedPubkey := pub.SerializeCompressed()
 	return WriteBytes(buf, serializedPubkey)
-
 }
 
 // WriteChannelID appends the ChannelID to the provided buffer.
@@ -195,13 +181,7 @@ func WriteFailCode(buf *bytes.Buffer, e FailCode) error {
 // WriteRawFeatureVector encodes the feature using the feature's Encode method
 // and appends the data to the provided buffer. An error will return if the
 // passed feature is nil.
-//
-// Note: We intentionally skip the interfacer linter check here because we want
-// to have concrete type (bytes.Buffer) rather than interface type (io.Write)
-// due to performance concern.
-func WriteRawFeatureVector(buf *bytes.Buffer, // nolint: interfacer
-	feature *RawFeatureVector) error {
-
+func WriteRawFeatureVector(buf *bytes.Buffer, feature *RawFeatureVector) error {
 	if feature == nil {
 		return ErrNilFeatureVector
 	}
@@ -281,11 +261,7 @@ func WriteBool(buf *bytes.Buffer, b bool) error {
 
 // WritePkScript appends the script to the provided buffer. Returns an error if
 // the provided script exceeds 34 bytes.
-//
-// Note: We intentionally skip the interfacer linter check here because we want
-// to have concrete type (bytes.Buffer) rather than interface type (io.Write)
-// due to performance concern.
-func WritePkScript(buf *bytes.Buffer, s PkScript) error { // nolint: interfacer
+func WritePkScript(buf *bytes.Buffer, s PkScript) error {
 	// The largest script we'll accept is a p2wsh which is exactly
 	// 34 bytes long.
 	scriptLength := len(s)
@@ -384,6 +360,16 @@ func WriteOnionAddr(buf *bytes.Buffer, addr *tor.OnionAddr) error {
 	return WriteUint16(buf, uint16(addr.Port))
 }
 
+// WriteOpaqueAddrs appends the payload of the given OpaqueAddrs to buffer.
+func WriteOpaqueAddrs(buf *bytes.Buffer, addr *OpaqueAddrs) error {
+	if addr == nil {
+		return ErrNilOpaqueAddrs
+	}
+
+	_, err := buf.Write(addr.Payload)
+	return err
+}
+
 // WriteNetAddrs appends a slice of addresses to the provided buffer with the
 // length info.
 func WriteNetAddrs(buf *bytes.Buffer, addresses []net.Addr) error {
@@ -403,6 +389,10 @@ func WriteNetAddrs(buf *bytes.Buffer, addresses []net.Addr) error {
 			if err := WriteOnionAddr(addrBuf, a); err != nil {
 				return err
 			}
+		case *OpaqueAddrs:
+			if err := WriteOpaqueAddrs(addrBuf, a); err != nil {
+				return err
+			}
 		default:
 			return ErrNilNetAddress
 		}
@@ -413,13 +403,7 @@ func WriteNetAddrs(buf *bytes.Buffer, addresses []net.Addr) error {
 }
 
 // writeDataWithLength writes the data and its length to the buffer.
-//
-// Note: We intentionally skip the interfacer linter check here because we want
-// to have concrete type (bytes.Buffer) rather than interface type (io.Write)
-// due to performance concern.
-func writeDataWithLength(buf *bytes.Buffer, // nolint: interfacer
-	data []byte) error {
-
+func writeDataWithLength(buf *bytes.Buffer, data []byte) error {
 	var l [2]byte
 	binary.BigEndian.PutUint16(l[:], uint16(len(data)))
 	if _, err := buf.Write(l[:]); err != nil {

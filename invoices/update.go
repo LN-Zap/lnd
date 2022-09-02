@@ -1,6 +1,7 @@
 package invoices
 
 import (
+	"encoding/hex"
 	"errors"
 
 	"github.com/lightningnetwork/lnd/amp"
@@ -22,6 +23,7 @@ type invoiceUpdateCtx struct {
 	customRecords        record.CustomSet
 	mpp                  *record.MPP
 	amp                  *record.AMP
+	metadata             []byte
 }
 
 // invoiceRef returns an identifier that can be used to lookup or update the
@@ -52,9 +54,16 @@ func (i invoiceUpdateCtx) setID() *[32]byte {
 
 // log logs a message specific to this update context.
 func (i *invoiceUpdateCtx) log(s string) {
+	// Don't use %x in the log statement below, because it doesn't
+	// distinguish between nil and empty metadata.
+	metadata := "<nil>"
+	if i.metadata != nil {
+		metadata = hex.EncodeToString(i.metadata)
+	}
+
 	log.Debugf("Invoice%v: %v, amt=%v, expiry=%v, circuit=%v, mpp=%v, "+
-		"amp=%v", i.invoiceRef(), s, i.amtPaid, i.expiry, i.circuitKey,
-		i.mpp, i.amp)
+		"amp=%v, metadata=%v", i.invoiceRef(), s, i.amtPaid, i.expiry,
+		i.circuitKey, i.mpp, i.amp, metadata)
 }
 
 // failRes is a helper function which creates a failure resolution with
@@ -99,8 +108,16 @@ func updateInvoice(ctx *invoiceUpdateCtx, inv *channeldb.Invoice) (
 			return nil, ctx.acceptRes(resultReplayToAccepted), nil
 
 		case channeldb.HtlcStateSettled:
+			pre := inv.Terms.PaymentPreimage
+
+			// Terms.PaymentPreimage will be nil for AMP invoices.
+			// Set it to the HTLC's AMP Preimage instead.
+			if pre == nil {
+				pre = htlc.AMP.Preimage
+			}
+
 			return nil, ctx.settleRes(
-				*inv.Terms.PaymentPreimage,
+				*pre,
 				ResultReplayToSettled,
 			), nil
 
@@ -128,7 +145,6 @@ func updateMpp(ctx *invoiceUpdateCtx,
 	// Reject HTLCs to AMP invoices if they are missing an AMP payload, and
 	// HTLCs to MPP invoices if they have an AMP payload.
 	switch {
-
 	case inv.Terms.Features.RequiresFeature(lnwire.AMPRequired) &&
 		ctx.amp == nil:
 
@@ -188,13 +204,6 @@ func updateMpp(ctx *invoiceUpdateCtx,
 	// Check whether total amt matches other htlcs in the set.
 	var newSetTotal lnwire.MilliSatoshi
 	for _, htlc := range htlcSet {
-		// Only consider accepted mpp htlcs. It is possible that there
-		// are htlcs registered in the invoice database that previously
-		// timed out and are in the canceled state now.
-		if htlc.State != channeldb.HtlcStateAccepted {
-			continue
-		}
-
 		if ctx.mpp.TotalMsat() != htlc.MppTotalAmt {
 			return nil, ctx.failRes(ResultHtlcSetTotalMismatch), nil
 		}
@@ -217,6 +226,10 @@ func updateMpp(ctx *invoiceUpdateCtx,
 
 	if ctx.expiry < uint32(ctx.currentHeight+inv.Terms.FinalCltvDelta) {
 		return nil, ctx.failRes(ResultExpiryTooSoon), nil
+	}
+
+	if setID != nil && *setID == channeldb.BlankPayAddr {
+		return nil, ctx.failRes(ResultAmpError), nil
 	}
 
 	// Record HTLC in the invoice database.
@@ -286,7 +299,7 @@ type HTLCPreimages = map[channeldb.CircuitKey]lntypes.Preimage
 // verifies that all derived child hashes match the payment hashes of the HTLCs
 // in the set. This method is meant to be called after receiving the full amount
 // committed to via mpp_total_msat. This method will return a fail resolution if
-// any of the child hashes fail to matche theire corresponding HTLCs.
+// any of the child hashes fail to match their corresponding HTLCs.
 func reconstructAMPPreimages(ctx *invoiceUpdateCtx,
 	htlcSet HTLCSet) (HTLCPreimages, *HtlcFailResolution) {
 

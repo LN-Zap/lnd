@@ -3,15 +3,15 @@ package autopilot
 import (
 	"bytes"
 	"io/ioutil"
+	prand "math/rand"
 	"os"
 	"testing"
 	"time"
 
-	prand "math/rand"
-
-	"github.com/btcsuite/btcd/btcec"
-	"github.com/btcsuite/btcutil"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/stretchr/testify/require"
 )
 
 type genGraphFunc func() (testGraph, func(), error)
@@ -78,9 +78,7 @@ func TestPrefAttachmentSelectEmptyGraph(t *testing.T) {
 
 	// Create a random public key, which we will query to get a score for.
 	pub, err := randKey()
-	if err != nil {
-		t.Fatalf("unable to generate key: %v", err)
-	}
+	require.NoError(t, err, "unable to generate key")
 
 	nodes := map[NodeID]struct{}{
 		NewNodeID(pub): {},
@@ -253,9 +251,7 @@ func TestPrefAttachmentSelectGreedyAllocation(t *testing.T) {
 				t1.Fatalf("unable to create channel: %v", err)
 			}
 			peerPubBytes := edge1.Peer.PubKey()
-			peerPub, err := btcec.ParsePubKey(
-				peerPubBytes[:], btcec.S256(),
-			)
+			peerPub, err := btcec.ParsePubKey(peerPubBytes[:])
 			if err != nil {
 				t.Fatalf("unable to parse pubkey: %v", err)
 			}

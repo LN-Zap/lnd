@@ -5,14 +5,13 @@ import (
 	"net"
 	"sync"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/keychain"
-	"github.com/lightningnetwork/lnd/lnwallet/chainfee"
 	"github.com/lightningnetwork/lnd/lnwallet/chanfunding"
 	"github.com/lightningnetwork/lnd/lnwire"
 )
@@ -208,11 +207,9 @@ type ChannelReservation struct {
 // creation of all channel reservations should be carried out via the
 // lnwallet.InitChannelReservation interface.
 func NewChannelReservation(capacity, localFundingAmt btcutil.Amount,
-	commitFeePerKw chainfee.SatPerKWeight, wallet *LightningWallet,
-	id uint64, pushMSat lnwire.MilliSatoshi, chainHash *chainhash.Hash,
-	flags lnwire.FundingFlag, commitType CommitmentType,
-	fundingAssembler chanfunding.Assembler,
-	pendingChanID [32]byte, thawHeight uint32) (*ChannelReservation, error) {
+	wallet *LightningWallet, id uint64, chainHash *chainhash.Hash,
+	thawHeight uint32, req *InitFundingReserveMsg) (*ChannelReservation,
+	error) {
 
 	var (
 		ourBalance   lnwire.MilliSatoshi
@@ -223,10 +220,10 @@ func NewChannelReservation(capacity, localFundingAmt btcutil.Amount,
 	// Based on the channel type, we determine the initial commit weight
 	// and fee.
 	commitWeight := int64(input.CommitWeight)
-	if commitType.HasAnchors() {
+	if req.CommitType.HasAnchors() {
 		commitWeight = int64(input.AnchorCommitWeight)
 	}
-	commitFee := commitFeePerKw.FeeForWeight(commitWeight)
+	commitFee := req.CommitFeePerKw.FeeForWeight(commitWeight)
 
 	localFundingMSat := lnwire.NewMSatFromSatoshis(localFundingAmt)
 	// TODO(halseth): make method take remote funding amount directly
@@ -236,7 +233,7 @@ func NewChannelReservation(capacity, localFundingAmt btcutil.Amount,
 	// The total fee paid by the initiator will be the commitment fee in
 	// addition to the two anchor outputs.
 	feeMSat := lnwire.NewMSatFromSatoshis(commitFee)
-	if commitType.HasAnchors() {
+	if req.CommitType.HasAnchors() {
 		feeMSat += 2 * lnwire.NewMSatFromSatoshis(anchorSize)
 	}
 
@@ -247,8 +244,8 @@ func NewChannelReservation(capacity, localFundingAmt btcutil.Amount,
 	// no initial balance in the channel unless the remote party is pushing
 	// some funds to us within the first commitment state.
 	if localFundingAmt == 0 {
-		ourBalance = pushMSat
-		theirBalance = capacityMSat - feeMSat - pushMSat
+		ourBalance = req.PushMSat
+		theirBalance = capacityMSat - feeMSat - req.PushMSat
 		initiator = false
 
 		// If the responder doesn't have enough funds to actually pay
@@ -268,14 +265,14 @@ func NewChannelReservation(capacity, localFundingAmt btcutil.Amount,
 			// we pay all the initial fees within the commitment
 			// transaction. We also deduct our balance by the
 			// amount pushed as part of the initial state.
-			ourBalance = capacityMSat - feeMSat - pushMSat
-			theirBalance = pushMSat
+			ourBalance = capacityMSat - feeMSat - req.PushMSat
+			theirBalance = req.PushMSat
 		} else {
 			// Otherwise, this is a dual funder workflow where both
 			// slides split the amount funded and the commitment
 			// fee.
 			ourBalance = localFundingMSat - (feeMSat / 2)
-			theirBalance = capacityMSat - localFundingMSat - (feeMSat / 2) + pushMSat
+			theirBalance = capacityMSat - localFundingMSat - (feeMSat / 2) + req.PushMSat
 		}
 
 		initiator = true
@@ -320,16 +317,16 @@ func NewChannelReservation(capacity, localFundingAmt btcutil.Amount,
 	// If either of the balances are zero at this point, or we have a
 	// non-zero push amt (there's no pushing for dual funder), then this is
 	// a single-funder channel.
-	if ourBalance == 0 || theirBalance == 0 || pushMSat != 0 {
+	if ourBalance == 0 || theirBalance == 0 || req.PushMSat != 0 {
 		// Both the tweakless type and the anchor type is tweakless,
 		// hence set the bit.
-		if commitType.HasStaticRemoteKey() {
+		if req.CommitType.HasStaticRemoteKey() {
 			chanType |= channeldb.SingleFunderTweaklessBit
 		} else {
 			chanType |= channeldb.SingleFunderBit
 		}
 
-		switch a := fundingAssembler.(type) {
+		switch a := req.ChanFunder.(type) {
 		// The first channels of a batch shouldn't publish the batch TX
 		// to avoid problems if some of the funding flows can't be
 		// completed. Only the last channel of a batch should publish.
@@ -349,7 +346,6 @@ func NewChannelReservation(capacity, localFundingAmt btcutil.Amount,
 		default:
 			chanType |= channeldb.NoFundingTxBit
 		}
-
 	} else {
 		// Otherwise, this is a dual funder channel, and no side is
 		// technically the "initiator"
@@ -359,14 +355,14 @@ func NewChannelReservation(capacity, localFundingAmt btcutil.Amount,
 
 	// We are adding anchor outputs to our commitment. We only support this
 	// in combination with zero-fee second-levels HTLCs.
-	if commitType.HasAnchors() {
+	if req.CommitType.HasAnchors() {
 		chanType |= channeldb.AnchorOutputsBit
 		chanType |= channeldb.ZeroHtlcTxFeeBit
 	}
 
 	// Set the appropriate LeaseExpiration/Frozen bit based on the
 	// reservation parameters.
-	if commitType == CommitmentTypeScriptEnforcedLease {
+	if req.CommitType == CommitmentTypeScriptEnforcedLease {
 		if thawHeight == 0 {
 			return nil, errors.New("missing absolute expiration " +
 				"for script enforced lease commitment type")
@@ -374,6 +370,18 @@ func NewChannelReservation(capacity, localFundingAmt btcutil.Amount,
 		chanType |= channeldb.LeaseExpirationBit
 	} else if thawHeight > 0 {
 		chanType |= channeldb.FrozenBit
+	}
+
+	if req.ZeroConf {
+		chanType |= channeldb.ZeroConfBit
+	}
+
+	if req.OptionScidAlias {
+		chanType |= channeldb.ScidAliasChanBit
+	}
+
+	if req.ScidAliasFeature {
+		chanType |= channeldb.ScidAliasFeatureBit
 	}
 
 	return &ChannelReservation{
@@ -390,29 +398,39 @@ func NewChannelReservation(capacity, localFundingAmt btcutil.Amount,
 			ChainHash:    *chainHash,
 			IsPending:    true,
 			IsInitiator:  initiator,
-			ChannelFlags: flags,
+			ChannelFlags: req.Flags,
 			Capacity:     capacity,
 			LocalCommitment: channeldb.ChannelCommitment{
 				LocalBalance:  ourBalance,
 				RemoteBalance: theirBalance,
-				FeePerKw:      btcutil.Amount(commitFeePerKw),
+				FeePerKw:      btcutil.Amount(req.CommitFeePerKw),
 				CommitFee:     commitFee,
 			},
 			RemoteCommitment: channeldb.ChannelCommitment{
 				LocalBalance:  ourBalance,
 				RemoteBalance: theirBalance,
-				FeePerKw:      btcutil.Amount(commitFeePerKw),
+				FeePerKw:      btcutil.Amount(req.CommitFeePerKw),
 				CommitFee:     commitFee,
 			},
-			ThawHeight: thawHeight,
-			Db:         wallet.Cfg.Database,
+			ThawHeight:           thawHeight,
+			Db:                   wallet.Cfg.Database,
+			InitialLocalBalance:  ourBalance,
+			InitialRemoteBalance: theirBalance,
 		},
-		pushMSat:      pushMSat,
-		pendingChanID: pendingChanID,
+		pushMSat:      req.PushMSat,
+		pendingChanID: req.PendingChanID,
 		reservationID: id,
 		wallet:        wallet,
-		chanFunder:    fundingAssembler,
+		chanFunder:    req.ChanFunder,
 	}, nil
+}
+
+// AddAlias stores the first alias for zero-conf channels.
+func (r *ChannelReservation) AddAlias(scid lnwire.ShortChannelID) {
+	r.Lock()
+	defer r.Unlock()
+
+	r.partialState.ShortChannelID = scid
 }
 
 // SetNumConfsRequired sets the number of confirmations that are required for
@@ -427,6 +445,15 @@ func (r *ChannelReservation) SetNumConfsRequired(numConfs uint16) {
 	r.partialState.NumConfsRequired = numConfs
 }
 
+// IsZeroConf returns if the reservation's underlying partial channel state is
+// a zero-conf channel.
+func (r *ChannelReservation) IsZeroConf() bool {
+	r.RLock()
+	defer r.RUnlock()
+
+	return r.partialState.IsZeroConf()
+}
+
 // CommitConstraints takes the constraints that the remote party specifies for
 // the type of commitments that we can generate for them. These constraints
 // include several parameters that serve as flow control restricting the amount
@@ -435,6 +462,7 @@ func (r *ChannelReservation) SetNumConfsRequired(numConfs uint16) {
 // if the parameters are seemed unsound.
 func (r *ChannelReservation) CommitConstraints(c *channeldb.ChannelConstraints,
 	maxLocalCSVDelay uint16, responder bool) error {
+
 	r.Lock()
 	defer r.Unlock()
 

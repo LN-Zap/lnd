@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/keychain"
@@ -495,9 +495,7 @@ func testSpendValidation(t *testing.T, tweakless bool) {
 	// doesn't need to exist, as we'll only be validating spending from the
 	// transaction that references this.
 	txid, err := chainhash.NewHash(testHdSeed.CloneBytes())
-	if err != nil {
-		t.Fatalf("unable to create txid: %v", err)
-	}
+	require.NoError(t, err, "unable to create txid")
 	fundingOut := &wire.OutPoint{
 		Hash:  *txid,
 		Index: 50,
@@ -511,15 +509,15 @@ func testSpendValidation(t *testing.T, tweakless bool) {
 	// Each side currently has 1 BTC within the channel, with a total
 	// channel capacity of 2BTC.
 	aliceKeyPriv, aliceKeyPub := btcec.PrivKeyFromBytes(
-		btcec.S256(), testWalletPrivKey,
+		testWalletPrivKey,
 	)
 	bobKeyPriv, bobKeyPub := btcec.PrivKeyFromBytes(
-		btcec.S256(), bobsPrivKey,
+		bobsPrivKey,
 	)
 
 	revocationPreimage := testHdSeed.CloneBytes()
 	commitSecret, commitPoint := btcec.PrivKeyFromBytes(
-		btcec.S256(), revocationPreimage,
+		revocationPreimage,
 	)
 	revokePubKey := input.DeriveRevocationPubkey(bobKeyPub, commitPoint)
 
@@ -585,9 +583,7 @@ func testSpendValidation(t *testing.T, tweakless bool) {
 	// We're testing an uncooperative close, output sweep, so construct a
 	// transaction which sweeps the funds to a random address.
 	targetOutput, err := input.CommitScriptUnencumbered(aliceKeyPub)
-	if err != nil {
-		t.Fatalf("unable to create target output: %v", err)
-	}
+	require.NoError(t, err, "unable to create target output")
 	sweepTx := wire.NewMsgTx(2)
 	sweepTx.AddTxIn(wire.NewTxIn(&wire.OutPoint{
 		Hash:  commitmentTx.TxHash(),
@@ -602,9 +598,7 @@ func testSpendValidation(t *testing.T, tweakless bool) {
 	delayScript, err := input.CommitScriptToSelf(
 		csvTimeout, aliceDelayKey, revokePubKey,
 	)
-	if err != nil {
-		t.Fatalf("unable to generate alice delay script: %v", err)
-	}
+	require.NoError(t, err, "unable to generate alice delay script")
 	sweepTx.TxIn[0].Sequence = input.LockTimeToSequence(false, csvTimeout)
 	signDesc := &input.SignDescriptor{
 		WitnessScript: delayScript,
@@ -612,7 +606,7 @@ func testSpendValidation(t *testing.T, tweakless bool) {
 			PubKey: aliceKeyPub,
 		},
 		SingleTweak: remoteCommitTweak,
-		SigHashes:   txscript.NewTxSigHashes(sweepTx),
+		SigHashes:   input.NewTxSigHashesV0Only(sweepTx),
 		Output: &wire.TxOut{
 			Value: int64(channelBalance),
 		},
@@ -622,16 +616,14 @@ func testSpendValidation(t *testing.T, tweakless bool) {
 	aliceWitnessSpend, err := input.CommitSpendTimeout(
 		aliceSelfOutputSigner, signDesc, sweepTx,
 	)
-	if err != nil {
-		t.Fatalf("unable to generate delay commit spend witness: %v", err)
-	}
+	require.NoError(t, err, "unable to generate delay commit spend witness")
 	sweepTx.TxIn[0].Witness = aliceWitnessSpend
-	vm, err := txscript.NewEngine(delayOutput.PkScript,
-		sweepTx, 0, txscript.StandardVerifyFlags, nil,
-		nil, int64(channelBalance))
-	if err != nil {
-		t.Fatalf("unable to create engine: %v", err)
-	}
+	vm, err := txscript.NewEngine(
+		delayOutput.PkScript, sweepTx, 0, txscript.StandardVerifyFlags,
+		nil, nil, int64(channelBalance),
+		txscript.NewCannedPrevOutputFetcher(nil, 0),
+	)
+	require.NoError(t, err, "unable to create engine")
 	if err := vm.Execute(); err != nil {
 		t.Fatalf("spend from delay output is invalid: %v", err)
 	}
@@ -647,7 +639,7 @@ func testSpendValidation(t *testing.T, tweakless bool) {
 		},
 		DoubleTweak:   commitSecret,
 		WitnessScript: delayScript,
-		SigHashes:     txscript.NewTxSigHashes(sweepTx),
+		SigHashes:     input.NewTxSigHashesV0Only(sweepTx),
 		Output: &wire.TxOut{
 			Value: int64(channelBalance),
 		},
@@ -656,16 +648,14 @@ func testSpendValidation(t *testing.T, tweakless bool) {
 	}
 	bobWitnessSpend, err := input.CommitSpendRevoke(localSigner, signDesc,
 		sweepTx)
-	if err != nil {
-		t.Fatalf("unable to generate revocation witness: %v", err)
-	}
+	require.NoError(t, err, "unable to generate revocation witness")
 	sweepTx.TxIn[0].Witness = bobWitnessSpend
-	vm, err = txscript.NewEngine(delayOutput.PkScript,
-		sweepTx, 0, txscript.StandardVerifyFlags, nil,
-		nil, int64(channelBalance))
-	if err != nil {
-		t.Fatalf("unable to create engine: %v", err)
-	}
+	vm, err = txscript.NewEngine(
+		delayOutput.PkScript, sweepTx, 0, txscript.StandardVerifyFlags,
+		nil, nil, int64(channelBalance),
+		txscript.NewCannedPrevOutputFetcher(nil, 0),
+	)
+	require.NoError(t, err, "unable to create engine")
 	if err := vm.Execute(); err != nil {
 		t.Fatalf("revocation spend is invalid: %v", err)
 	}
@@ -683,15 +673,13 @@ func testSpendValidation(t *testing.T, tweakless bool) {
 	// Finally, we test bob sweeping his output as normal in the case that
 	// Alice broadcasts this commitment transaction.
 	bobScriptP2WKH, err := input.CommitScriptUnencumbered(bobPayKey)
-	if err != nil {
-		t.Fatalf("unable to create bob p2wkh script: %v", err)
-	}
+	require.NoError(t, err, "unable to create bob p2wkh script")
 	signDesc = &input.SignDescriptor{
 		KeyDesc: keychain.KeyDescriptor{
 			PubKey: bobKeyPub,
 		},
 		WitnessScript: bobScriptP2WKH,
-		SigHashes:     txscript.NewTxSigHashes(sweepTx),
+		SigHashes:     input.NewTxSigHashesV0Only(sweepTx),
 		Output: &wire.TxOut{
 			Value:    int64(channelBalance),
 			PkScript: bobScriptP2WKH,
@@ -705,18 +693,15 @@ func testSpendValidation(t *testing.T, tweakless bool) {
 	bobRegularSpend, err := input.CommitSpendNoDelay(
 		localSigner, signDesc, sweepTx, tweakless,
 	)
-	if err != nil {
-		t.Fatalf("unable to create bob regular spend: %v", err)
-	}
+	require.NoError(t, err, "unable to create bob regular spend")
 	sweepTx.TxIn[0].Witness = bobRegularSpend
 	vm, err = txscript.NewEngine(
 		regularOutput.PkScript,
 		sweepTx, 0, txscript.StandardVerifyFlags, nil,
 		nil, int64(channelBalance),
+		txscript.NewCannedPrevOutputFetcher(bobScriptP2WKH, 0),
 	)
-	if err != nil {
-		t.Fatalf("unable to create engine: %v", err)
-	}
+	require.NoError(t, err, "unable to create engine")
 	if err := vm.Execute(); err != nil {
 		t.Fatalf("bob p2wkh spend is invalid: %v", err)
 	}
@@ -783,7 +768,7 @@ func createTestChannelsForVectors(tc *testContext, chanType channeldb.ChannelTyp
 		&remoteDummy1, &remoteDummy2, &localDummy1, &localDummy2,
 	}
 	for _, keyRef := range generateKeys {
-		privkey, err := btcec.NewPrivateKey(btcec.S256())
+		privkey, err := btcec.NewPrivateKey()
 		require.NoError(t, err)
 		*keyRef = privkey
 	}

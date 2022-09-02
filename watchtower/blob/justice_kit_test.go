@@ -8,7 +8,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -165,9 +166,7 @@ func testBlobJusticeKitEncryptDecrypt(t *testing.T, test descriptorTest) {
 	// party's commitment txid as the key.
 	var key blob.BreachKey
 	_, err := rand.Read(key[:])
-	if err != nil {
-		t.Fatalf("unable to generate blob encryption key: %v", err)
-	}
+	require.NoError(t, err, "unable to generate blob encryption key")
 
 	// Encrypt the blob plaintext using the generated key and
 	// target version for this test.
@@ -255,7 +254,7 @@ func testJusticeKitRemoteWitnessConstruction(
 	t *testing.T, test remoteWitnessTest) {
 
 	// Generate the to-remote pubkey.
-	toRemotePrivKey, err := btcec.NewPrivateKey(btcec.S256())
+	toRemotePrivKey, err := btcec.NewPrivateKey()
 	require.Nil(t, err)
 
 	// Copy the to-remote pubkey into the format expected by our justice
@@ -266,8 +265,7 @@ func testJusticeKitRemoteWitnessConstruction(
 	// Sign a message using the to-remote private key. The exact message
 	// doesn't matter as we won't be validating the signature's validity.
 	digest := bytes.Repeat([]byte("a"), 32)
-	rawToRemoteSig, err := toRemotePrivKey.Sign(digest)
-	require.Nil(t, err)
+	rawToRemoteSig := ecdsa.Sign(toRemotePrivKey, digest)
 
 	// Convert the DER-encoded signature into a fixed-size sig.
 	commitToRemoteSig, err := lnwire.NewSigFromSignature(rawToRemoteSig)
@@ -323,10 +321,10 @@ func TestJusticeKitToLocalWitnessConstruction(t *testing.T) {
 	csvDelay := uint32(144)
 
 	// Generate the revocation and delay private keys.
-	revPrivKey, err := btcec.NewPrivateKey(btcec.S256())
+	revPrivKey, err := btcec.NewPrivateKey()
 	require.Nil(t, err)
 
-	delayPrivKey, err := btcec.NewPrivateKey(btcec.S256())
+	delayPrivKey, err := btcec.NewPrivateKey()
 	require.Nil(t, err)
 
 	// Copy the revocation and delay pubkeys into the format expected by our
@@ -340,8 +338,7 @@ func TestJusticeKitToLocalWitnessConstruction(t *testing.T) {
 	// Sign a message using the revocation private key. The exact message
 	// doesn't matter as we won't be validating the signature's validity.
 	digest := bytes.Repeat([]byte("a"), 32)
-	rawRevSig, err := revPrivKey.Sign(digest)
-	require.Nil(t, err)
+	rawRevSig := ecdsa.Sign(revPrivKey, digest)
 
 	// Convert the DER-encoded signature into a fixed-size sig.
 	commitToLocalSig, err := lnwire.NewSigFromSignature(rawRevSig)

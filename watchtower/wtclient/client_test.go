@@ -7,11 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/keychain"
@@ -57,7 +58,8 @@ var (
 
 	// addr is the server's reward address given to watchtower clients.
 	addr, _ = btcutil.DecodeAddress(
-		"mrX9vMRYLfVy1BnZbc5gZjuyaqH3ZW2ZHz", &chaincfg.TestNet3Params,
+		"tb1pw8gzj8clt3v5lxykpgacpju5n8xteskt7gxhmudu6pa70nwfhe6s3unsyk",
+		&chaincfg.TestNet3Params,
 	)
 
 	addrScript, _ = txscript.PayToAddrScript(addr)
@@ -67,10 +69,8 @@ var (
 func randPrivKey(t *testing.T) *btcec.PrivateKey {
 	t.Helper()
 
-	sk, err := btcec.NewPrivateKey(btcec.S256())
-	if err != nil {
-		t.Fatalf("unable to generate pubkey: %v", err)
-	}
+	sk, err := btcec.NewPrivateKey()
+	require.NoError(t, err, "unable to generate pubkey")
 
 	return sk
 }
@@ -199,21 +199,15 @@ func (c *mockChannel) createRemoteCommitTx(t *testing.T) {
 	toLocalScript, err := input.CommitScriptToSelf(
 		c.csvDelay, c.toLocalPK, c.revPK,
 	)
-	if err != nil {
-		t.Fatalf("unable to create to-local script: %v", err)
-	}
+	require.NoError(t, err, "unable to create to-local script")
 
 	// Compute the to-local witness script hash.
 	toLocalScriptHash, err := input.WitnessScriptHash(toLocalScript)
-	if err != nil {
-		t.Fatalf("unable to create to-local witness script hash: %v", err)
-	}
+	require.NoError(t, err, "unable to create to-local witness script hash")
 
 	// Compute the to-remote witness script hash.
 	toRemoteScriptHash, err := input.CommitScriptUnencumbered(c.toRemotePK)
-	if err != nil {
-		t.Fatalf("unable to create to-remote script: %v", err)
-	}
+	require.NoError(t, err, "unable to create to-remote script")
 
 	// Construct the remote commitment txn, containing the to-local and
 	// to-remote outputs. The balances are flipped since the transaction is
@@ -300,7 +294,7 @@ func (c *mockChannel) createRemoteCommitTx(t *testing.T) {
 	}
 
 	retribution := &lnwallet.BreachRetribution{
-		BreachTransaction:    commitTxn,
+		BreachTxHash:         commitTxn.TxHash(),
 		RevokedStateNum:      c.commitHeight,
 		KeyRing:              commitKeyRing,
 		RemoteDelay:          c.csvDelay,
@@ -360,13 +354,15 @@ func (c *mockChannel) receivePayment(t *testing.T, amt lnwire.MilliSatoshi) {
 }
 
 // getState retrieves the channel's commitment and retribution at state i.
-func (c *mockChannel) getState(i uint64) (*wire.MsgTx, *lnwallet.BreachRetribution) {
+func (c *mockChannel) getState(
+	i uint64) (chainhash.Hash, *lnwallet.BreachRetribution) {
+
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	retribution := c.retributions[i]
 
-	return retribution.BreachTransaction, retribution
+	return retribution.BreachTxHash, retribution
 }
 
 type testHarness struct {
@@ -397,14 +393,10 @@ type harnessCfg struct {
 
 func newHarness(t *testing.T, cfg harnessCfg) *testHarness {
 	towerTCPAddr, err := net.ResolveTCPAddr("tcp", towerAddrStr)
-	if err != nil {
-		t.Fatalf("Unable to resolve tower TCP addr: %v", err)
-	}
+	require.NoError(t, err, "Unable to resolve tower TCP addr")
 
-	privKey, err := btcec.NewPrivateKey(btcec.S256())
-	if err != nil {
-		t.Fatalf("Unable to generate tower private key: %v", err)
-	}
+	privKey, err := btcec.NewPrivateKey()
+	require.NoError(t, err, "Unable to generate tower private key")
 	privKeyECDH := &keychain.PrivKeyECDH{PrivKey: privKey}
 
 	towerPubKey := privKey.PubKey()
@@ -429,9 +421,7 @@ func newHarness(t *testing.T, cfg harnessCfg) *testHarness {
 	}
 
 	server, err := wtserver.New(serverCfg)
-	if err != nil {
-		t.Fatalf("unable to create wtserver: %v", err)
-	}
+	require.NoError(t, err, "unable to create wtserver")
 
 	signer := wtmock.NewMockSigner()
 	mockNet := newMockNet(server.InboundPeerConnected)
@@ -454,9 +444,7 @@ func newHarness(t *testing.T, cfg harnessCfg) *testHarness {
 		ForceQuitDelay: 10 * time.Second,
 	}
 	client, err := wtclient.New(clientCfg)
-	if err != nil {
-		t.Fatalf("Unable to create wtclient: %v", err)
-	}
+	require.NoError(t, err, "Unable to create wtclient")
 
 	if err := server.Start(); err != nil {
 		t.Fatalf("Unable to start wtserver: %v", err)
@@ -608,8 +596,7 @@ func (h *testHarness) advanceChannelN(id uint64, n int) []blob.BreachHint {
 	var hints []blob.BreachHint
 	for i := uint64(0); i < uint64(n); i++ {
 		channel.advanceState(h.t)
-		commitTx, _ := h.channel(id).getState(i)
-		breachTxID := commitTx.TxHash()
+		breachTxID, _ := h.channel(id).getState(i)
 		hints = append(hints, blob.NewBreachHintFromHash(&breachTxID))
 	}
 
@@ -654,8 +641,7 @@ func (h *testHarness) sendPayments(id, from, to uint64,
 	var hints []blob.BreachHint
 	for i := from; i < to; i++ {
 		h.channel(id).sendPayment(h.t, amt)
-		commitTx, _ := channel.getState(i)
-		breachTxID := commitTx.TxHash()
+		breachTxID, _ := channel.getState(i)
 		hints = append(hints, blob.NewBreachHintFromHash(&breachTxID))
 	}
 
@@ -675,8 +661,7 @@ func (h *testHarness) recvPayments(id, from, to uint64,
 	var hints []blob.BreachHint
 	for i := from; i < to; i++ {
 		channel.receivePayment(h.t, amt)
-		commitTx, _ := channel.getState(i)
-		breachTxID := commitTx.TxHash()
+		breachTxID, _ := channel.getState(i)
 		hints = append(hints, blob.NewBreachHintFromHash(&breachTxID))
 	}
 

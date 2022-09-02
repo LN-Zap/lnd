@@ -7,12 +7,12 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
-	"github.com/btcsuite/btcutil/psbt"
 	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/keychain"
@@ -29,7 +29,7 @@ var (
 			"aca5",
 	)
 	testCommitSecret, testCommitPoint = btcec.PrivKeyFromBytes(
-		btcec.S256(), testCommitSecretBytes,
+		testCommitSecretBytes,
 	)
 
 	remoteRevocationBasePubKeyBytes, _ = hex.DecodeString(
@@ -37,7 +37,7 @@ var (
 			"7359fb",
 	)
 	remoteRevocationBasePubKey, _ = btcec.ParsePubKey(
-		remoteRevocationBasePubKeyBytes, btcec.S256(),
+		remoteRevocationBasePubKeyBytes,
 	)
 
 	testTweakSingle, _ = hex.DecodeString(
@@ -205,10 +205,9 @@ func (i testInputType) decorateInput(t *testing.T, privKey *btcec.PrivateKey,
 	}
 }
 
-func (i testInputType) beforeFinalize(t *testing.T, packet *psbt.Packet) {
+func (i testInputType) finalize(t *testing.T, packet *psbt.Packet) {
 	in := &packet.Inputs[0]
 	sigBytes := in.PartialSigs[0].Signature
-	pubKeyBytes := in.PartialSigs[0].PubKey
 
 	var witnessStack wire.TxWitness
 	switch i {
@@ -227,9 +226,12 @@ func (i testInputType) beforeFinalize(t *testing.T, packet *psbt.Packet) {
 		witnessStack[2] = in.WitnessScript
 
 	default:
-		witnessStack = make([][]byte, 2)
-		witnessStack[0] = sigBytes
-		witnessStack[1] = pubKeyBytes
+		// The PSBT finalizer knows what to do if we're not using a
+		// custom script.
+		err := psbt.MaybeFinalizeAll(packet)
+		require.NoError(t, err)
+
+		return
 	}
 
 	var err error
@@ -250,7 +252,7 @@ func serializeTxWitness(txWitness wire.TxWitness) ([]byte, error) {
 
 // TestSignPsbt tests the PSBT signing functionality.
 func TestSignPsbt(t *testing.T) {
-	w, cleanup := newTestWallet(t, netParams, seedBytes)
+	w, _, cleanup := newTestWallet(t, netParams, seedBytes)
 	defer cleanup()
 
 	testCases := []struct {
@@ -321,7 +323,7 @@ func TestSignPsbt(t *testing.T) {
 
 		// If the witness stack needs to be assembled, give the caller
 		// the option to do that now.
-		tc.inputType.beforeFinalize(t, packet)
+		tc.inputType.finalize(t, packet)
 
 		finalTx, err := psbt.Extract(packet)
 		require.NoError(t, err)
@@ -330,6 +332,9 @@ func TestSignPsbt(t *testing.T) {
 			refTx.TxOut[0].PkScript, finalTx, 0,
 			txscript.StandardVerifyFlags, nil, nil,
 			refTx.TxOut[0].Value,
+			txscript.NewCannedPrevOutputFetcher(
+				refTx.TxOut[0].PkScript, refTx.TxOut[0].Value,
+			),
 		)
 		require.NoError(t, err)
 		require.NoError(t, vm.Execute())

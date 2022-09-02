@@ -7,13 +7,12 @@ import (
 	"image/color"
 	"io"
 	"math"
-
 	"net"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
 	"github.com/go-errors/errors"
 	"github.com/lightningnetwork/lnd/tor"
 )
@@ -542,7 +541,7 @@ func ReadElement(r io.Reader, element interface{}) error {
 			return err
 		}
 
-		pubKey, err := btcec.ParsePubKey(b[:], btcec.S256())
+		pubKey, err := btcec.ParsePubKey(b[:])
 		if err != nil {
 			return err
 		}
@@ -805,7 +804,29 @@ func ReadElement(r io.Reader, element interface{}) error {
 				addrBytesRead += aType.AddrLen()
 
 			default:
-				return &ErrUnknownAddrType{aType}
+				// If we don't understand this address type,
+				// we just store it along with the remaining
+				// address bytes as type OpaqueAddrs. We need
+				// to hold onto the bytes so that we can still
+				// write them back to the wire when we
+				// propagate this message.
+				payloadLen := 1 + addrsLen - addrBytesRead
+				payload := make([]byte, payloadLen)
+
+				// First write a byte for the address type that
+				// we already read.
+				payload[0] = byte(aType)
+
+				// Now append the rest of the address bytes.
+				_, err := io.ReadFull(addrBuf, payload[1:])
+				if err != nil {
+					return err
+				}
+
+				address = &OpaqueAddrs{
+					Payload: payload,
+				}
+				addrBytesRead = addrsLen
 			}
 
 			addresses = append(addresses, address)

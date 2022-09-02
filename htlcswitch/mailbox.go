@@ -25,7 +25,7 @@ var (
 
 // MailBox is an interface which represents a concurrent-safe, in-order
 // delivery queue for messages from the network and also from the main switch.
-// This struct servers as a buffer between incoming messages, and messages to
+// This struct serves as a buffer between incoming messages, and messages to
 // the handled by the link. Each of the mutating methods within this interface
 // should be implemented in a non-blocking manner.
 type MailBox interface {
@@ -91,10 +91,6 @@ type mailBoxConfig struct {
 	// belongs to.
 	shortChanID lnwire.ShortChannelID
 
-	// fetchUpdate retreives the most recent channel update for the channel
-	// this mailbox belongs to.
-	fetchUpdate func(lnwire.ShortChannelID) (*lnwire.ChannelUpdate, error)
-
 	// forwardPackets send a varidic number of htlcPackets to the switch to
 	// be routed. A quit channel should be provided so that the call can
 	// properly exit during shutdown.
@@ -107,6 +103,11 @@ type mailBoxConfig struct {
 	// have not been yet been delivered. The computed deadline will expiry
 	// this long after the Adds are added via AddPacket.
 	expiry time.Duration
+
+	// failMailboxUpdate is used to fail an expired HTLC and use the
+	// correct SCID if the underlying channel uses aliases.
+	failMailboxUpdate func(outScid,
+		mailboxScid lnwire.ShortChannelID) lnwire.FailureMessage
 }
 
 // memoryMailBox is an implementation of the MailBox struct backed by purely
@@ -590,7 +591,6 @@ func (m *memoryMailBox) AddMessage(msg lnwire.Message) error {
 func (m *memoryMailBox) AddPacket(pkt *htlcPacket) error {
 	m.pktCond.L.Lock()
 	switch htlc := pkt.htlc.(type) {
-
 	// Split off Settle/Fail packets into the repPkts queue.
 	case *lnwire.UpdateFulfillHTLC, *lnwire.UpdateFailHTLC:
 		if _, ok := m.repIndex[pkt.inKey()]; ok {
@@ -674,6 +674,7 @@ func (m *memoryMailBox) DustPackets() (lnwire.MilliSatoshi,
 		if m.isDust(
 			m.feeRate, false, true, addPkt.amount.ToSatoshis(),
 		) {
+
 			localDustSum += addPkt.amount
 		}
 
@@ -681,6 +682,7 @@ func (m *memoryMailBox) DustPackets() (lnwire.MilliSatoshi,
 		if m.isDust(
 			m.feeRate, false, false, addPkt.amount.ToSatoshis(),
 		) {
+
 			remoteDustSum += addPkt.amount
 		}
 	}
@@ -709,13 +711,9 @@ func (m *memoryMailBox) FailAdd(pkt *htlcPacket) {
 	// Create a temporary channel failure which we will send back to our
 	// peer if this is a forward, or report to the user if the failed
 	// payment was locally initiated.
-	var failure lnwire.FailureMessage
-	update, err := m.cfg.fetchUpdate(m.cfg.shortChanID)
-	if err != nil {
-		failure = &lnwire.FailTemporaryNodeFailure{}
-	} else {
-		failure = lnwire.NewTemporaryChannelFailure(update)
-	}
+	failure := m.cfg.failMailboxUpdate(
+		pkt.originalOutgoingChanID, m.cfg.shortChanID,
+	)
 
 	// If the payment was locally initiated (which is indicated by a nil
 	// obfuscator), we do not need to encrypt it back to the sender.
@@ -803,7 +801,7 @@ type mailOrchestrator struct {
 	//   chan_id -> short_chan_id
 	//   short_chan_id -> mailbox
 	// so that Deliver can lookup mailbox directly once live,
-	// but still queriable by channel_id.
+	// but still queryable by channel_id.
 
 	// unclaimedPackets maps a live short chan id to queue of packets if no
 	// mailbox has been created.
@@ -816,10 +814,6 @@ type mailOrchConfig struct {
 	// properly exit during shutdown.
 	forwardPackets func(chan struct{}, ...*htlcPacket) error
 
-	// fetchUpdate retreives the most recent channel update for the channel
-	// this mailbox belongs to.
-	fetchUpdate func(lnwire.ShortChannelID) (*lnwire.ChannelUpdate, error)
-
 	// clock is a time source for the generated mailboxes.
 	clock clock.Clock
 
@@ -827,6 +821,11 @@ type mailOrchConfig struct {
 	// have not been yet been delivered. The computed deadline will expiry
 	// this long after the Adds are added to a mailbox via AddPacket.
 	expiry time.Duration
+
+	// failMailboxUpdate is used to fail an expired HTLC and use the
+	// correct SCID if the underlying channel uses aliases.
+	failMailboxUpdate func(outScid,
+		mailboxScid lnwire.ShortChannelID) lnwire.FailureMessage
 }
 
 // newMailOrchestrator initializes a fresh mailOrchestrator.
@@ -880,11 +879,11 @@ func (mo *mailOrchestrator) exclusiveGetOrCreateMailBox(
 	mailbox, ok := mo.mailboxes[chanID]
 	if !ok {
 		mailbox = newMemoryMailBox(&mailBoxConfig{
-			shortChanID:    shortChanID,
-			fetchUpdate:    mo.cfg.fetchUpdate,
-			forwardPackets: mo.cfg.forwardPackets,
-			clock:          mo.cfg.clock,
-			expiry:         mo.cfg.expiry,
+			shortChanID:       shortChanID,
+			forwardPackets:    mo.cfg.forwardPackets,
+			clock:             mo.cfg.clock,
+			expiry:            mo.cfg.expiry,
+			failMailboxUpdate: mo.cfg.failMailboxUpdate,
 		})
 		mailbox.Start()
 		mo.mailboxes[chanID] = mailbox

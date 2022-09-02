@@ -21,7 +21,9 @@ const _ = grpc.SupportPackageIsVersion7
 type WalletKitClient interface {
 	//
 	//ListUnspent returns a list of all utxos spendable by the wallet with a
-	//number of confirmations between the specified minimum and maximum.
+	//number of confirmations between the specified minimum and maximum. By
+	//default, all utxos are listed. To list only the unconfirmed utxos, set
+	//the unconfirmed_only to true.
 	ListUnspent(ctx context.Context, in *ListUnspentRequest, opts ...grpc.CallOption) (*ListUnspentResponse, error)
 	//
 	//LeaseOutput locks an output to the given ID, preventing it from being
@@ -55,6 +57,11 @@ type WalletKitClient interface {
 	//name and key scope filter can be provided to filter through all of the
 	//wallet accounts and return only those matching.
 	ListAccounts(ctx context.Context, in *ListAccountsRequest, opts ...grpc.CallOption) (*ListAccountsResponse, error)
+	//
+	//RequiredReserve returns the minimum amount of satoshis that should be kept
+	//in the wallet in order to fee bump anchor channels if necessary. The value
+	//scales with the number of public anchor channels but is capped at a maximum.
+	RequiredReserve(ctx context.Context, in *RequiredReserveRequest, opts ...grpc.CallOption) (*RequiredReserveResponse, error)
 	//
 	//ImportAccount imports an account backed by an account extended public key.
 	//The master key fingerprint denotes the fingerprint of the root key
@@ -284,6 +291,15 @@ func (c *walletKitClient) ListAccounts(ctx context.Context, in *ListAccountsRequ
 	return out, nil
 }
 
+func (c *walletKitClient) RequiredReserve(ctx context.Context, in *RequiredReserveRequest, opts ...grpc.CallOption) (*RequiredReserveResponse, error) {
+	out := new(RequiredReserveResponse)
+	err := c.cc.Invoke(ctx, "/walletrpc.WalletKit/RequiredReserve", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *walletKitClient) ImportAccount(ctx context.Context, in *ImportAccountRequest, opts ...grpc.CallOption) (*ImportAccountResponse, error) {
 	out := new(ImportAccountResponse)
 	err := c.cc.Invoke(ctx, "/walletrpc.WalletKit/ImportAccount", in, out, opts...)
@@ -407,7 +423,9 @@ func (c *walletKitClient) SignMessageFromAddress(ctx context.Context, in *SignMe
 type WalletKitServer interface {
 	//
 	//ListUnspent returns a list of all utxos spendable by the wallet with a
-	//number of confirmations between the specified minimum and maximum.
+	//number of confirmations between the specified minimum and maximum. By
+	//default, all utxos are listed. To list only the unconfirmed utxos, set
+	//the unconfirmed_only to true.
 	ListUnspent(context.Context, *ListUnspentRequest) (*ListUnspentResponse, error)
 	//
 	//LeaseOutput locks an output to the given ID, preventing it from being
@@ -441,6 +459,11 @@ type WalletKitServer interface {
 	//name and key scope filter can be provided to filter through all of the
 	//wallet accounts and return only those matching.
 	ListAccounts(context.Context, *ListAccountsRequest) (*ListAccountsResponse, error)
+	//
+	//RequiredReserve returns the minimum amount of satoshis that should be kept
+	//in the wallet in order to fee bump anchor channels if necessary. The value
+	//scales with the number of public anchor channels but is capped at a maximum.
+	RequiredReserve(context.Context, *RequiredReserveRequest) (*RequiredReserveResponse, error)
 	//
 	//ImportAccount imports an account backed by an account extended public key.
 	//The master key fingerprint denotes the fingerprint of the root key
@@ -618,6 +641,9 @@ func (UnimplementedWalletKitServer) NextAddr(context.Context, *AddrRequest) (*Ad
 }
 func (UnimplementedWalletKitServer) ListAccounts(context.Context, *ListAccountsRequest) (*ListAccountsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ListAccounts not implemented")
+}
+func (UnimplementedWalletKitServer) RequiredReserve(context.Context, *RequiredReserveRequest) (*RequiredReserveResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RequiredReserve not implemented")
 }
 func (UnimplementedWalletKitServer) ImportAccount(context.Context, *ImportAccountRequest) (*ImportAccountResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ImportAccount not implemented")
@@ -811,6 +837,24 @@ func _WalletKit_ListAccounts_Handler(srv interface{}, ctx context.Context, dec f
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(WalletKitServer).ListAccounts(ctx, req.(*ListAccountsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _WalletKit_RequiredReserve_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RequiredReserveRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(WalletKitServer).RequiredReserve(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/walletrpc.WalletKit/RequiredReserve",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(WalletKitServer).RequiredReserve(ctx, req.(*RequiredReserveRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1087,6 +1131,10 @@ var WalletKit_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListAccounts",
 			Handler:    _WalletKit_ListAccounts_Handler,
+		},
+		{
+			MethodName: "RequiredReserve",
+			Handler:    _WalletKit_RequiredReserve_Handler,
 		},
 		{
 			MethodName: "ImportAccount",

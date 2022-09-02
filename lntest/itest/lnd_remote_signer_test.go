@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/btcsuite/btcutil"
-	"github.com/btcsuite/btcutil/hdkeychain"
+	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/btcutil/hdkeychain"
 	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/lnrpc"
@@ -24,7 +24,7 @@ var (
 
 	accounts = []*lnrpc.WatchOnlyAccount{{
 		Purpose: waddrmgr.KeyScopeBIP0049Plus.Purpose,
-		// We always use the mainnet coin type for our BIP49/84
+		// We always use the mainnet coin type for our BIP49/84/86
 		// addresses!
 		CoinType: 0,
 		Account:  0,
@@ -33,13 +33,22 @@ var (
 			"FPhTq",
 	}, {
 		Purpose: waddrmgr.KeyScopeBIP0084.Purpose,
-		// We always use the mainnet coin type for our BIP49/84
+		// We always use the mainnet coin type for our BIP49/84/86
 		// addresses!
 		CoinType: 0,
 		Account:  0,
 		Xpub: "tpubDDWAWrSLRSFrG1KdqXMQQyTKYGSKLKaY7gxpvK7RdV3e3Dkhvu" +
 			"W2GgsFvsPN4RGmuoYtUgZ1LHZE8oftz7T4mzc1BxGt5rt8zJcVQi" +
 			"KTPPV",
+	}, {
+		Purpose: waddrmgr.KeyScopeBIP0086.Purpose,
+		// We always use the mainnet coin type for our BIP49/84/86
+		// addresses!
+		CoinType: 0,
+		Account:  0,
+		Xpub: "tpubDDtdXpdJFU2zFKWHJwe5M2WtYtcV7qSWtKohT9VP9zarNSwKnm" +
+			"kwDQawsu1vUf9xwXhUDYXbdUqpcrRTn9bLyW4BAVRimZ4K7r5o1J" +
+			"S924u",
 	}}
 )
 
@@ -97,7 +106,45 @@ func testRemoteSigner(net *lntest.NetworkHarness, t *harnessTest) {
 		name: "psbt",
 		fn: func(tt *harnessTest, wo, carol *lntest.HarnessNode) {
 			runPsbtChanFunding(net, tt, carol, wo)
-			runSignPsbt(tt, net, wo)
+			runSignPsbtSegWitV0P2WKH(tt, net, wo)
+			runSignPsbtSegWitV1KeySpendBip86(tt, net, wo)
+			runSignPsbtSegWitV1KeySpendRootHash(tt, net, wo)
+			runSignPsbtSegWitV1ScriptSpend(tt, net, wo)
+		},
+	}, {
+		name:      "sign output raw",
+		sendCoins: true,
+		fn: func(tt *harnessTest, wo, carol *lntest.HarnessNode) {
+			runSignOutputRaw(tt, net, wo)
+		},
+	}, {
+		name:      "sign verify msg",
+		sendCoins: true,
+		fn: func(tt *harnessTest, wo, carol *lntest.HarnessNode) {
+			runSignVerifyMessage(tt, net, wo)
+		},
+	}, {
+		name:      "taproot",
+		sendCoins: true,
+		fn: func(tt *harnessTest, wo, carol *lntest.HarnessNode) {
+			ctxt, cancel := context.WithTimeout(
+				ctxb, 3*defaultTimeout,
+			)
+			defer cancel()
+
+			testTaprootSendCoinsKeySpendBip86(ctxt, tt, wo, net)
+			testTaprootComputeInputScriptKeySpendBip86(
+				ctxt, tt, wo, net,
+			)
+			testTaprootSignOutputRawScriptSpend(ctxt, tt, wo, net)
+			testTaprootSignOutputRawKeySpendBip86(ctxt, tt, wo, net)
+			testTaprootSignOutputRawKeySpendRootHash(
+				ctxt, tt, wo, net,
+			)
+			testTaprootMuSig2KeySpendRootHash(ctxt, tt, wo, net)
+			testTaprootMuSig2ScriptSpend(ctxt, tt, wo, net)
+			testTaprootMuSig2KeySpendBip86(ctxt, tt, wo, net)
+			testTaprootMuSig2CombinedLeafKeySpend(ctxt, tt, wo, net)
 		},
 	}}
 

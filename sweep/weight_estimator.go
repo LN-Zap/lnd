@@ -1,9 +1,9 @@
 package sweep
 
 import (
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/lnwallet/chainfee"
 )
@@ -75,6 +75,18 @@ func (w *weightEstimator) tryAddParent(inp input.Input) {
 // native P2WKH output.
 func (w *weightEstimator) addP2WKHOutput() {
 	w.estimator.AddP2WKHOutput()
+}
+
+// addP2TROutput updates the weight estimate to account for an additional native
+// SegWit v1 P2TR output.
+func (w *weightEstimator) addP2TROutput() {
+	w.estimator.AddP2TROutput()
+}
+
+// addP2WSHOutput updates the weight estimate to account for an additional
+// segwit v0 P2WSH output.
+func (w *weightEstimator) addP2WSHOutput() {
+	w.estimator.AddP2WSHOutput()
 }
 
 // addOutput updates the weight estimate to account for the known

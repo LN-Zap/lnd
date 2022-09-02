@@ -10,12 +10,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/btcutil/psbt"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
-	"github.com/btcsuite/btcutil/psbt"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/keychain"
@@ -38,9 +38,7 @@ func TestPsbtIntent(t *testing.T) {
 	// the funding intent.
 	a := NewPsbtAssembler(chanCapacity, nil, &params, true)
 	intent, err := a.ProvisionChannel(&Request{LocalAmt: chanCapacity})
-	if err != nil {
-		t.Fatalf("error provisioning channel: %v", err)
-	}
+	require.NoError(t, err, "error provisioning channel")
 	psbtIntent, ok := intent.(*PsbtIntent)
 	if !ok {
 		t.Fatalf("intent was not a PsbtIntent")
@@ -54,8 +52,8 @@ func TestPsbtIntent(t *testing.T) {
 	// negotiating with the remote peer and they accept. By accepting, they
 	// send over their multisig key that's going to be used for the funding
 	// output. With that known, we can start crafting a PSBT.
-	_, localPubkey := btcec.PrivKeyFromBytes(btcec.S256(), localPrivkey)
-	_, remotePubkey := btcec.PrivKeyFromBytes(btcec.S256(), remotePrivkey)
+	_, localPubkey := btcec.PrivKeyFromBytes(localPrivkey)
+	_, remotePubkey := btcec.PrivKeyFromBytes(remotePrivkey)
 	psbtIntent.BindKeys(
 		&keychain.KeyDescriptor{PubKey: localPubkey}, remotePubkey,
 	)
@@ -69,20 +67,14 @@ func TestPsbtIntent(t *testing.T) {
 		localPubkey.SerializeCompressed(),
 		remotePubkey.SerializeCompressed(), int64(chanCapacity),
 	)
-	if err != nil {
-		t.Fatalf("error calculating script: %v", err)
-	}
+	require.NoError(t, err, "error calculating script")
 	witnessScriptHash := sha256.Sum256(script)
 	addr, err := btcutil.NewAddressWitnessScriptHash(
 		witnessScriptHash[:], &params,
 	)
-	if err != nil {
-		t.Fatalf("unable to encode address: %v", err)
-	}
+	require.NoError(t, err, "unable to encode address")
 	fundingAddr, amt, pendingPsbt, err := psbtIntent.FundingParams()
-	if err != nil {
-		t.Fatalf("unable to get funding params: %v", err)
-	}
+	require.NoError(t, err, "unable to get funding params")
 	if addr.EncodeAddress() != fundingAddr.EncodeAddress() {
 		t.Fatalf("unexpected address. got %s wanted %s", fundingAddr,
 			addr)
@@ -120,9 +112,7 @@ func TestPsbtIntent(t *testing.T) {
 
 	// Verify the dummy PSBT with the intent.
 	err = psbtIntent.Verify(pendingPsbt, false)
-	if err != nil {
-		t.Fatalf("error verifying pending PSBT: %v", err)
-	}
+	require.NoError(t, err, "error verifying pending PSBT")
 	if psbtIntent.State != PsbtVerified {
 		t.Fatalf("unexpected state. got %d wanted %d", psbtIntent.State,
 			PsbtVerified)
@@ -154,16 +144,12 @@ func TestPsbtIntent(t *testing.T) {
 		}
 	}()
 	err = psbtIntent.Finalize(pendingPsbt)
-	if err != nil {
-		t.Fatalf("error finalizing pending PSBT: %v", err)
-	}
+	require.NoError(t, err, "error finalizing pending PSBT")
 	wg.Wait()
 
 	// We should have a nil error in our channel now.
 	err = <-errChan
-	if err != nil {
-		t.Fatalf("unexpected error after finalize: %v", err)
-	}
+	require.NoError(t, err, "unexpected error after finalize")
 	if psbtIntent.State != PsbtFinalized {
 		t.Fatalf("unexpected state. got %d wanted %d", psbtIntent.State,
 			PsbtFinalized)
@@ -171,9 +157,7 @@ func TestPsbtIntent(t *testing.T) {
 
 	// Make sure the funding transaction can be compiled.
 	_, err = psbtIntent.CompileFundingTx()
-	if err != nil {
-		t.Fatalf("error compiling funding TX from PSBT: %v", err)
-	}
+	require.NoError(t, err, "error compiling funding TX from PSBT")
 	if psbtIntent.State != PsbtFundingTxCompiled {
 		t.Fatalf("unexpected state. got %d wanted %d", psbtIntent.State,
 			PsbtFundingTxCompiled)
@@ -197,31 +181,25 @@ func TestPsbtIntentBasePsbt(t *testing.T) {
 
 	// Generate the funding multisig keys and the address so we can compare
 	// it to the output of the intent.
-	_, localPubkey := btcec.PrivKeyFromBytes(btcec.S256(), localPrivkey)
-	_, remotePubkey := btcec.PrivKeyFromBytes(btcec.S256(), remotePrivkey)
+	_, localPubkey := btcec.PrivKeyFromBytes(localPrivkey)
+	_, remotePubkey := btcec.PrivKeyFromBytes(remotePrivkey)
 	// Make sure the output script address is correct.
 	script, _, err := input.GenFundingPkScript(
 		localPubkey.SerializeCompressed(),
 		remotePubkey.SerializeCompressed(), int64(chanCapacity),
 	)
-	if err != nil {
-		t.Fatalf("error calculating script: %v", err)
-	}
+	require.NoError(t, err, "error calculating script")
 	witnessScriptHash := sha256.Sum256(script)
 	addr, err := btcutil.NewAddressWitnessScriptHash(
 		witnessScriptHash[:], &params,
 	)
-	if err != nil {
-		t.Fatalf("unable to encode address: %v", err)
-	}
+	require.NoError(t, err, "unable to encode address")
 
 	// Now as the next step, create a new assembler/intent pair with a base
 	// PSBT to see that we can add an additional output to it.
 	a := NewPsbtAssembler(chanCapacity, pendingPsbt, &params, true)
 	intent, err := a.ProvisionChannel(&Request{LocalAmt: chanCapacity})
-	if err != nil {
-		t.Fatalf("error provisioning channel: %v", err)
-	}
+	require.NoError(t, err, "error provisioning channel")
 	psbtIntent, ok := intent.(*PsbtIntent)
 	if !ok {
 		t.Fatalf("intent was not a PsbtIntent")
@@ -230,9 +208,7 @@ func TestPsbtIntentBasePsbt(t *testing.T) {
 		&keychain.KeyDescriptor{PubKey: localPubkey}, remotePubkey,
 	)
 	newAddr, amt, twoOutPsbt, err := psbtIntent.FundingParams()
-	if err != nil {
-		t.Fatalf("unable to get funding params: %v", err)
-	}
+	require.NoError(t, err, "unable to get funding params")
 	if addr.EncodeAddress() != newAddr.EncodeAddress() {
 		t.Fatalf("unexpected address. got %s wanted %s", newAddr,
 			addr)
@@ -468,14 +444,12 @@ func TestPsbtVerify(t *testing.T) {
 	// the funding intent.
 	a := NewPsbtAssembler(chanCapacity, nil, &params, true)
 	intent, err := a.ProvisionChannel(&Request{LocalAmt: chanCapacity})
-	if err != nil {
-		t.Fatalf("error provisioning channel: %v", err)
-	}
+	require.NoError(t, err, "error provisioning channel")
 	psbtIntent := intent.(*PsbtIntent)
 
 	// Bind our test keys to get the funding parameters.
-	_, localPubkey := btcec.PrivKeyFromBytes(btcec.S256(), localPrivkey)
-	_, remotePubkey := btcec.PrivKeyFromBytes(btcec.S256(), remotePrivkey)
+	_, localPubkey := btcec.PrivKeyFromBytes(localPrivkey)
+	_, remotePubkey := btcec.PrivKeyFromBytes(remotePrivkey)
 	psbtIntent.BindKeys(
 		&keychain.KeyDescriptor{PubKey: localPubkey}, remotePubkey,
 	)
@@ -636,14 +610,12 @@ func TestPsbtFinalize(t *testing.T) {
 	// the funding intent.
 	a := NewPsbtAssembler(chanCapacity, nil, &params, true)
 	intent, err := a.ProvisionChannel(&Request{LocalAmt: chanCapacity})
-	if err != nil {
-		t.Fatalf("error provisioning channel: %v", err)
-	}
+	require.NoError(t, err, "error provisioning channel")
 	psbtIntent := intent.(*PsbtIntent)
 
 	// Bind our test keys to get the funding parameters.
-	_, localPubkey := btcec.PrivKeyFromBytes(btcec.S256(), localPrivkey)
-	_, remotePubkey := btcec.PrivKeyFromBytes(btcec.S256(), remotePrivkey)
+	_, localPubkey := btcec.PrivKeyFromBytes(localPrivkey)
+	_, remotePubkey := btcec.PrivKeyFromBytes(remotePrivkey)
 	psbtIntent.BindKeys(
 		&keychain.KeyDescriptor{PubKey: localPubkey}, remotePubkey,
 	)
@@ -792,12 +764,8 @@ func TestVerifyAllInputsSegWit(t *testing.T) {
 func clonePsbt(t *testing.T, p *psbt.Packet) *psbt.Packet {
 	var buf bytes.Buffer
 	err := p.Serialize(&buf)
-	if err != nil {
-		t.Fatalf("error serializing PSBT: %v", err)
-	}
+	require.NoError(t, err, "error serializing PSBT")
 	newPacket, err := psbt.NewFromRawBytes(&buf, false)
-	if err != nil {
-		t.Fatalf("error unserializing PSBT: %v", err)
-	}
+	require.NoError(t, err, "error unserializing PSBT")
 	return newPacket
 }

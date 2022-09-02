@@ -23,14 +23,15 @@ import (
 // case of anchor channels, the second-level spends can also be aggregated and
 // properly feebumped, so we'll check that as well.
 func testMultiHopHtlcAggregation(net *lntest.NetworkHarness, t *harnessTest,
-	alice, bob *lntest.HarnessNode, c lnrpc.CommitmentType) {
+	alice, bob *lntest.HarnessNode, c lnrpc.CommitmentType,
+	zeroConf bool) {
 
 	const finalCltvDelta = 40
 	ctxb := context.Background()
 
 	// First, we'll create a three hop network: Alice -> Bob -> Carol.
 	aliceChanPoint, bobChanPoint, carol := createThreeHopNetwork(
-		t, net, alice, bob, false, c,
+		t, net, alice, bob, false, c, zeroConf,
 	)
 	defer shutdownAndAssert(net, t, carol)
 
@@ -299,7 +300,6 @@ func testMultiHopHtlcAggregation(net *lntest.NetworkHarness, t *harnessTest,
 				break
 			}
 		}
-
 	}
 
 	// In case of anchor we expect all the timeout and success second
@@ -311,7 +311,6 @@ func testMultiHopHtlcAggregation(net *lntest.NetworkHarness, t *harnessTest,
 	} else {
 		require.Len(t.t, timeoutTxs, numInvoices)
 		require.Len(t.t, successTxs, numInvoices)
-
 	}
 
 	// All mempool transactions should be spending from the commitment

@@ -101,23 +101,34 @@ func (r *htlcReleaseEvent) Less(other queue.PriorityQueueItem) bool {
 type InvoiceRegistry struct {
 	sync.RWMutex
 
+	nextClientID uint32 // must be used atomically
+
 	cdb *channeldb.DB
 
 	// cfg contains the registry's configuration parameters.
 	cfg *RegistryConfig
 
-	clientMtx                 sync.Mutex
-	nextClientID              uint32
-	notificationClients       map[uint32]*InvoiceSubscription
+	// notificationClientMux locks notificationClients and
+	// singleNotificationClients. Using a separate mutex for these maps is
+	// necessary to avoid deadlocks in the registry when processing invoice
+	// events.
+	notificationClientMux sync.RWMutex
+
+	notificationClients map[uint32]*InvoiceSubscription
+
+	// TODO(yy): use map[lntypes.Hash]*SingleInvoiceSubscription for better
+	// performance.
 	singleNotificationClients map[uint32]*SingleInvoiceSubscription
 
-	newSubscriptions    chan *InvoiceSubscription
-	subscriptionCancels chan uint32
+	// invoiceEvents is a single channel over which invoice updates are
+	// carried.
+	invoiceEvents chan *invoiceEvent
 
-	// invoiceEvents is a single channel over which both invoice updates and
-	// new single invoice subscriptions are carried.
-	invoiceEvents chan interface{}
-
+	// hodlSubscriptionsMux locks the hodlSubscriptions and
+	// hodlReverseSubscriptions. Using a separate mutex for these maps is
+	// necessary to avoid deadlocks in the registry when processing invoice
+	// events.
+	hodlSubscriptionsMux sync.RWMutex
 	// subscriptions is a map from a circuit key to a list of subscribers.
 	// It is used for efficient notification of links.
 	hodlSubscriptions map[channeldb.CircuitKey]map[chan<- interface{}]struct{}
@@ -147,9 +158,7 @@ func NewRegistry(cdb *channeldb.DB, expiryWatcher *InvoiceExpiryWatcher,
 		cdb:                       cdb,
 		notificationClients:       make(map[uint32]*InvoiceSubscription),
 		singleNotificationClients: make(map[uint32]*SingleInvoiceSubscription),
-		newSubscriptions:          make(chan *InvoiceSubscription),
-		subscriptionCancels:       make(chan uint32),
-		invoiceEvents:             make(chan interface{}, 100),
+		invoiceEvents:             make(chan *invoiceEvent, 100),
 		hodlSubscriptions:         make(map[channeldb.CircuitKey]map[chan<- interface{}]struct{}),
 		hodlReverseSubscriptions:  make(map[chan<- interface{}]map[channeldb.CircuitKey]struct{}),
 		cfg:                       cfg,
@@ -160,7 +169,7 @@ func NewRegistry(cdb *channeldb.DB, expiryWatcher *InvoiceExpiryWatcher,
 }
 
 // scanInvoicesOnStart will scan all invoices on start and add active invoices
-// to the invoice expirt watcher while also attempting to delete all canceled
+// to the invoice expiry watcher while also attempting to delete all canceled
 // invoices.
 func (i *InvoiceRegistry) scanInvoicesOnStart() error {
 	var (
@@ -178,8 +187,8 @@ func (i *InvoiceRegistry) scanInvoicesOnStart() error {
 		removable = make([]channeldb.InvoiceDeleteRef, 0)
 	}
 
-	scanFunc := func(
-		paymentHash lntypes.Hash, invoice *channeldb.Invoice) error {
+	scanFunc := func(paymentHash lntypes.Hash,
+		invoice *channeldb.Invoice) error {
 
 		if invoice.IsPending() {
 			expiryRef := makeInvoiceExpiry(paymentHash, invoice)
@@ -239,6 +248,8 @@ func (i *InvoiceRegistry) Start() error {
 	if err != nil {
 		return err
 	}
+
+	log.Info("InvoiceRegistry starting")
 
 	i.wg.Add(1)
 	go i.invoiceEventLoop()
@@ -301,61 +312,18 @@ func (i *InvoiceRegistry) invoiceEventLoop() {
 		}
 
 		select {
-		// A new invoice subscription for all invoices has just arrived!
-		// We'll query for any backlog notifications, then add it to the
-		// set of clients.
-		case newClient := <-i.newSubscriptions:
-			log.Infof("New invoice subscription "+
-				"client: id=%v", newClient.id)
-
-			// With the backlog notifications delivered (if any),
-			// we'll add this to our active subscriptions and
-			// continue.
-			i.notificationClients[newClient.id] = newClient
-
-		// A client no longer wishes to receive invoice notifications.
-		// So we'll remove them from the set of active clients.
-		case clientID := <-i.subscriptionCancels:
-			log.Infof("Cancelling invoice subscription for "+
-				"client=%v", clientID)
-
-			delete(i.notificationClients, clientID)
-			delete(i.singleNotificationClients, clientID)
-
-		// An invoice event has come in. This can either be an update to
-		// an invoice or a new single invoice subscriber. Both type of
-		// events are passed in via the same channel, to make sure that
-		// subscribers get a consistent view of the event sequence.
+		// A sub-systems has just modified the invoice state, so we'll
+		// dispatch notifications to all registered clients.
 		case event := <-i.invoiceEvents:
-			switch e := event.(type) {
+			// For backwards compatibility, do not notify all
+			// invoice subscribers of cancel and accept events.
+			state := event.invoice.State
+			if state != channeldb.ContractCanceled &&
+				state != channeldb.ContractAccepted {
 
-			// A sub-systems has just modified the invoice state, so
-			// we'll dispatch notifications to all registered
-			// clients.
-			case *invoiceEvent:
-				// For backwards compatibility, do not notify
-				// all invoice subscribers of cancel and accept
-				// events.
-				state := e.invoice.State
-				if state != channeldb.ContractCanceled &&
-					state != channeldb.ContractAccepted {
-
-					i.dispatchToClients(e)
-				}
-				i.dispatchToSingleClients(e)
-
-			// A new single invoice subscription has arrived. Add it
-			// to the set of clients. It is important to do this in
-			// sequence with any other invoice events, because an
-			// initial invoice update has already been sent out to
-			// the subscriber.
-			case *SingleInvoiceSubscription:
-				log.Infof("New single invoice subscription "+
-					"client: id=%v, ref=%v", e.id,
-					e.invoiceRef)
-
-				i.singleNotificationClients[e.id] = e
+				i.dispatchToClients(event)
 			}
+			i.dispatchToSingleClients(event)
 
 		// A new htlc came in for auto-release.
 		case event := <-i.htlcAutoReleaseChan:
@@ -386,14 +354,24 @@ func (i *InvoiceRegistry) invoiceEventLoop() {
 	}
 }
 
-// dispatchToSingleClients passes the supplied event to all notification clients
-// that subscribed to all the invoice this event applies to.
+// dispatchToSingleClients passes the supplied event to all notification
+// clients that subscribed to all the invoice this event applies to.
 func (i *InvoiceRegistry) dispatchToSingleClients(event *invoiceEvent) {
 	// Dispatch to single invoice subscribers.
-	for _, client := range i.singleNotificationClients {
+	clients := i.copySingleClients()
+	for _, client := range clients {
 		payHash := client.invoiceRef.PayHash()
+
 		if payHash == nil || *payHash != event.hash {
 			continue
+		}
+
+		select {
+		case <-client.backlogDelivered:
+			// We won't deliver any events until the backlog has
+			// went through first.
+		case <-i.quit:
+			return
 		}
 
 		client.notify(event)
@@ -401,12 +379,13 @@ func (i *InvoiceRegistry) dispatchToSingleClients(event *invoiceEvent) {
 }
 
 // dispatchToClients passes the supplied event to all notification clients that
-// subscribed to all invoices. Add and settle indices are used to make sure that
-// clients don't receive duplicate or unwanted events.
+// subscribed to all invoices. Add and settle indices are used to make sure
+// that clients don't receive duplicate or unwanted events.
 func (i *InvoiceRegistry) dispatchToClients(event *invoiceEvent) {
 	invoice := event.invoice
 
-	for clientID, client := range i.notificationClients {
+	clients := i.copyClients()
+	for clientID, client := range clients {
 		// Before we dispatch this event, we'll check
 		// to ensure that this client hasn't already
 		// received this notification in order to
@@ -450,11 +429,19 @@ func (i *InvoiceRegistry) dispatchToClients(event *invoiceEvent) {
 		}
 
 		select {
-		case client.ntfnQueue.ChanIn() <- &invoiceEvent{
+		case <-client.backlogDelivered:
+			// We won't deliver any events until the backlog has
+			// been processed.
+		case <-i.quit:
+			return
+		}
+
+		err := client.notify(&invoiceEvent{
 			invoice: invoice,
 			setID:   event.setID,
-		}:
-		case <-i.quit:
+		})
+		if err != nil {
+			log.Errorf("Failed dispatching to client: %v", err)
 			return
 		}
 
@@ -464,7 +451,6 @@ func (i *InvoiceRegistry) dispatchToClients(event *invoiceEvent) {
 		// event is added while we're catching up a new client.
 		invState := event.invoice.State
 		switch {
-
 		case invState == channeldb.ContractSettled:
 			client.settleIndex = invoice.SettleIndex
 
@@ -568,6 +554,9 @@ func (i *InvoiceRegistry) deliverSingleBacklogEvents(
 		return err
 	}
 
+	log.Debugf("Client(id=%v) delivered single backlog event: payHash=%v",
+		client.id, payHash)
+
 	return nil
 }
 
@@ -657,13 +646,10 @@ func (i *InvoiceRegistry) startHtlcTimer(invoiceRef channeldb.InvoiceRef,
 func (i *InvoiceRegistry) cancelSingleHtlc(invoiceRef channeldb.InvoiceRef,
 	key channeldb.CircuitKey, result FailResolutionResult) error {
 
-	i.Lock()
-	defer i.Unlock()
-
 	updateInvoice := func(invoice *channeldb.Invoice) (
 		*channeldb.InvoiceUpdateDesc, error) {
 
-		// Only allow individual htlc cancelation on open invoices.
+		// Only allow individual htlc cancellation on open invoices.
 		if invoice.State != channeldb.ContractOpen {
 			log.Debugf("cancelSingleHtlc: invoice %v no longer "+
 				"open", invoiceRef)
@@ -702,7 +688,7 @@ func (i *InvoiceRegistry) cancelSingleHtlc(invoiceRef channeldb.InvoiceRef,
 			htlcState = htlc.State
 		}
 
-		// Cancelation is only possible if the htlc wasn't already
+		// Cancellation is only possible if the htlc wasn't already
 		// resolved.
 		if htlcState != channeldb.HtlcStateAccepted {
 			log.Debugf("cancelSingleHtlc: htlc %v on invoice %v "+
@@ -729,8 +715,9 @@ func (i *InvoiceRegistry) cancelSingleHtlc(invoiceRef channeldb.InvoiceRef,
 	// Try to mark the specified htlc as canceled in the invoice database.
 	// Intercept the update descriptor to set the local updated variable. If
 	// no invoice update is performed, we can return early.
+	setID := (*channeldb.SetID)(invoiceRef.SetID())
 	var updated bool
-	invoice, err := i.cdb.UpdateInvoice(invoiceRef, nil,
+	invoice, err := i.cdb.UpdateInvoice(invoiceRef, setID,
 		func(invoice *channeldb.Invoice) (
 			*channeldb.InvoiceUpdateDesc, error) {
 
@@ -938,10 +925,10 @@ func (i *InvoiceRegistry) NotifyExitHopHtlc(rHash lntypes.Hash,
 		customRecords:        payload.CustomRecords(),
 		mpp:                  payload.MultiPath(),
 		amp:                  payload.AMPRecord(),
+		metadata:             payload.Metadata(),
 	}
 
 	switch {
-
 	// If we are accepting spontaneous AMP payments and this payload
 	// contains an AMP record, create an AMP invoice that will be settled
 	// below.
@@ -972,10 +959,16 @@ func (i *InvoiceRegistry) NotifyExitHopHtlc(rHash lntypes.Hash,
 
 	// Execute locked notify exit hop logic.
 	i.Lock()
-	resolution, err := i.notifyExitHopHtlcLocked(&ctx, hodlChan)
+	resolution, invoiceToExpire, err := i.notifyExitHopHtlcLocked(
+		&ctx, hodlChan,
+	)
 	i.Unlock()
 	if err != nil {
 		return nil, err
+	}
+
+	if invoiceToExpire != nil {
+		i.expiryWatcher.AddInvoices(invoiceToExpire)
 	}
 
 	switch r := resolution.(type) {
@@ -984,8 +977,15 @@ func (i *InvoiceRegistry) NotifyExitHopHtlc(rHash lntypes.Hash,
 	// main event loop.
 	case *htlcAcceptResolution:
 		if r.autoRelease {
+			var invRef channeldb.InvoiceRef
+			if ctx.amp != nil {
+				invRef = channeldb.InvoiceRefBySetID(*ctx.setID())
+			} else {
+				invRef = ctx.invoiceRef()
+			}
+
 			err := i.startHtlcTimer(
-				ctx.invoiceRef(), circuitKey, r.acceptTime,
+				invRef, circuitKey, r.acceptTime,
 			)
 			if err != nil {
 				return nil, err
@@ -1008,10 +1008,11 @@ func (i *InvoiceRegistry) NotifyExitHopHtlc(rHash lntypes.Hash,
 }
 
 // notifyExitHopHtlcLocked is the internal implementation of NotifyExitHopHtlc
-// that should be executed inside the registry lock.
+// that should be executed inside the registry lock. The returned invoiceExpiry
+// (if not nil) needs to be added to the expiry watcher outside of the lock.
 func (i *InvoiceRegistry) notifyExitHopHtlcLocked(
 	ctx *invoiceUpdateCtx, hodlChan chan<- interface{}) (
-	HtlcResolution, error) {
+	HtlcResolution, invoiceExpiry, error) {
 
 	// We'll attempt to settle an invoice matching this rHash on disk (if
 	// one exists). The callback will update the invoice state and/or htlcs.
@@ -1040,6 +1041,14 @@ func (i *InvoiceRegistry) notifyExitHopHtlcLocked(
 			return updateDesc, nil
 		},
 	)
+
+	if _, ok := err.(channeldb.ErrDuplicateSetID); ok {
+		return NewFailResolution(
+			ctx.circuitKey, ctx.currentHeight,
+			ResultInvoiceNotFound,
+		), nil, nil
+	}
+
 	switch err {
 	case channeldb.ErrInvoiceNotFound:
 		// If the invoice was not found, return a failure resolution
@@ -1047,14 +1056,22 @@ func (i *InvoiceRegistry) notifyExitHopHtlcLocked(
 		return NewFailResolution(
 			ctx.circuitKey, ctx.currentHeight,
 			ResultInvoiceNotFound,
-		), nil
+		), nil, nil
+
+	case channeldb.ErrInvRefEquivocation:
+		return NewFailResolution(
+			ctx.circuitKey, ctx.currentHeight,
+			ResultInvoiceNotFound,
+		), nil, nil
 
 	case nil:
 
 	default:
 		ctx.log(err.Error())
-		return nil, err
+		return nil, nil, err
 	}
+
+	var invoiceToExpire invoiceExpiry
 
 	switch res := resolution.(type) {
 	case *HtlcFailResolution:
@@ -1149,7 +1166,7 @@ func (i *InvoiceRegistry) notifyExitHopHtlcLocked(
 	case *htlcAcceptResolution:
 		invoiceHtlc, ok := invoice.Htlcs[ctx.circuitKey]
 		if !ok {
-			return nil, fmt.Errorf("accepted htlc: %v not"+
+			return nil, nil, fmt.Errorf("accepted htlc: %v not"+
 				" present on invoice: %x", ctx.circuitKey,
 				ctx.hash[:])
 		}
@@ -1178,8 +1195,7 @@ func (i *InvoiceRegistry) notifyExitHopHtlcLocked(
 		// possible that we MppTimeout the htlcs, and then our relevant
 		// expiry height could change.
 		if res.outcome == resultAccepted {
-			expiry := makeInvoiceExpiry(ctx.hash, invoice)
-			i.expiryWatcher.AddInvoices(expiry)
+			invoiceToExpire = makeInvoiceExpiry(ctx.hash, invoice)
 		}
 
 		i.hodlSubscribe(hodlChan, ctx.circuitKey)
@@ -1202,7 +1218,7 @@ func (i *InvoiceRegistry) notifyExitHopHtlcLocked(
 		i.notifyClients(ctx.hash, invoice, setID)
 	}
 
-	return resolution, nil
+	return resolution, invoiceToExpire, nil
 }
 
 // SettleHodlInvoice sets the preimage of a hodl invoice.
@@ -1281,7 +1297,7 @@ func shouldCancel(state channeldb.ContractState, cancelAccepted bool) bool {
 	}
 
 	// If the invoice is accepted, we should only cancel if we want to
-	// force cancelation of accepted invoices.
+	// force cancellation of accepted invoices.
 	return cancelAccepted
 }
 
@@ -1404,13 +1420,19 @@ func (i *InvoiceRegistry) notifyClients(hash lntypes.Hash,
 // invoiceSubscriptionKit defines that are common to both all invoice
 // subscribers and single invoice subscribers.
 type invoiceSubscriptionKit struct {
-	id        uint32
-	inv       *InvoiceRegistry
+	id uint32 // nolint:structcheck
+
+	// quit is a chan mouted to InvoiceRegistry that signals a shutdown.
+	quit chan struct{}
+
 	ntfnQueue *queue.ConcurrentQueue
 
 	canceled   uint32 // To be used atomically.
 	cancelChan chan struct{}
-	wg         sync.WaitGroup
+
+	// backlogDelivered is closed when the backlog events have been
+	// delivered.
+	backlogDelivered chan struct{}
 }
 
 // InvoiceSubscription represents an intent to receive updates for newly added
@@ -1426,7 +1448,7 @@ type InvoiceSubscription struct {
 	// StartingInvoiceIndex field.
 	NewInvoices chan *channeldb.Invoice
 
-	// SettledInvoices is a channel that we'll use to send all setted
+	// SettledInvoices is a channel that we'll use to send all settled
 	// invoices with an invoices index greater than the specified
 	// StartingInvoiceIndex field.
 	SettledInvoices chan *channeldb.Invoice
@@ -1464,21 +1486,18 @@ func (i *invoiceSubscriptionKit) Cancel() {
 		return
 	}
 
-	select {
-	case i.inv.subscriptionCancels <- i.id:
-	case <-i.inv.quit:
-	}
-
 	i.ntfnQueue.Stop()
 	close(i.cancelChan)
-
-	i.wg.Wait()
 }
 
 func (i *invoiceSubscriptionKit) notify(event *invoiceEvent) error {
 	select {
 	case i.ntfnQueue.ChanIn() <- event:
-	case <-i.inv.quit:
+	case <-i.cancelChan:
+		// This can only be triggered by delivery of non-backlog
+		// events.
+		return ErrShuttingDown
+	case <-i.quit:
 		return ErrShuttingDown
 	}
 
@@ -1499,17 +1518,20 @@ func (i *InvoiceRegistry) SubscribeNotifications(
 		addIndex:        addIndex,
 		settleIndex:     settleIndex,
 		invoiceSubscriptionKit: invoiceSubscriptionKit{
-			inv:        i,
-			ntfnQueue:  queue.NewConcurrentQueue(20),
-			cancelChan: make(chan struct{}),
+			quit:             i.quit,
+			ntfnQueue:        queue.NewConcurrentQueue(20),
+			cancelChan:       make(chan struct{}),
+			backlogDelivered: make(chan struct{}),
 		},
 	}
 	client.ntfnQueue.Start()
 
-	i.clientMtx.Lock()
-	client.id = i.nextClientID
-	i.nextClientID++
-	i.clientMtx.Unlock()
+	// This notifies other goroutines that the backlog phase is over.
+	defer close(client.backlogDelivered)
+
+	// Always increment by 1 first, and our client ID will start with 1,
+	// not 0.
+	client.id = atomic.AddUint32(&i.nextClientID, 1)
 
 	// Before we register this new invoice subscription, we'll launch a new
 	// goroutine that will proxy all notifications appended to the end of
@@ -1518,6 +1540,7 @@ func (i *InvoiceRegistry) SubscribeNotifications(
 	i.wg.Add(1)
 	go func() {
 		defer i.wg.Done()
+		defer i.deleteClient(client.id)
 
 		for {
 			select {
@@ -1569,8 +1592,9 @@ func (i *InvoiceRegistry) SubscribeNotifications(
 		}
 	}()
 
-	i.Lock()
-	defer i.Unlock()
+	i.notificationClientMux.Lock()
+	i.notificationClients[client.id] = client
+	i.notificationClientMux.Unlock()
 
 	// Query the database to see if based on the provided addIndex and
 	// settledIndex we need to deliver any backlog notifications.
@@ -1579,11 +1603,7 @@ func (i *InvoiceRegistry) SubscribeNotifications(
 		return nil, err
 	}
 
-	select {
-	case i.newSubscriptions <- client:
-	case <-i.quit:
-		return nil, ErrShuttingDown
-	}
+	log.Infof("New invoice subscription client: id=%v", client.id)
 
 	return client, nil
 }
@@ -1596,18 +1616,21 @@ func (i *InvoiceRegistry) SubscribeSingleInvoice(
 	client := &SingleInvoiceSubscription{
 		Updates: make(chan *channeldb.Invoice),
 		invoiceSubscriptionKit: invoiceSubscriptionKit{
-			inv:        i,
-			ntfnQueue:  queue.NewConcurrentQueue(20),
-			cancelChan: make(chan struct{}),
+			quit:             i.quit,
+			ntfnQueue:        queue.NewConcurrentQueue(20),
+			cancelChan:       make(chan struct{}),
+			backlogDelivered: make(chan struct{}),
 		},
 		invoiceRef: channeldb.InvoiceRefByHash(hash),
 	}
 	client.ntfnQueue.Start()
 
-	i.clientMtx.Lock()
-	client.id = i.nextClientID
-	i.nextClientID++
-	i.clientMtx.Unlock()
+	// This notifies other goroutines that the backlog phase is done.
+	defer close(client.backlogDelivered)
+
+	// Always increment by 1 first, and our client ID will start with 1,
+	// not 0.
+	client.id = atomic.AddUint32(&i.nextClientID, 1)
 
 	// Before we register this new invoice subscription, we'll launch a new
 	// goroutine that will proxy all notifications appended to the end of
@@ -1616,6 +1639,7 @@ func (i *InvoiceRegistry) SubscribeSingleInvoice(
 	i.wg.Add(1)
 	go func() {
 		defer i.wg.Done()
+		defer i.deleteClient(client.id)
 
 		for {
 			select {
@@ -1644,22 +1668,17 @@ func (i *InvoiceRegistry) SubscribeSingleInvoice(
 		}
 	}()
 
-	// Within the lock, we both query the invoice state and pass the client
-	// subscription to the invoiceEvents channel. This is to make sure that
-	// the client receives a consistent stream of events.
-	i.Lock()
-	defer i.Unlock()
+	i.notificationClientMux.Lock()
+	i.singleNotificationClients[client.id] = client
+	i.notificationClientMux.Unlock()
 
 	err := i.deliverSingleBacklogEvents(client)
 	if err != nil {
 		return nil, err
 	}
 
-	select {
-	case i.invoiceEvents <- client:
-	case <-i.quit:
-		return nil, ErrShuttingDown
-	}
+	log.Infof("New single invoice subscription client: id=%v, ref=%v",
+		client.id, client.invoiceRef)
 
 	return client, nil
 }
@@ -1667,6 +1686,9 @@ func (i *InvoiceRegistry) SubscribeSingleInvoice(
 // notifyHodlSubscribers sends out the htlc resolution to all current
 // subscribers.
 func (i *InvoiceRegistry) notifyHodlSubscribers(htlcResolution HtlcResolution) {
+	i.hodlSubscriptionsMux.Lock()
+	defer i.hodlSubscriptionsMux.Unlock()
+
 	subscribers, ok := i.hodlSubscriptions[htlcResolution.CircuitKey()]
 	if !ok {
 		return
@@ -1695,6 +1717,9 @@ func (i *InvoiceRegistry) notifyHodlSubscribers(htlcResolution HtlcResolution) {
 func (i *InvoiceRegistry) hodlSubscribe(subscriber chan<- interface{},
 	circuitKey channeldb.CircuitKey) {
 
+	i.hodlSubscriptionsMux.Lock()
+	defer i.hodlSubscriptionsMux.Unlock()
+
 	log.Debugf("Hodl subscribe for %v", circuitKey)
 
 	subscriptions, ok := i.hodlSubscriptions[circuitKey]
@@ -1714,8 +1739,8 @@ func (i *InvoiceRegistry) hodlSubscribe(subscriber chan<- interface{},
 
 // HodlUnsubscribeAll cancels the subscription.
 func (i *InvoiceRegistry) HodlUnsubscribeAll(subscriber chan<- interface{}) {
-	i.Lock()
-	defer i.Unlock()
+	i.hodlSubscriptionsMux.Lock()
+	defer i.hodlSubscriptionsMux.Unlock()
 
 	hashes := i.hodlReverseSubscriptions[subscriber]
 	for hash := range hashes {
@@ -1723,4 +1748,41 @@ func (i *InvoiceRegistry) HodlUnsubscribeAll(subscriber chan<- interface{}) {
 	}
 
 	delete(i.hodlReverseSubscriptions, subscriber)
+}
+
+// copySingleClients copies i.SingleInvoiceSubscription inside a lock. This is
+// useful when we need to iterate the map to send notifications.
+func (i *InvoiceRegistry) copySingleClients() map[uint32]*SingleInvoiceSubscription {
+	i.notificationClientMux.RLock()
+	defer i.notificationClientMux.RUnlock()
+
+	clients := make(map[uint32]*SingleInvoiceSubscription)
+	for k, v := range i.singleNotificationClients {
+		clients[k] = v
+	}
+	return clients
+}
+
+// copyClients copies i.notificationClients inside a lock. This is useful when
+// we need to iterate the map to send notifications.
+func (i *InvoiceRegistry) copyClients() map[uint32]*InvoiceSubscription {
+	i.notificationClientMux.RLock()
+	defer i.notificationClientMux.RUnlock()
+
+	clients := make(map[uint32]*InvoiceSubscription)
+	for k, v := range i.notificationClients {
+		clients[k] = v
+	}
+	return clients
+}
+
+// deleteClient removes a client by its ID inside a lock. Noop if the client is
+// not found.
+func (i *InvoiceRegistry) deleteClient(clientID uint32) {
+	i.notificationClientMux.Lock()
+	defer i.notificationClientMux.Unlock()
+
+	log.Infof("Cancelling invoice subscription for client=%v", clientID)
+	delete(i.notificationClients, clientID)
+	delete(i.singleNotificationClients, clientID)
 }

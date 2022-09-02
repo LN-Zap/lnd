@@ -6,18 +6,18 @@ import (
 	"io"
 	"net"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
 	lnwire "github.com/lightningnetwork/lnd/channeldb/migration/lnwire21"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/shachain"
 )
 
-// writeOutpoint writes an outpoint to the passed writer using the minimal
+// WriteOutpoint writes an outpoint to the passed writer using the minimal
 // amount of bytes possible.
-func writeOutpoint(w io.Writer, o *wire.OutPoint) error {
+func WriteOutpoint(w io.Writer, o *wire.OutPoint) error {
 	if _, err := w.Write(o.Hash[:]); err != nil {
 		return err
 	}
@@ -28,9 +28,9 @@ func writeOutpoint(w io.Writer, o *wire.OutPoint) error {
 	return nil
 }
 
-// readOutpoint reads an outpoint from the passed reader that was previously
+// ReadOutpoint reads an outpoint from the passed reader that was previously
 // written using the writeOutpoint struct.
-func readOutpoint(r io.Reader, o *wire.OutPoint) error {
+func ReadOutpoint(r io.Reader, o *wire.OutPoint) error {
 	if _, err := io.ReadFull(r, o.Hash[:]); err != nil {
 		return err
 	}
@@ -88,7 +88,7 @@ func WriteElement(w io.Writer, element interface{}) error {
 		}
 
 	case wire.OutPoint:
-		return writeOutpoint(w, &e)
+		return WriteOutpoint(w, &e)
 
 	case lnwire.ShortChannelID:
 		if err := binary.Write(w, byteOrder, e.ToUint64()); err != nil {
@@ -258,7 +258,7 @@ func ReadElement(r io.Reader, element interface{}) error {
 		}
 
 	case *wire.OutPoint:
-		return readOutpoint(r, e)
+		return ReadOutpoint(r, e)
 
 	case *lnwire.ShortChannelID:
 		var a uint64
@@ -324,7 +324,7 @@ func ReadElement(r io.Reader, element interface{}) error {
 			return err
 		}
 
-		priv, _ := btcec.PrivKeyFromBytes(btcec.S256(), b[:])
+		priv, _ := btcec.PrivKeyFromBytes(b[:])
 		*e = priv
 
 	case **btcec.PublicKey:
@@ -333,7 +333,7 @@ func ReadElement(r io.Reader, element interface{}) error {
 			return err
 		}
 
-		pubKey, err := btcec.ParsePubKey(b[:], btcec.S256())
+		pubKey, err := btcec.ParsePubKey(b[:])
 		if err != nil {
 			return err
 		}

@@ -7,11 +7,11 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/input"
@@ -23,6 +23,7 @@ import (
 	"github.com/lightningnetwork/lnd/watchtower/wtdb"
 	"github.com/lightningnetwork/lnd/watchtower/wtmock"
 	"github.com/lightningnetwork/lnd/watchtower/wtpolicy"
+	"github.com/stretchr/testify/require"
 )
 
 const csvDelay uint32 = 144
@@ -103,13 +104,13 @@ func genTaskTest(
 
 	// Parse the key pairs for all keys used in the test.
 	revSK, revPK := btcec.PrivKeyFromBytes(
-		btcec.S256(), revPrivBytes,
+		revPrivBytes,
 	)
 	_, toLocalPK := btcec.PrivKeyFromBytes(
-		btcec.S256(), toLocalPrivBytes,
+		toLocalPrivBytes,
 	)
 	toRemoteSK, toRemotePK := btcec.PrivKeyFromBytes(
-		btcec.S256(), toRemotePrivBytes,
+		toRemotePrivBytes,
 	)
 
 	// Create the signer, and add the revocation and to-remote privkeys.
@@ -124,8 +125,8 @@ func genTaskTest(
 	// the breach transaction, which we will continue to modify.
 	breachTxn := wire.NewMsgTx(2)
 	breachInfo := &lnwallet.BreachRetribution{
-		RevokedStateNum:   stateNum,
-		BreachTransaction: breachTxn,
+		RevokedStateNum: stateNum,
+		BreachTxHash:    breachTxn.TxHash(),
 		KeyRing: &lnwallet.CommitmentKeyRing{
 			RevocationKey: revPK,
 			ToLocalKey:    toLocalPK,
@@ -246,7 +247,7 @@ func genTaskTest(
 			RewardPkScript: rewardScript,
 		},
 		bindErr:        bindErr,
-		expSweepScript: makeAddrSlice(22),
+		expSweepScript: sweepAddr,
 		signer:         signer,
 		chanType:       chanType,
 	}
@@ -258,10 +259,18 @@ var (
 	blobTypeCommitReward = (blob.FlagCommitOutputs | blob.FlagReward).Type()
 
 	addr, _ = btcutil.DecodeAddress(
-		"mrX9vMRYLfVy1BnZbc5gZjuyaqH3ZW2ZHz", &chaincfg.TestNet3Params,
+		"tb1pw8gzj8clt3v5lxykpgacpju5n8xteskt7gxhmudu6pa70nwfhe6s3unsyk",
+		&chaincfg.TestNet3Params,
 	)
 
 	addrScript, _ = txscript.PayToAddrScript(addr)
+
+	sweepAddrScript, _ = btcutil.DecodeAddress(
+		"tb1qs3jyc9sf5kak3x0w99cav9u605aeu3t600xxx0",
+		&chaincfg.TestNet3Params,
+	)
+
+	sweepAddr, _ = txscript.PayToAddrScript(sweepAddrScript)
 )
 
 // TestBackupTaskBind tests the initialization and binding of a backupTask to a
@@ -296,9 +305,9 @@ func TestBackupTask(t *testing.T) {
 			expSweepCommitNoRewardBoth     int64                  = 299241
 			expSweepCommitNoRewardLocal    int64                  = 199514
 			expSweepCommitNoRewardRemote   int64                  = 99561
-			expSweepCommitRewardBoth       int64                  = 296117
-			expSweepCommitRewardLocal      int64                  = 197390
-			expSweepCommitRewardRemote     int64                  = 98437
+			expSweepCommitRewardBoth       int64                  = 296069
+			expSweepCommitRewardLocal      int64                  = 197342
+			expSweepCommitRewardRemote     int64                  = 98389
 			sweepFeeRateNoRewardRemoteDust chainfee.SatPerKWeight = 227500
 			sweepFeeRateRewardRemoteDust   chainfee.SatPerKWeight = 175350
 		)
@@ -306,9 +315,9 @@ func TestBackupTask(t *testing.T) {
 			expSweepCommitNoRewardBoth = 299236
 			expSweepCommitNoRewardLocal = 199513
 			expSweepCommitNoRewardRemote = 99557
-			expSweepCommitRewardBoth = 296112
-			expSweepCommitRewardLocal = 197389
-			expSweepCommitRewardRemote = 98433
+			expSweepCommitRewardBoth = 296064
+			expSweepCommitRewardLocal = 197341
+			expSweepCommitRewardRemote = 98385
 			sweepFeeRateNoRewardRemoteDust = 225400
 			sweepFeeRateRewardRemoteDust = 174100
 		}
@@ -435,7 +444,7 @@ func TestBackupTask(t *testing.T) {
 				"commit reward, to-remote output only, creates dust",
 				1,                            // stateNum
 				0,                            // toLocalAmt
-				100000,                       // toRemoteAmt
+				108221,                       // toRemoteAmt
 				blobTypeCommitReward,         // blobType
 				sweepFeeRateRewardRemoteDust, // sweepFeeRate
 				addrScript,                   // rewardScript
@@ -602,12 +611,10 @@ func testBackupTask(t *testing.T, test backupTaskTest) {
 	// Now, we'll construct, sign, and encrypt the blob containing the parts
 	// needed to reconstruct the justice transaction.
 	hint, encBlob, err := task.craftSessionPayload(test.signer)
-	if err != nil {
-		t.Fatalf("unable to craft session payload: %v", err)
-	}
+	require.NoError(t, err, "unable to craft session payload")
 
 	// Verify that the breach hint matches the breach txid's prefix.
-	breachTxID := test.breachInfo.BreachTransaction.TxHash()
+	breachTxID := test.breachInfo.BreachTxHash
 	expHint := blob.NewBreachHintFromHash(&breachTxID)
 	if hint != expHint {
 		t.Fatalf("breach hint mismatch, want: %x, got: %v",
@@ -618,9 +625,7 @@ func testBackupTask(t *testing.T, test backupTaskTest) {
 	// contents.
 	key := blob.NewBreachKeyFromHash(&breachTxID)
 	jKit, err := blob.Decrypt(key, encBlob, policy.BlobType)
-	if err != nil {
-		t.Fatalf("unable to decrypt blob: %v", err)
-	}
+	require.NoError(t, err, "unable to decrypt blob")
 
 	keyRing := test.breachInfo.KeyRing
 	expToLocalPK := keyRing.ToLocalKey.SerializeCompressed()

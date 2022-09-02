@@ -9,9 +9,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/btcsuite/btclog"
-	"github.com/btcsuite/btcutil"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/go-errors/errors"
 	"github.com/lightningnetwork/lnd/build"
@@ -141,7 +141,7 @@ type ChannelLinkConfig struct {
 	// switch. The function returns and error in case it fails to send one or
 	// more packets. The link's quit signal should be provided to allow
 	// cancellation of forwarding during link shutdown.
-	ForwardPackets func(chan struct{}, ...*htlcPacket) error
+	ForwardPackets func(chan struct{}, bool, ...*htlcPacket) error
 
 	// DecodeHopIterators facilitates batched decoding of HTLC Sphinx onion
 	// blobs, which are then used to inform how to forward an HTLC.
@@ -187,10 +187,13 @@ type ChannelLinkConfig struct {
 		LinkFailureError)
 
 	// UpdateContractSignals is a function closure that we'll use to update
-	// outside sub-systems with the latest signals for our inner Lightning
-	// channel. These signals will notify the caller when the channel has
-	// been closed, or when the set of active HTLC's is updated.
+	// outside sub-systems with this channel's latest ShortChannelID.
 	UpdateContractSignals func(*contractcourt.ContractSignals) error
+
+	// NotifyContractUpdate is a function closure that we'll use to update
+	// the contractcourt and more specifically the ChannelArbitrator of the
+	// latest channel state.
+	NotifyContractUpdate func(*contractcourt.ContractUpdate) error
 
 	// ChainEvents is an active subscription to the chain watcher for this
 	// channel to be notified of any on-chain activity related to this
@@ -291,14 +294,15 @@ type ChannelLinkConfig struct {
 	// HtlcNotifier is an instance of a htlcNotifier which we will pipe htlc
 	// events through.
 	HtlcNotifier htlcNotifier
-}
 
-// localUpdateAddMsg contains a locally initiated htlc and a channel that will
-// receive the outcome of the link processing. This channel must be buffered to
-// prevent the link from blocking.
-type localUpdateAddMsg struct {
-	pkt *htlcPacket
-	err chan error
+	// FailAliasUpdate is a function used to fail an HTLC for an
+	// option_scid_alias channel.
+	FailAliasUpdate func(sid lnwire.ShortChannelID,
+		incoming bool) *lnwire.ChannelUpdate
+
+	// GetAliases is used by the link and switch to fetch the set of
+	// aliases for a given link.
+	GetAliases func(base lnwire.ShortChannelID) []lnwire.ShortChannelID
 }
 
 // shutdownReq contains an error channel that will be used by the channelLink
@@ -368,14 +372,6 @@ type channelLink struct {
 	// by the HTLC switch.
 	downstream chan *htlcPacket
 
-	// localUpdateAdd is a channel to which locally initiated HTLCs are
-	// sent across.
-	localUpdateAdd chan *localUpdateAddMsg
-
-	// htlcUpdates is a channel that we'll use to update outside
-	// sub-systems with the latest set of active HTLC's on our channel.
-	htlcUpdates chan *contractcourt.ContractUpdate
-
 	// shutdownRequest is a channel that the channelLink will listen on to
 	// service shutdown requests from ShutdownIfChannelClean calls.
 	shutdownRequest chan *shutdownReq
@@ -421,17 +417,14 @@ func NewChannelLink(cfg ChannelLinkConfig,
 	logPrefix := fmt.Sprintf("ChannelLink(%v):", channel.ChannelPoint())
 
 	return &channelLink{
-		cfg:         cfg,
-		channel:     channel,
-		shortChanID: channel.ShortChanID(),
-		// TODO(roasbeef): just do reserve here?
-		htlcUpdates:     make(chan *contractcourt.ContractUpdate),
+		cfg:             cfg,
+		channel:         channel,
+		shortChanID:     channel.ShortChanID(),
 		shutdownRequest: make(chan *shutdownReq),
 		hodlMap:         make(map[channeldb.CircuitKey]hodlHtlc),
 		hodlQueue:       queue.NewConcurrentQueue(10),
 		log:             build.NewPrefixLog(logPrefix, log),
 		quit:            make(chan struct{}),
-		localUpdateAdd:  make(chan *localUpdateAddMsg),
 	}
 }
 
@@ -496,7 +489,6 @@ func (l *channelLink) Start() error {
 		// TODO(roasbeef): split goroutines within channel arb to avoid
 		go func() {
 			signals := &contractcourt.ContractSignals{
-				HtlcUpdates: l.htlcUpdates,
 				ShortChanID: l.channel.ShortChanID(),
 			}
 
@@ -598,6 +590,12 @@ func (l *channelLink) markReestablished() {
 	atomic.StoreInt32(&l.reestablished, 1)
 }
 
+// IsUnadvertised returns true if the underlying channel is unadvertised.
+func (l *channelLink) IsUnadvertised() bool {
+	state := l.channel.State()
+	return state.ChannelFlags&lnwire.FFAnnounceChannel == 0
+}
+
 // sampleNetworkFee samples the current fee rate on the network to get into the
 // chain in a timely manner. The returned value is expressed in fee-per-kw, as
 // this is the native rate used when computing the fee for commitment
@@ -646,14 +644,33 @@ func shouldAdjustCommitFee(netFee, chanFee,
 	}
 }
 
-// createFailureWithUpdate retrieves this link's last channel update message and
-// passes it into the callback. It expects a fully populated failure message.
-func (l *channelLink) createFailureWithUpdate(
-	cb func(update *lnwire.ChannelUpdate) lnwire.FailureMessage) lnwire.FailureMessage {
+// failCb is used to cut down on the argument verbosity.
+type failCb func(update *lnwire.ChannelUpdate) lnwire.FailureMessage
 
-	update, err := l.cfg.FetchLastChannelUpdate(l.ShortChanID())
-	if err != nil {
-		return &lnwire.FailTemporaryNodeFailure{}
+// createFailureWithUpdate creates a ChannelUpdate when failing an incoming or
+// outgoing HTLC. It may return a FailureMessage that references a channel's
+// alias. If the channel does not have an alias, then the regular channel
+// update from disk will be returned.
+func (l *channelLink) createFailureWithUpdate(incoming bool,
+	outgoingScid lnwire.ShortChannelID, cb failCb) lnwire.FailureMessage {
+
+	// Determine which SCID to use in case we need to use aliases in the
+	// ChannelUpdate.
+	scid := outgoingScid
+	if incoming {
+		scid = l.ShortChanID()
+	}
+
+	// Try using the FailAliasUpdate function. If it returns nil, fallback
+	// to the non-alias behavior.
+	update := l.cfg.FailAliasUpdate(scid, incoming)
+	if update == nil {
+		// Fallback to the non-alias behavior.
+		var err error
+		update, err = l.cfg.FetchLastChannelUpdate(l.ShortChanID())
+		if err != nil {
+			return &lnwire.FailTemporaryNodeFailure{}
+		}
 	}
 
 	return cb(update)
@@ -714,6 +731,28 @@ func (l *channelLink) syncChanStates() error {
 			fundingLockedMsg := lnwire.NewFundingLocked(
 				l.ChanID(), nextRevocation,
 			)
+
+			// For channels that negotiated the option-scid-alias
+			// feature bit, ensure that we send over the alias in
+			// the funding_locked message. We'll send the first
+			// alias we find for the channel since it does not
+			// matter which alias we send. We'll error out if no
+			// aliases are found.
+			if l.negotiatedAliasFeature() {
+				aliases := l.getAliases()
+				if len(aliases) == 0 {
+					// This shouldn't happen since we
+					// always add at least one alias before
+					// the channel reaches the link.
+					return fmt.Errorf("no aliases found")
+				}
+
+				// getAliases returns a copy of the alias slice
+				// so it is ok to use a pointer to the first
+				// entry.
+				fundingLockedMsg.AliasScid = &aliases[0]
+			}
+
 			err = l.cfg.Peer.SendMessage(false, fundingLockedMsg)
 			if err != nil {
 				return fmt.Errorf("unable to re-send "+
@@ -923,9 +962,9 @@ func (l *channelLink) loadAndRemove() error {
 // This goroutine reads messages from the upstream (remote) peer, and also from
 // downstream channel managed by the channel link. In the event that an htlc
 // needs to be forwarded, then send-only forward handler is used which sends
-// htlc packets to the switch. Additionally, the this goroutine handles acting
-// upon all timeouts for any active HTLCs, manages the channel's revocation
-// window, and also the htlc trickle queue+timer for this active channels.
+// htlc packets to the switch. Additionally, this goroutine handles acting upon
+// all timeouts for any active HTLCs, manages the channel's revocation window,
+// and also the htlc trickle queue+timer for this active channels.
 //
 // NOTE: This MUST be run as a goroutine.
 func (l *channelLink) htlcManager() {
@@ -1061,7 +1100,21 @@ func (l *channelLink) htlcManager() {
 	// the channel is not pending, otherwise we should have no htlcs to
 	// reforward.
 	if l.ShortChanID() != hop.Source {
-		if err := l.resolveFwdPkgs(); err != nil {
+		err := l.resolveFwdPkgs()
+		switch err {
+		// No error was encountered, success.
+		case nil:
+
+		// If the duplicate keystone error was encountered, we'll fail
+		// without sending an Error message to the peer.
+		case ErrDuplicateKeystone:
+			l.fail(LinkFailureError{code: ErrCircuitError},
+				"temporary circuit error: %v", err)
+			return
+
+		// A non-nil error was encountered, send an Error message to
+		// the peer.
+		default:
 			l.fail(LinkFailureError{code: ErrInternalError},
 				"unable to resolve fwd pkgs: %v", err)
 			return
@@ -1088,8 +1141,13 @@ func (l *channelLink) htlcManager() {
 		// batch is empty.
 		if l.channel.PendingLocalUpdateCount() > 0 {
 			l.cfg.BatchTicker.Resume()
+			l.log.Tracef("BatchTicker resumed, "+
+				"PendingLocalUpdateCount=%d",
+				l.channel.PendingLocalUpdateCount())
 		} else {
 			l.cfg.BatchTicker.Pause()
+			l.log.Trace("BatchTicker paused due to zero " +
+				"PendingLocalUpdateCount")
 		}
 
 		select {
@@ -1130,6 +1188,7 @@ func (l *channelLink) htlcManager() {
 			if !shouldAdjustCommitFee(
 				newCommitFee, commitFee, minRelayFee,
 			) {
+
 				continue
 			}
 
@@ -1178,10 +1237,6 @@ func (l *channelLink) htlcManager() {
 		case pkt := <-l.downstream:
 			l.handleDownstreamPkt(pkt)
 
-		// A message containing a locally initiated add was received.
-		case msg := <-l.localUpdateAdd:
-			msg.err <- l.handleDownstreamUpdateAdd(msg.pkt)
-
 		// A message from the connected peer was just received. This
 		// indicates that we have a new incoming HTLC, either directly
 		// for us, or part of a multi-hop HTLC circuit.
@@ -1193,12 +1248,27 @@ func (l *channelLink) htlcManager() {
 		case hodlItem := <-l.hodlQueue.ChanOut():
 			htlcResolution := hodlItem.(invoices.HtlcResolution)
 			err := l.processHodlQueue(htlcResolution)
-			if err != nil {
-				l.fail(LinkFailureError{code: ErrInternalError},
-					fmt.Sprintf("process hodl queue: %v",
-						err.Error()),
+			switch err {
+			// No error, success.
+			case nil:
+
+			// If the duplicate keystone error was encountered,
+			// fail back gracefully.
+			case ErrDuplicateKeystone:
+				l.fail(LinkFailureError{code: ErrCircuitError},
+					fmt.Sprintf("process hodl queue: "+
+						"temporary circuit error: %v",
+						err,
+					),
 				)
-				return
+
+			// Send an Error message to the peer.
+			default:
+				l.fail(LinkFailureError{code: ErrInternalError},
+					fmt.Sprintf("process hodl queue: "+
+						"unable to update commitment:"+
+						" %v", err),
+				)
 			}
 
 		case req := <-l.shutdownRequest:
@@ -1257,7 +1327,7 @@ loop:
 
 	// Update the commitment tx.
 	if err := l.updateCommitTx(); err != nil {
-		return fmt.Errorf("unable to update commitment: %v", err)
+		return err
 	}
 
 	return nil
@@ -1675,6 +1745,28 @@ func (l *channelLink) handleUpstreamMsg(msg lnwire.Message) {
 	case *lnwire.UpdateFulfillHTLC:
 		pre := msg.PaymentPreimage
 		idx := msg.ID
+
+		// Before we pipeline the settle, we'll check the set of active
+		// htlc's to see if the related UpdateAddHTLC has been fully
+		// locked-in.
+		var lockedin bool
+		htlcs := l.channel.ActiveHtlcs()
+		for _, add := range htlcs {
+			// The HTLC will be outgoing and match idx.
+			if !add.Incoming && add.HtlcIndex == idx {
+				lockedin = true
+				break
+			}
+		}
+
+		if !lockedin {
+			l.fail(
+				LinkFailureError{code: ErrInvalidUpdate},
+				"unable to handle upstream settle",
+			)
+			return
+		}
+
 		if err := l.channel.ReceiveHTLCSettle(pre, idx); err != nil {
 			l.fail(
 				LinkFailureError{
@@ -1701,7 +1793,7 @@ func (l *channelLink) handleUpstreamMsg(msg lnwire.Message) {
 		l.uncommittedPreimages = append(l.uncommittedPreimages, pre)
 
 		// Pipeline this settle, send it to the switch.
-		go l.forwardBatch(settlePacket)
+		go l.forwardBatch(false, settlePacket)
 
 	case *lnwire.UpdateFailMalformedHTLC:
 		// Convert the failure type encoded within the HTLC fail
@@ -1836,21 +1928,29 @@ func (l *channelLink) handleUpstreamMsg(msg lnwire.Message) {
 		l.cfg.Peer.SendMessage(false, nextRevocation)
 
 		// Since we just revoked our commitment, we may have a new set
-		// of HTLC's on our commitment, so we'll send them over our
-		// HTLC update channel so any callers can be notified.
-		select {
-		case l.htlcUpdates <- &contractcourt.ContractUpdate{
+		// of HTLC's on our commitment, so we'll send them using our
+		// function closure NotifyContractUpdate.
+		newUpdate := &contractcourt.ContractUpdate{
 			HtlcKey: contractcourt.LocalHtlcSet,
 			Htlcs:   currentHtlcs,
-		}:
+		}
+		err = l.cfg.NotifyContractUpdate(newUpdate)
+		if err != nil {
+			l.log.Errorf("unable to notify contract update: %v",
+				err)
+			return
+		}
+
+		select {
 		case <-l.quit:
 			return
+		default:
 		}
 
 		// If both commitment chains are fully synced from our PoV,
 		// then we don't need to reply with a signature as both sides
 		// already have a commitment with the latest accepted.
-		if !l.channel.OweCommitment(true) {
+		if !l.channel.OweCommitment() {
 			return
 		}
 
@@ -1865,9 +1965,16 @@ func (l *channelLink) handleUpstreamMsg(msg lnwire.Message) {
 		// We've received a revocation from the remote chain, if valid,
 		// this moves the remote chain forward, and expands our
 		// revocation window.
-		fwdPkg, adds, settleFails, remoteHTLCs, err := l.channel.ReceiveRevocation(
-			msg,
-		)
+		//
+		// Before advancing our remote chain, we will record the
+		// current commit tx, which is used by the TowerClient to
+		// create backups.
+		oldCommitTx := l.channel.State().RemoteCommitment.CommitTx
+
+		// We now process the message and advance our remote commit
+		// chain.
+		fwdPkg, adds, settleFails, remoteHTLCs, err := l.channel.
+			ReceiveRevocation(msg)
 		if err != nil {
 			// TODO(halseth): force close?
 			l.fail(LinkFailureError{code: ErrInvalidRevocation},
@@ -1878,20 +1985,31 @@ func (l *channelLink) handleUpstreamMsg(msg lnwire.Message) {
 		// The remote party now has a new primary commitment, so we'll
 		// update the contract court to be aware of this new set (the
 		// prior old remote pending).
-		select {
-		case l.htlcUpdates <- &contractcourt.ContractUpdate{
+		newUpdate := &contractcourt.ContractUpdate{
 			HtlcKey: contractcourt.RemoteHtlcSet,
 			Htlcs:   remoteHTLCs,
-		}:
-		case <-l.quit:
+		}
+		err = l.cfg.NotifyContractUpdate(newUpdate)
+		if err != nil {
+			l.log.Errorf("unable to notify contract update: %v",
+				err)
 			return
 		}
 
+		select {
+		case <-l.quit:
+			return
+		default:
+		}
+
 		// If we have a tower client for this channel type, we'll
+		// create a backup for the current state.
 		if l.cfg.TowerClient != nil {
 			state := l.channel.State()
 			breachInfo, err := lnwallet.NewBreachRetribution(
 				state, state.RemoteCommitment.CommitHeight-1, 0,
+				// OldCommitTx is the breaching tx at height-1.
+				oldCommitTx,
 			)
 			if err != nil {
 				l.fail(LinkFailureError{code: ErrInternalError},
@@ -1927,7 +2045,7 @@ func (l *channelLink) handleUpstreamMsg(msg lnwire.Message) {
 		// processRemoteAdds. Also in case there are no local updates,
 		// but there are still remote updates that are not in the remote
 		// commit tx yet, send out an update.
-		if l.channel.OweCommitment(true) {
+		if l.channel.OweCommitment() {
 			if !l.updateCommitTxOrFail() {
 				return
 			}
@@ -2031,7 +2149,21 @@ func (l *channelLink) ackDownStreamPackets() error {
 // updateCommitTxOrFail updates the commitment tx and if that fails, it fails
 // the link.
 func (l *channelLink) updateCommitTxOrFail() bool {
-	if err := l.updateCommitTx(); err != nil {
+	err := l.updateCommitTx()
+	switch err {
+	// No error encountered, success.
+	case nil:
+
+	// A duplicate keystone error should be resolved and is not fatal, so
+	// we won't send an Error message to the peer.
+	case ErrDuplicateKeystone:
+		l.fail(LinkFailureError{code: ErrCircuitError},
+			"temporary circuit error: %v", err)
+		return false
+
+	// Any other error is treated results in an Error message being sent to
+	// the peer.
+	default:
 		l.fail(LinkFailureError{code: ErrInternalError},
 			"unable to update commitment: %v", err)
 		return false
@@ -2049,6 +2181,8 @@ func (l *channelLink) updateCommitTx() error {
 	// sign a commitment state.
 	err := l.cfg.Circuits.OpenCircuits(l.keystoneBatch...)
 	if err != nil {
+		// If ErrDuplicateKeystone is returned, the caller will catch
+		// it.
 		return err
 	}
 
@@ -2067,6 +2201,7 @@ func (l *channelLink) updateCommitTx() error {
 	theirCommitSig, htlcSigs, pendingHTLCs, err := l.channel.SignNextCommitment()
 	if err == lnwallet.ErrNoWindow {
 		l.cfg.PendingCommitTicker.Resume()
+		l.log.Trace("PendingCommitTicker resumed")
 
 		l.log.Tracef("revocation window exhausted, unable to send: "+
 			"%v, pend_updates=%v, dangling_closes%v",
@@ -2088,17 +2223,25 @@ func (l *channelLink) updateCommitTx() error {
 	}
 
 	l.cfg.PendingCommitTicker.Pause()
+	l.log.Trace("PendingCommitTicker paused after ackDownStreamPackets")
 
 	// The remote party now has a new pending commitment, so we'll update
 	// the contract court to be aware of this new set (the prior old remote
 	// pending).
-	select {
-	case l.htlcUpdates <- &contractcourt.ContractUpdate{
+	newUpdate := &contractcourt.ContractUpdate{
 		HtlcKey: contractcourt.RemotePendingHtlcSet,
 		Htlcs:   pendingHTLCs,
-	}:
+	}
+	err = l.cfg.NotifyContractUpdate(newUpdate)
+	if err != nil {
+		l.log.Errorf("unable to notify contract update: %v", err)
+		return err
+	}
+
+	select {
 	case <-l.quit:
 		return ErrLinkShuttingDown
+	default:
 	}
 
 	commitSig := &lnwire.CommitSig{
@@ -2149,37 +2292,14 @@ func (l *channelLink) UpdateShortChanID() (lnwire.ShortChannelID, error) {
 	// Refresh the channel state's short channel ID by loading it from disk.
 	// This ensures that the channel state accurately reflects the updated
 	// short channel ID.
-	err := l.channel.State().RefreshShortChanID()
+	err := l.channel.State().Refresh()
 	if err != nil {
 		l.log.Errorf("unable to refresh short_chan_id for chan_id=%v: "+
 			"%v", chanID, err)
 		return hop.Source, err
 	}
 
-	sid := l.channel.ShortChanID()
-
-	l.log.Infof("updating to short_chan_id=%v for chan_id=%v", sid, chanID)
-
-	l.Lock()
-	l.shortChanID = sid
-	l.Unlock()
-
-	go func() {
-		err := l.cfg.UpdateContractSignals(&contractcourt.ContractSignals{
-			HtlcUpdates: l.htlcUpdates,
-			ShortChanID: sid,
-		})
-		if err != nil {
-			l.log.Errorf("unable to update signals")
-		}
-	}()
-
-	// Now that the short channel ID has been properly updated, we can begin
-	// garbage collecting any forwarding packages we create.
-	l.wg.Add(1)
-	go l.fwdPkgGarbager()
-
-	return sid, nil
+	return hop.Source, nil
 }
 
 // ChanID returns the channel ID for the channel link. The channel ID is a more
@@ -2269,6 +2389,58 @@ func dustHelper(chantype channeldb.ChannelType, localDustLimit,
 	return isDust
 }
 
+// zeroConfConfirmed returns whether or not the zero-conf channel has
+// confirmed on-chain.
+//
+// Part of the scidAliasHandler interface.
+func (l *channelLink) zeroConfConfirmed() bool {
+	return l.channel.State().ZeroConfConfirmed()
+}
+
+// confirmedScid returns the confirmed SCID for a zero-conf channel. This
+// should not be called for non-zero-conf channels.
+//
+// Part of the scidAliasHandler interface.
+func (l *channelLink) confirmedScid() lnwire.ShortChannelID {
+	return l.channel.State().ZeroConfRealScid()
+}
+
+// isZeroConf returns whether or not the underlying channel is a zero-conf
+// channel.
+//
+// Part of the scidAliasHandler interface.
+func (l *channelLink) isZeroConf() bool {
+	return l.channel.State().IsZeroConf()
+}
+
+// negotiatedAliasFeature returns whether or not the underlying channel has
+// negotiated the option-scid-alias feature bit. This will be true for both
+// option-scid-alias and zero-conf channel-types. It will also be true for
+// channels with the feature bit but without the above channel-types.
+//
+// Part of the scidAliasFeature interface.
+func (l *channelLink) negotiatedAliasFeature() bool {
+	return l.channel.State().NegotiatedAliasFeature()
+}
+
+// getAliases returns the set of aliases for the underlying channel.
+//
+// Part of the scidAliasHandler interface.
+func (l *channelLink) getAliases() []lnwire.ShortChannelID {
+	return l.cfg.GetAliases(l.ShortChanID())
+}
+
+// attachFailAliasUpdate sets the link's FailAliasUpdate function.
+//
+// Part of the scidAliasHandler interface.
+func (l *channelLink) attachFailAliasUpdate(closure func(
+	sid lnwire.ShortChannelID, incoming bool) *lnwire.ChannelUpdate) {
+
+	l.Lock()
+	l.cfg.FailAliasUpdate = closure
+	l.Unlock()
+}
+
 // AttachMailBox updates the current mailbox used by this link, and hooks up
 // the mailbox's message and packet outboxes to the link's upstream and
 // downstream chans, respectively.
@@ -2312,7 +2484,7 @@ func (l *channelLink) UpdateForwardingPolicy(newPolicy ForwardingPolicy) {
 func (l *channelLink) CheckHtlcForward(payHash [32]byte,
 	incomingHtlcAmt, amtToForward lnwire.MilliSatoshi,
 	incomingTimeout, outgoingTimeout uint32,
-	heightNow uint32) *LinkError {
+	heightNow uint32, originalScid lnwire.ShortChannelID) *LinkError {
 
 	l.RLock()
 	policy := l.cfg.FwrdingPolicy
@@ -2321,6 +2493,7 @@ func (l *channelLink) CheckHtlcForward(payHash [32]byte,
 	// First check whether the outgoing htlc satisfies the channel policy.
 	err := l.canSendHtlc(
 		policy, payHash, amtToForward, outgoingTimeout, heightNow,
+		originalScid,
 	)
 	if err != nil {
 		return err
@@ -2344,13 +2517,10 @@ func (l *channelLink) CheckHtlcForward(payHash [32]byte,
 
 		// As part of the returned error, we'll send our latest routing
 		// policy so the sending node obtains the most up to date data.
-		failure := l.createFailureWithUpdate(
-			func(upd *lnwire.ChannelUpdate) lnwire.FailureMessage {
-				return lnwire.NewFeeInsufficient(
-					amtToForward, *upd,
-				)
-			},
-		)
+		cb := func(upd *lnwire.ChannelUpdate) lnwire.FailureMessage {
+			return lnwire.NewFeeInsufficient(amtToForward, *upd)
+		}
+		failure := l.createFailureWithUpdate(false, originalScid, cb)
 		return NewLinkError(failure)
 	}
 
@@ -2366,13 +2536,12 @@ func (l *channelLink) CheckHtlcForward(payHash [32]byte,
 
 		// Grab the latest routing policy so the sending node is up to
 		// date with our current policy.
-		failure := l.createFailureWithUpdate(
-			func(upd *lnwire.ChannelUpdate) lnwire.FailureMessage {
-				return lnwire.NewIncorrectCltvExpiry(
-					incomingTimeout, *upd,
-				)
-			},
-		)
+		cb := func(upd *lnwire.ChannelUpdate) lnwire.FailureMessage {
+			return lnwire.NewIncorrectCltvExpiry(
+				incomingTimeout, *upd,
+			)
+		}
+		failure := l.createFailureWithUpdate(false, originalScid, cb)
 		return NewLinkError(failure)
 	}
 
@@ -2392,8 +2561,11 @@ func (l *channelLink) CheckHtlcTransit(payHash [32]byte,
 	policy := l.cfg.FwrdingPolicy
 	l.RUnlock()
 
+	// We pass in hop.Source here as this is only used in the Switch when
+	// trying to send over a local link. This causes the fallback mechanism
+	// to occur.
 	return l.canSendHtlc(
-		policy, payHash, amt, timeout, heightNow,
+		policy, payHash, amt, timeout, heightNow, hop.Source,
 	)
 }
 
@@ -2401,7 +2573,7 @@ func (l *channelLink) CheckHtlcTransit(payHash [32]byte,
 // the channel's amount and time lock constraints.
 func (l *channelLink) canSendHtlc(policy ForwardingPolicy,
 	payHash [32]byte, amt lnwire.MilliSatoshi, timeout uint32,
-	heightNow uint32) *LinkError {
+	heightNow uint32, originalScid lnwire.ShortChannelID) *LinkError {
 
 	// As our first sanity check, we'll ensure that the passed HTLC isn't
 	// too small for the next hop. If so, then we'll cancel the HTLC
@@ -2413,13 +2585,10 @@ func (l *channelLink) canSendHtlc(policy ForwardingPolicy,
 
 		// As part of the returned error, we'll send our latest routing
 		// policy so the sending node obtains the most up to date data.
-		failure := l.createFailureWithUpdate(
-			func(upd *lnwire.ChannelUpdate) lnwire.FailureMessage {
-				return lnwire.NewAmountBelowMinimum(
-					amt, *upd,
-				)
-			},
-		)
+		cb := func(upd *lnwire.ChannelUpdate) lnwire.FailureMessage {
+			return lnwire.NewAmountBelowMinimum(amt, *upd)
+		}
+		failure := l.createFailureWithUpdate(false, originalScid, cb)
 		return NewLinkError(failure)
 	}
 
@@ -2431,11 +2600,10 @@ func (l *channelLink) canSendHtlc(policy ForwardingPolicy,
 
 		// As part of the returned error, we'll send our latest routing
 		// policy so the sending node obtains the most up-to-date data.
-		failure := l.createFailureWithUpdate(
-			func(upd *lnwire.ChannelUpdate) lnwire.FailureMessage {
-				return lnwire.NewTemporaryChannelFailure(upd)
-			},
-		)
+		cb := func(upd *lnwire.ChannelUpdate) lnwire.FailureMessage {
+			return lnwire.NewTemporaryChannelFailure(upd)
+		}
+		failure := l.createFailureWithUpdate(false, originalScid, cb)
 		return NewDetailedLinkError(failure, OutgoingFailureHTLCExceedsMax)
 	}
 
@@ -2446,11 +2614,11 @@ func (l *channelLink) canSendHtlc(policy ForwardingPolicy,
 		l.log.Warnf("htlc(%x) has an expiry that's too soon: "+
 			"outgoing_expiry=%v, best_height=%v", payHash[:],
 			timeout, heightNow)
-		failure := l.createFailureWithUpdate(
-			func(upd *lnwire.ChannelUpdate) lnwire.FailureMessage {
-				return lnwire.NewExpiryTooSoon(*upd)
-			},
-		)
+
+		cb := func(upd *lnwire.ChannelUpdate) lnwire.FailureMessage {
+			return lnwire.NewExpiryTooSoon(*upd)
+		}
+		failure := l.createFailureWithUpdate(false, originalScid, cb)
 		return NewLinkError(failure)
 	}
 
@@ -2467,11 +2635,10 @@ func (l *channelLink) canSendHtlc(policy ForwardingPolicy,
 	if amt > l.Bandwidth() {
 		l.log.Warnf("insufficient bandwidth to route htlc: %v is "+
 			"larger than %v", amt, l.Bandwidth())
-		failure := l.createFailureWithUpdate(
-			func(upd *lnwire.ChannelUpdate) lnwire.FailureMessage {
-				return lnwire.NewTemporaryChannelFailure(upd)
-			},
-		)
+		cb := func(upd *lnwire.ChannelUpdate) lnwire.FailureMessage {
+			return lnwire.NewTemporaryChannelFailure(upd)
+		}
+		failure := l.createFailureWithUpdate(false, originalScid, cb)
 		return NewDetailedLinkError(
 			failure, OutgoingFailureInsufficientBalance,
 		)
@@ -2510,33 +2677,6 @@ func (l *channelLink) handleSwitchPacket(pkt *htlcPacket) error {
 	return l.mailBox.AddPacket(pkt)
 }
 
-// handleLocalAddPacket handles a locally-initiated UpdateAddHTLC packet. It
-// will be processed synchronously.
-//
-// NOTE: Part of the packetHandler interface.
-func (l *channelLink) handleLocalAddPacket(pkt *htlcPacket) error {
-	l.log.Tracef("received switch packet outkey=%v", pkt.outKey())
-
-	// Create a buffered result channel to prevent the link from blocking.
-	errChan := make(chan error, 1)
-
-	select {
-	case l.localUpdateAdd <- &localUpdateAddMsg{
-		pkt: pkt,
-		err: errChan,
-	}:
-	case <-l.quit:
-		return ErrLinkShuttingDown
-	}
-
-	select {
-	case err := <-errChan:
-		return err
-	case <-l.quit:
-		return ErrLinkShuttingDown
-	}
-}
-
 // HandleChannelUpdate handles the htlc requests as settle/add/fail which sent
 // to us from remote peer we have a channel with.
 //
@@ -2571,7 +2711,6 @@ func (l *channelLink) ShutdownIfChannelClean() error {
 // updateChannelFee updates the commitment fee-per-kw on this channel by
 // committing to an update_fee message.
 func (l *channelLink) updateChannelFee(feePerKw chainfee.SatPerKWeight) error {
-
 	l.log.Infof("updating commit fee to %v sat/kw", feePerKw)
 
 	// We skip sending the UpdateFee message if the channel is not
@@ -2704,7 +2843,7 @@ func (l *channelLink) processRemoteSettleFails(fwdPkg *channeldb.FwdPkg,
 
 	// Only spawn the task forward packets we have a non-zero number.
 	if len(switchPackets) > 0 {
-		go l.forwardBatch(switchPackets...)
+		go l.forwardBatch(false, switchPackets...)
 	}
 }
 
@@ -2944,12 +3083,12 @@ func (l *channelLink) processRemoteAdds(fwdPkg *channeldb.FwdPkg,
 				l.log.Errorf("unable to encode the "+
 					"remaining route %v", err)
 
+				cb := func(upd *lnwire.ChannelUpdate) lnwire.FailureMessage {
+					return lnwire.NewTemporaryChannelFailure(upd)
+				}
+
 				failure := l.createFailureWithUpdate(
-					func(upd *lnwire.ChannelUpdate) lnwire.FailureMessage {
-						return lnwire.NewTemporaryChannelFailure(
-							upd,
-						)
-					},
+					true, hop.Source, cb,
 				)
 
 				l.sendHTLCError(
@@ -3003,14 +3142,17 @@ func (l *channelLink) processRemoteAdds(fwdPkg *channeldb.FwdPkg,
 		return
 	}
 
-	l.log.Debugf("forwarding %d packets to switch", len(switchPackets))
+	replay := fwdPkg.State != channeldb.FwdStateLockedIn
+
+	l.log.Debugf("forwarding %d packets to switch: replay=%v",
+		len(switchPackets), replay)
 
 	// NOTE: This call is made synchronous so that we ensure all circuits
 	// are committed in the exact order that they are processed in the link.
 	// Failing to do this could cause reorderings/gaps in the range of
 	// opened circuits, which violates assumptions made by the circuit
 	// trimming.
-	l.forwardBatch(switchPackets...)
+	l.forwardBatch(replay, switchPackets...)
 }
 
 // processExitHop handles an htlc for which this link is the exit hop. It
@@ -3144,7 +3286,7 @@ func (l *channelLink) settleHTLC(preimage lntypes.Preimage,
 // forwardBatch forwards the given htlcPackets to the switch, and waits on the
 // err chan for the individual responses. This method is intended to be spawned
 // as a goroutine so the responses can be handled in the background.
-func (l *channelLink) forwardBatch(packets ...*htlcPacket) {
+func (l *channelLink) forwardBatch(replay bool, packets ...*htlcPacket) {
 	// Don't forward packets for which we already have a response in our
 	// mailbox. This could happen if a packet fails and is buffered in the
 	// mailbox, and the incoming link flaps.
@@ -3157,7 +3299,8 @@ func (l *channelLink) forwardBatch(packets ...*htlcPacket) {
 		filteredPkts = append(filteredPkts, pkt)
 	}
 
-	if err := l.cfg.ForwardPackets(l.quit, filteredPkts...); err != nil {
+	err := l.cfg.ForwardPackets(l.quit, replay, filteredPkts...)
+	if err != nil {
 		log.Errorf("Unhandled error while reforwarding htlc "+
 			"settle/fail over htlcswitch: %v", err)
 	}

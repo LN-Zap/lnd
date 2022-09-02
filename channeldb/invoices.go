@@ -422,7 +422,7 @@ func (c ContractState) String() string {
 	return "Unknown"
 }
 
-// IsFinal returns a boolean indicating whether an invoice state is final
+// IsFinal returns a boolean indicating whether an invoice state is final.
 func (c ContractState) IsFinal() bool {
 	return c == ContractSettled || c == ContractCanceled
 }
@@ -492,6 +492,31 @@ type InvoiceStateAMP struct {
 	// custom records as well as the break down of the payment splits used
 	// when paying.
 	AmtPaid lnwire.MilliSatoshi
+}
+
+// copy makes a deep copy of the underlying InvoiceStateAMP.
+func (i *InvoiceStateAMP) copy() (InvoiceStateAMP, error) {
+	result := *i
+
+	// Make a copy of the InvoiceKeys map.
+	result.InvoiceKeys = make(map[CircuitKey]struct{})
+	for k := range i.InvoiceKeys {
+		result.InvoiceKeys[k] = struct{}{}
+	}
+
+	// As a safety measure, copy SettleDate. time.Time is concurrency safe
+	// except when using any of the (un)marshalling methods.
+	settleDateBytes, err := i.SettleDate.MarshalBinary()
+	if err != nil {
+		return InvoiceStateAMP{}, err
+	}
+
+	err = result.SettleDate.UnmarshalBinary(settleDateBytes)
+	if err != nil {
+		return InvoiceStateAMP{}, err
+	}
+
+	return result, nil
 }
 
 // AMPInvoiceState represents a type that stores metadata related to the set of
@@ -895,7 +920,7 @@ func validateInvoice(i *Invoice, paymentHash lntypes.Hash) error {
 	return nil
 }
 
-// IsPending returns ture if the invoice is in ContractOpen state.
+// IsPending returns true if the invoice is in ContractOpen state.
 func (i *Invoice) IsPending() bool {
 	return i.State == ContractOpen || i.State == ContractAccepted
 }
@@ -1156,7 +1181,6 @@ func fetchInvoiceNumByRef(invoiceIndex, payAddrIndex, setIDIndex kvdb.RBucket,
 	invoiceNumByHash := getInvoiceNumByHash()
 	invoiceNumByAddr := getInvoiceNumByAddr()
 	switch {
-
 	// If payment address and payment hash both reference an existing
 	// invoice, ensure they reference the _same_ invoice.
 	case invoiceNumByAddr != nil && invoiceNumByHash != nil:
@@ -1189,7 +1213,7 @@ func fetchInvoiceNumByRef(invoiceIndex, payAddrIndex, setIDIndex kvdb.RBucket,
 	}
 }
 
-// ScanInvoices scans trough all invoices and calls the passed scanFunc for
+// ScanInvoices scans through all invoices and calls the passed scanFunc for
 // for each invoice with its respective payment hash. Additionally a reset()
 // closure is passed which is used to reset/initialize partial results and also
 // to signal if the kvdb.View transaction has been retried.
@@ -1464,7 +1488,6 @@ func (d *DB) InvoicesSettledSince(sinceSettleIndex uint64) ([]Invoice, error) {
 		seqNo, indexValue := invoiceCursor.Next()
 
 		for ; seqNo != nil && bytes.Compare(seqNo, startIndex[:]) > 0; seqNo, indexValue = invoiceCursor.Next() {
-
 			// Depending on the length of the index value, this may
 			// or may not be an AMP invoice, so we'll extract the
 			// invoice value into two components: the invoice num,
@@ -2307,7 +2330,9 @@ func ampStateDecoder(r io.Reader, val interface{}, buf *[8]byte, l uint64) error
 		return nil
 	}
 
-	return tlv.NewTypeForEncodingErr(val, "channeldb.AMPInvoiceState")
+	return tlv.NewTypeForDecodingErr(
+		val, "channeldb.AMPInvoiceState", l, l,
+	)
 }
 
 // deserializeHtlcs reads a list of invoice htlcs from a reader and returns it
@@ -2418,7 +2443,7 @@ func copySlice(src []byte) []byte {
 }
 
 // copyInvoice makes a deep copy of the supplied invoice.
-func copyInvoice(src *Invoice) *Invoice {
+func copyInvoice(src *Invoice) (*Invoice, error) {
 	dest := Invoice{
 		Memo:           copySlice(src.Memo),
 		PaymentRequest: copySlice(src.PaymentRequest),
@@ -2432,6 +2457,7 @@ func copyInvoice(src *Invoice) *Invoice {
 		Htlcs: make(
 			map[CircuitKey]*InvoiceHTLC, len(src.Htlcs),
 		),
+		AMPState:    make(map[SetID]InvoiceStateAMP),
 		HodlInvoice: src.HodlInvoice,
 	}
 
@@ -2446,7 +2472,17 @@ func copyInvoice(src *Invoice) *Invoice {
 		dest.Htlcs[k] = v.Copy()
 	}
 
-	return &dest
+	// Lastly, copy the amp invoice state.
+	for k, v := range src.AMPState {
+		ampInvState, err := v.copy()
+		if err != nil {
+			return nil, err
+		}
+
+		dest.AMPState[k] = ampInvState
+	}
+
+	return &dest, nil
 }
 
 // invoiceSetIDKeyLen is the length of the key that's used to store the
@@ -2628,7 +2664,10 @@ func (d *DB) updateInvoice(hash *lntypes.Hash, refSetID *SetID, invoices,
 
 	// Create deep copy to prevent any accidental modification in the
 	// callback.
-	invoiceCopy := copyInvoice(&invoice)
+	invoiceCopy, err := copyInvoice(&invoice)
+	if err != nil {
+		return nil, err
+	}
 
 	// Call the callback and obtain the update descriptor.
 	update, err := callback(invoiceCopy)
@@ -2814,7 +2853,6 @@ func (d *DB) updateInvoice(hash *lntypes.Hash, refSetID *SetID, invoices,
 		if setID != nil && update.State != nil {
 			preimage, ok := update.State.HTLCPreimages[key]
 			switch {
-
 			// If we don't already have a preimage for this HTLC, we
 			// can set it now.
 			case ok && htlc.AMP.Preimage == nil:
@@ -2890,7 +2928,6 @@ func (d *DB) updateInvoice(hash *lntypes.Hash, refSetID *SetID, invoices,
 	if !invoiceIsAMP {
 		invoice.AmtPaid = amtPaid
 	} else {
-
 		invoice.AmtPaid += amtPaid
 	}
 
@@ -2941,7 +2978,6 @@ func updateInvoiceState(invoice *Invoice, hash *lntypes.Hash,
 	}
 
 	switch invoice.State {
-
 	// Once a contract is accepted, we can only transition to settled or
 	// canceled. Forbid transitioning back into this state. Otherwise this
 	// state is identical to ContractOpen, so we fallthrough to apply the
@@ -2979,7 +3015,6 @@ func updateInvoiceState(invoice *Invoice, hash *lntypes.Hash,
 		}
 
 		switch {
-
 		// If an invoice-level preimage was supplied, but the InvoiceRef
 		// doesn't specify a hash (e.g. AMP invoices) we fail.
 		case update.Preimage != nil && hash == nil:
@@ -3020,7 +3055,7 @@ func updateInvoiceState(invoice *Invoice, hash *lntypes.Hash,
 	}
 }
 
-// cancelSingleHtlc validates cancelation of a single htlc and update its state.
+// cancelSingleHtlc validates cancellation of a single htlc and update its state.
 func cancelSingleHtlc(resolveTime time.Time, htlc *InvoiceHTLC,
 	invState ContractState) error {
 
@@ -3063,7 +3098,6 @@ func updateHtlc(resolveTime time.Time, htlc *InvoiceHTLC,
 			// the invoice level. For AMP HTLCs, verify that the
 			// per-HTLC preimage-hash pair is valid.
 			switch {
-
 			// Non-AMP HTLCs can be settle immediately since we
 			// already know the preimage is valid due to checks at
 			// the invoice level.
@@ -3112,7 +3146,6 @@ func updateHtlc(resolveTime time.Time, htlc *InvoiceHTLC,
 	}
 
 	switch invState {
-
 	case ContractCanceled:
 		if htlc.State == HtlcStateAccepted {
 			htlc.State = HtlcStateCanceled
@@ -3369,7 +3402,6 @@ func (d *DB) DeleteInvoice(invoicesToDelete []InvoiceDeleteRef) error {
 				if err != nil {
 					return err
 				}
-
 			}
 
 			// In addition to deleting the main invoice state, if

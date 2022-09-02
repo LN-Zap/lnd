@@ -4,13 +4,15 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/stretchr/testify/require"
 )
 
 var (
@@ -27,8 +29,8 @@ var (
 		0x69, 0x49, 0x18, 0x83, 0x31, 0x98, 0x47, 0x53,
 	}
 
-	alicePriv, alicePub = btcec.PrivKeyFromBytes(btcec.S256(), aliceKey[:])
-	bobPriv, bobPub     = btcec.PrivKeyFromBytes(btcec.S256(), bobKey[:])
+	alicePriv, alicePub = btcec.PrivKeyFromBytes(aliceKey[:])
+	bobPriv, bobPub     = btcec.PrivKeyFromBytes(bobKey[:])
 )
 
 // channelTestCtx holds shared context that will be used in all tests cases
@@ -97,7 +99,7 @@ func newChannelTestCtx(chanSize int64) (*channelTestCtx, error) {
 		},
 	}
 
-	sigHashes := txscript.NewTxSigHashes(commitTx)
+	sigHashes := input.NewTxSigHashesV0Only(commitTx)
 	aliceSigRaw, err := txscript.RawTxInWitnessSignature(
 		commitTx, sigHashes, 0, chanSize,
 		multiSigScript, txscript.SigHashAll, alicePriv,
@@ -106,9 +108,7 @@ func newChannelTestCtx(chanSize int64) (*channelTestCtx, error) {
 		return nil, err
 	}
 
-	aliceSig, err := btcec.ParseDERSignature(
-		aliceSigRaw, btcec.S256(),
-	)
+	aliceSig, err := ecdsa.ParseDERSignature(aliceSigRaw)
 	if err != nil {
 		return nil, err
 	}
@@ -121,9 +121,7 @@ func newChannelTestCtx(chanSize int64) (*channelTestCtx, error) {
 		return nil, err
 	}
 
-	bobSig, err := btcec.ParseDERSignature(
-		bobSigRaw, btcec.S256(),
-	)
+	bobSig, err := ecdsa.ParseDERSignature(bobSigRaw)
 	if err != nil {
 		return nil, err
 	}
@@ -158,9 +156,7 @@ func TestValidate(t *testing.T) {
 
 	chanSize := int64(1000000)
 	channelCtx, err := newChannelTestCtx(chanSize)
-	if err != nil {
-		t.Fatalf("unable to make channel context: %v", err)
-	}
+	require.NoError(t, err, "unable to make channel context")
 
 	testCases := []struct {
 		// expectedErr is the error we expect, this should be nil if

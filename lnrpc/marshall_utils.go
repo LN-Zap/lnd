@@ -5,9 +5,9 @@ import (
 	"errors"
 	fmt "fmt"
 
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/txscript"
-	"github.com/btcsuite/btcutil"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
 )
@@ -27,7 +27,6 @@ func CalculateFeeLimit(feeLimit *FeeLimit,
 	amount lnwire.MilliSatoshi) lnwire.MilliSatoshi {
 
 	switch feeLimit.GetLimit().(type) {
-
 	case *FeeLimit_Fixed:
 		return lnwire.NewMSatFromSatoshis(
 			btcutil.Amount(feeLimit.GetFixed()),
@@ -89,12 +88,14 @@ func MarshalUtxos(utxos []*lnwallet.Utxo, activeNetParams *chaincfg.Params) (
 		// address type.
 		var addrType AddressType
 		switch utxo.AddressType {
-
 		case lnwallet.WitnessPubKey:
 			addrType = AddressType_WITNESS_PUBKEY_HASH
 
 		case lnwallet.NestedWitnessPubKey:
 			addrType = AddressType_NESTED_PUBKEY_HASH
+
+		case lnwallet.TaprootPubkey:
+			addrType = AddressType_TAPROOT_PUBKEY
 
 		case lnwallet.UnknownAddressType:
 			continue
