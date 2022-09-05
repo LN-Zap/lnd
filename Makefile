@@ -161,7 +161,7 @@ docker-release:
 
 docker-tools:
 	@$(call print, "Building tools docker image.")
-	docker build -q -t lnd-tools $(TOOLS_DIR)
+	docker build --build-arg TOKEN -q -t lnd-tools $(TOOLS_DIR)
 
 scratch: build
 

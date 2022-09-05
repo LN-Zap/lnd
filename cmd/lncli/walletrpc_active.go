@@ -1075,7 +1075,6 @@ func signMessageFromAddress(ctx *cli.Context) error {
 		message = ctx.String("message")
 	case args.Present():
 		message = args.First()
-		args = args.Tail()
 	default:
 		return fmt.Errorf("message argument missing")
 	}

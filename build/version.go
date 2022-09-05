@@ -50,13 +50,13 @@ const (
 	// per the semantic versioning spec.
 	AppPreRelease = "beta"
 
-	// StrikeMajor defines the major version for LND-Strike
+	// StrikeMajor defines the major version for LND-Strike.
 	StrikeMajor uint = 3
 
-	// StrikeMinor defines the minor version for LND-Strike
+	// StrikeMinor defines the minor version for LND-Strike.
 	StrikeMinor uint = 99
 
-	// StrikePatch defines the patch version for LND-Strike
+	// StrikePatch defines the patch version for LND-Strike.
 	StrikePatch uint = 99
 )
 
