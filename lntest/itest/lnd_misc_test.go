@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcwallet/wallet"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/lightningnetwork/lnd/chainreg"
@@ -340,8 +340,8 @@ func testSphinxReplayPersistence(net *lntest.NetworkHarness, t *harnessTest) {
 
 // testListChannels checks that the response from ListChannels is correct. It
 // tests the values in all ChannelConstraints are returned as expected. Once
-// ListChannels becomes mature, a test against all fields in ListChannels should
-// be performed.
+// ListChannels becomes mature, a test against all fields in ListChannels
+// should be performed.
 func testListChannels(net *lntest.NetworkHarness, t *harnessTest) {
 	ctxb := context.Background()
 
@@ -369,15 +369,17 @@ func testListChannels(net *lntest.NetworkHarness, t *harnessTest) {
 	net.SendCoins(t.t, btcutil.SatoshiPerBitcoin, alice)
 
 	// Open a channel with 100k satoshis between Alice and Bob with Alice
-	// being the sole funder of the channel. The minial HTLC amount is set to
-	// 4200 msats.
+	// being the sole funder of the channel. The minial HTLC amount is set
+	// to 4200 msats.
 	const customizedMinHtlc = 4200
 
 	chanAmt := btcutil.Amount(100000)
+	pushAmt := btcutil.Amount(1000)
 	chanPoint := openChannelAndAssert(
 		t, net, alice, bob,
 		lntest.OpenChannelParams{
 			Amt:            chanAmt,
+			PushAmt:        pushAmt,
 			MinHtlc:        customizedMinHtlc,
 			RemoteMaxHtlcs: aliceRemoteMaxHtlcs,
 		},
@@ -414,11 +416,19 @@ func testListChannels(net *lntest.NetworkHarness, t *harnessTest) {
 	// Check the returned response is correct.
 	aliceChannel := resp.Channels[0]
 
+	// Since Alice is the initiator, she pays the commit fee.
+	aliceBalance := int64(chanAmt) - aliceChannel.CommitFee - int64(pushAmt)
+
+	// Check the balance related fields are correct.
+	require.Equal(t.t, aliceBalance, aliceChannel.LocalBalance)
+	require.EqualValues(t.t, pushAmt, aliceChannel.RemoteBalance)
+	require.EqualValues(t.t, pushAmt, aliceChannel.PushAmountSat)
+
 	// Calculate the dust limit we'll use for the test.
 	dustLimit := lnwallet.DustLimitForSize(input.UnknownWitnessSize)
 
-	// defaultConstraints is a ChannelConstraints with default values. It is
-	// used to test against Alice's local channel constraints.
+	// defaultConstraints is a ChannelConstraints with default values. It
+	// is used to test against Alice's local channel constraints.
 	defaultConstraints := &lnrpc.ChannelConstraints{
 		CsvDelay:          4,
 		ChanReserveSat:    1000,
@@ -464,16 +474,20 @@ func testListChannels(net *lntest.NetworkHarness, t *harnessTest) {
 		)
 	}
 
-	// Check channel constraints match. Alice's local channel constraint should
-	// be equal to Bob's remote channel constraint, and her remote one should
-	// be equal to Bob's local one.
+	// Check the balance related fields are correct.
+	require.Equal(t.t, aliceBalance, bobChannel.RemoteBalance)
+	require.EqualValues(t.t, pushAmt, bobChannel.LocalBalance)
+	require.EqualValues(t.t, pushAmt, bobChannel.PushAmountSat)
+
+	// Check channel constraints match. Alice's local channel constraint
+	// should be equal to Bob's remote channel constraint, and her remote
+	// one should be equal to Bob's local one.
 	assertChannelConstraintsEqual(
 		t, aliceChannel.LocalConstraints, bobChannel.RemoteConstraints,
 	)
 	assertChannelConstraintsEqual(
 		t, aliceChannel.RemoteConstraints, bobChannel.LocalConstraints,
 	)
-
 }
 
 // testMaxPendingChannels checks that error is returned from remote peer if
@@ -523,6 +537,7 @@ func testMaxPendingChannels(net *lntest.NetworkHarness, t *harnessTest) {
 	} else if !strings.Contains(
 		err.Error(), lnwire.ErrMaxPendingChannels.Error(),
 	) {
+
 		t.Fatalf("not expected error was received: %v", err)
 	}
 
@@ -773,7 +788,6 @@ func testGarbageCollectLinkNodes(net *lntest.NetworkHarness, t *harnessTest) {
 		predErr = checkNumForceClosedChannels(pendingChanResp, 0)
 
 		return predErr == nil
-
 	}, defaultTimeout)
 	if err != nil {
 		t.Fatalf("channels not marked as fully resolved: %v", predErr)
@@ -1094,7 +1108,7 @@ func testDataLossProtection(net *lntest.NetworkHarness, t *harnessTest) {
 		daveBalance := daveBalResp.ConfirmedBalance
 		if daveBalance <= daveStartingBalance {
 			return fmt.Errorf("expected dave to have balance "+
-				"above %d, intead had %v", daveStartingBalance,
+				"above %d, instead had %v", daveStartingBalance,
 				daveBalance)
 		}
 

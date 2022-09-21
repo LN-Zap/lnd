@@ -45,37 +45,33 @@ func RPCTransaction(tx *lnwallet.TransactionDetail) *Transaction {
 		})
 	}
 
-	// Re-package destination output information.
-	var destOutputs []*DestOutput
-	for _, o := range tx.OutputDetails {
-		destOutputs = append(destOutputs, &DestOutput{
-			PkScript:     hex.EncodeToString(o.PkScript),
-			OutputIndex:  int64(o.OutputIndex),
-			Amount:       int64(o.Value),
-			IsOurAddress: o.IsOurAddress,
-		})
+	previousOutpoints := make([]*PreviousOutPoint, len(tx.PreviousOutpoints))
+	for idx, previousOutPoint := range tx.PreviousOutpoints {
+		previousOutpoints[idx] = &PreviousOutPoint{
+			Outpoint:    previousOutPoint.OutPoint,
+			IsOurOutput: previousOutPoint.IsOurOutput,
+		}
 	}
 
-	// We also get unconfirmed transactions, so BlockHash can be
-	// nil.
+	// We also get unconfirmed transactions, so BlockHash can be nil.
 	blockHash := ""
 	if tx.BlockHash != nil {
 		blockHash = tx.BlockHash.String()
 	}
 
 	return &Transaction{
-		TxHash:           tx.Hash.String(),
-		NumConfirmations: tx.NumConfirmations,
-		Amount:           int64(tx.Value),
-		BlockHash:        blockHash,
-		BlockHeight:      tx.BlockHeight,
-		TotalFees:        tx.TotalFees,
-		TimeStamp:        tx.Timestamp,
-		DestAddresses:    destAddresses,
-		OutputDetails:    outputDetails,
-		DestOutputsCopy:  destOutputs,
-		RawTxHex:         hex.EncodeToString(tx.RawTx),
-		Label:            tx.Label,
+		TxHash:            tx.Hash.String(),
+		Amount:            int64(tx.Value),
+		NumConfirmations:  tx.NumConfirmations,
+		BlockHash:         blockHash,
+		BlockHeight:       tx.BlockHeight,
+		TimeStamp:         tx.Timestamp,
+		TotalFees:         tx.TotalFees,
+		DestAddresses:     destAddresses,
+		OutputDetails:     outputDetails,
+		RawTxHex:          hex.EncodeToString(tx.RawTx),
+		Label:             tx.Label,
+		PreviousOutpoints: previousOutpoints,
 	}
 }
 

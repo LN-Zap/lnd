@@ -1,13 +1,5 @@
 # Release Notes
 
-## Bug Fixes
-
-* [Return the nearest known fee rate when a given conf target cannot be found
-  from Web API fee estimator.](https://github.com/lightningnetwork/lnd/pull/6062)
-
-* [We now _always_ set a channel type if the other party signals the feature
-  bit](https://github.com/lightningnetwork/lnd/pull/6075).
-
 ## Remote signing
 
 The [remote signing](../remote-signing.md) setup was simplified in that the
@@ -26,11 +18,6 @@ connection from the watch-only node.
   [was fixed](https://github.com/lightningnetwork/lnd/pull/5539).
   In other words, freshly-installed LND can now be initialized with multiple
   channels from an external (e.g. hardware) wallet *in a single transaction*.
-
-* When the block height+delta specified by a network message is greater than
-  the gossiper's best height, it will be considered as premature and ignored.
-  [These premature messages are now saved into a cache and processed once the
-  height has reached.](https://github.com/lightningnetwork/lnd/pull/6054)
 
 * A bug that allowed fees to be up to 100% of the payment amount was fixed by
   [introducing a more sane default
@@ -66,9 +53,6 @@ Postgres](https://github.com/lightningnetwork/lnd/pull/6111)
 
 ## Bug fixes
 
-* [Add json flag to
-  trackpayment](https://github.com/lightningnetwork/lnd/pull/6060)
-
 * [A new resolver for breach closes was introduced that handles sweeping
   anchor outputs and failing back HTLCs.](https://github.com/lightningnetwork/lnd/pull/6158)
 
@@ -92,41 +76,6 @@ Postgres](https://github.com/lightningnetwork/lnd/pull/6111)
 
 * [Clarify log message about not running within
   systemd](https://github.com/lightningnetwork/lnd/pull/6096)
-
-* [Fix memory corruption in Mission Control
-  Store](https://github.com/lightningnetwork/lnd/pull/6068)
-
-* [Clarify invalid config timeout
-  constraints](https://github.com/lightningnetwork/lnd/pull/6073)
-
-* [Fix memory corruption in Mission Control
-  Store](https://github.com/lightningnetwork/lnd/pull/6068)
- 
-* [Ensure that the min relay fee is always clamped by our fee
-  floor](https://github.com/lightningnetwork/lnd/pull/6076)
-
-* [Clarify invalid config timeout
-  constraints](https://github.com/lightningnetwork/lnd/pull/6073)
-
-* A conflict was found in connecting peers, where the peer bootstrapping
-  process and persistent connection could compete connection for a peer that
-  led to an already made connection being lost. [This is now fixed so that
-  bootstrapping will always ignore the peers chosen by the persistent
-  connection.](https://github.com/lightningnetwork/lnd/pull/6082)
-
-## RPC Server
-
-* [ChanStatusFlags is now
-  exposed](https://github.com/lightningnetwork/lnd/pull/5971) inside
-  WaitingCloseResp from calling `PendingChannels`.
-
-## Bug fixes
-
-* [Add json flag to
-  trackpayment](https://github.com/lightningnetwork/lnd/pull/6060)
-
-* [Fix missing label on streamed
-  transactions](https://github.com/lightningnetwork/lnd/pull/5854).
 
 * [Fix Postgres context cancellation](https://github.com/lightningnetwork/lnd/pull/6108)
 
@@ -153,11 +102,8 @@ Postgres](https://github.com/lightningnetwork/lnd/pull/6111)
   exposed](https://github.com/lightningnetwork/lnd/pull/5971) inside
   WaitingCloseResp from calling `PendingChannels`.
 
-## Code Health
-
-### Code cleanup, refactor, typo fixes
-
-* [Refactored itest to better manage contexts inside integration tests](https://github.com/lightningnetwork/lnd/pull/5756).
+* [Fix missing label on streamed
+  transactions](https://github.com/lightningnetwork/lnd/pull/5854).
 
 * [The `fee_rate_ppm` parameter/argument was added to  
   update channel policy](https://github.com/lightningnetwork/lnd/pull/5711)
@@ -180,10 +126,14 @@ Postgres](https://github.com/lightningnetwork/lnd/pull/6111)
   history](https://github.com/lightningnetwork/lnd/pull/6180) by adding the `force`
   flag to the `XImportMissionControl` RPC call.
 
+## Documentation
+
+* [General improvements to the mobile documentation](https://github.com/lightningnetwork/lnd/pull/6181). 
 
 # Contributors (Alphabetical Order)
 
 * Andras Banki-Horvath
+* Andreas Schjønhaug
 * Bjarne Magnussen
 * Daniel McNally
 * Elle Mouton

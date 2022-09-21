@@ -4,11 +4,12 @@ import (
 	"fmt"
 
 	"github.com/btcsuite/btcd/blockchain"
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/btcutil/txsort"
+	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
-	"github.com/btcsuite/btcutil/txsort"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/lnwallet"
@@ -151,6 +152,42 @@ func (t *backupTask) inputs() map[wire.OutPoint]input.Input {
 	return inputs
 }
 
+// addrType returns the type of an address after parsing it and matching it to
+// the set of known script templates.
+func addrType(pkScript []byte) txscript.ScriptClass {
+	// We pass in a set of dummy chain params here as they're only needed
+	// to make the address struct, which we're ignoring anyway (scripts are
+	// always the same, it's addresses that change across chains).
+	scriptClass, _, _, _ := txscript.ExtractPkScriptAddrs(
+		pkScript, &chaincfg.MainNetParams,
+	)
+
+	return scriptClass
+}
+
+// addScriptWeight parses the passed pkScript and adds the computed weight cost
+// were the script to be added to the justice transaction.
+func addScriptWeight(weightEstimate *input.TxWeightEstimator,
+	pkScript []byte) error {
+
+	switch addrType(pkScript) { //nolint: whitespace
+
+	case txscript.WitnessV0PubKeyHashTy:
+		weightEstimate.AddP2WKHOutput()
+
+	case txscript.WitnessV0ScriptHashTy:
+		weightEstimate.AddP2WSHOutput()
+
+	case txscript.WitnessV1TaprootTy:
+		weightEstimate.AddP2TROutput()
+
+	default:
+		return fmt.Errorf("invalid addr type: %v", addrType(pkScript))
+	}
+
+	return nil
+}
+
 // bindSession determines if the backupTask is compatible with the passed
 // SessionInfo's policy. If no error is returned, the task has been bound to the
 // session and can be queued to upload to the tower. Otherwise, the bind failed
@@ -192,13 +229,19 @@ func (t *backupTask) bindSession(session *wtdb.ClientSessionBody) error {
 		}
 	}
 
-	// All justice transactions have a p2wkh output paying to the victim.
-	weightEstimate.AddP2WKHOutput()
+	// All justice transactions will either use segwit v0 (p2wkh + p2wsh)
+	// or segwit v1 (p2tr).
+	if err := addScriptWeight(&weightEstimate, t.sweepPkScript); err != nil {
+		return err
+	}
 
 	// If the justice transaction has a reward output, add the output's
 	// contribution to the weight estimate.
 	if session.Policy.BlobType.Has(blob.FlagReward) {
-		weightEstimate.AddP2WKHOutput()
+		err := addScriptWeight(&weightEstimate, session.RewardPkScript)
+		if err != nil {
+			return err
+		}
 	}
 
 	if t.chanType.HasAnchors() != session.Policy.IsAnchorChannel() {
@@ -263,10 +306,14 @@ func (t *backupTask) craftSessionPayload(
 	// information. This will either be contain both the to-local and
 	// to-remote outputs, or only be the to-local output.
 	inputs := t.inputs()
-	for prevOutPoint, input := range inputs {
+	prevOutputFetcher := txscript.NewMultiPrevOutFetcher(nil)
+	for prevOutPoint, inp := range inputs {
+		prevOutputFetcher.AddPrevOut(
+			prevOutPoint, inp.SignDesc().Output,
+		)
 		justiceTxn.AddTxIn(&wire.TxIn{
 			PreviousOutPoint: prevOutPoint,
-			Sequence:         input.BlocksToMaturity(),
+			Sequence:         inp.BlocksToMaturity(),
 		})
 	}
 
@@ -285,7 +332,7 @@ func (t *backupTask) craftSessionPayload(
 	}
 
 	// Construct a sighash cache to improve signing performance.
-	hashCache := txscript.NewTxSigHashes(justiceTxn)
+	hashCache := txscript.NewTxSigHashes(justiceTxn, prevOutputFetcher)
 
 	// Since the transaction inputs could have been reordered as a result of
 	// the BIP69 sort, create an index mapping each prevout to it's new
@@ -304,7 +351,7 @@ func (t *backupTask) craftSessionPayload(
 
 		// Construct the full witness required to spend this input.
 		inputScript, err := inp.CraftInputScript(
-			signer, justiceTxn, hashCache, i,
+			signer, justiceTxn, hashCache, prevOutputFetcher, i,
 		)
 		if err != nil {
 			return hint, nil, err
@@ -316,7 +363,7 @@ func (t *backupTask) craftSessionPayload(
 		witness := inputScript.Witness
 		rawSignature := witness[0][:len(witness[0])-1]
 
-		// Reencode the DER signature into a fixed-size 64 byte
+		// Re-encode the DER signature into a fixed-size 64 byte
 		// signature.
 		signature, err := lnwire.NewSigFromRawSignature(rawSignature)
 		if err != nil {
@@ -342,7 +389,7 @@ func (t *backupTask) craftSessionPayload(
 		}
 	}
 
-	breachTxID := t.breachInfo.BreachTransaction.TxHash()
+	breachTxID := t.breachInfo.BreachTxHash
 
 	// Compute the breach key as SHA256(txid).
 	hint, key := blob.NewBreachHintAndKeyFromHash(&breachTxID)

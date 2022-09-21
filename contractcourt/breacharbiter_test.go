@@ -19,11 +19,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
 	"github.com/go-errors/errors"
 	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/channeldb"
@@ -432,7 +432,7 @@ func initBreachedOutputs() error {
 		bo := &breachedOutputs[i]
 
 		// Parse the sign descriptor's pubkey.
-		pubkey, err := btcec.ParsePubKey(breachKeys[i], btcec.S256())
+		pubkey, err := btcec.ParsePubKey(breachKeys[i])
 		if err != nil {
 			return fmt.Errorf("unable to parse pubkey: %v",
 				breachKeys[i])
@@ -711,9 +711,7 @@ func countRetributions(t *testing.T, rs RetributionStorer) int {
 	}, func() {
 		count = 0
 	})
-	if err != nil {
-		t.Fatalf("unable to list retributions in db: %v", err)
-	}
+	require.NoError(t, err, "unable to list retributions in db")
 	return count
 }
 
@@ -979,9 +977,7 @@ func initBreachedState(t *testing.T) (*BreachArbiter,
 	// a spend of the funding transaction. Alice's channel will be the on
 	// observing a breach.
 	alice, bob, cleanUpChans, err := createInitChannels(1)
-	if err != nil {
-		t.Fatalf("unable to create test channels: %v", err)
-	}
+	require.NoError(t, err, "unable to create test channels")
 
 	// Instantiate a breach arbiter to handle the breach of alice's channel.
 	contractBreaches := make(chan *ContractBreachEvent)
@@ -989,9 +985,7 @@ func initBreachedState(t *testing.T) (*BreachArbiter,
 	brar, cleanUpArb, err := createTestArbiter(
 		t, contractBreaches, alice.State().Db.GetParentDB(),
 	)
-	if err != nil {
-		t.Fatalf("unable to initialize test breach arbiter: %v", err)
-	}
+	require.NoError(t, err, "unable to initialize test breach arbiter")
 
 	// Send one HTLC to Bob and perform a state transition to lock it in.
 	htlcAmount := lnwire.NewMSatFromSatoshis(20000)
@@ -1009,9 +1003,7 @@ func initBreachedState(t *testing.T) (*BreachArbiter,
 	// Generate the force close summary at this point in time, this will
 	// serve as the old state bob will broadcast.
 	bobClose, err := bob.ForceClose()
-	if err != nil {
-		t.Fatalf("unable to force close bob's channel: %v", err)
-	}
+	require.NoError(t, err, "unable to force close bob's channel")
 
 	// Now send another HTLC and perform a state transition, this ensures
 	// Alice is ahead of the state Bob will broadcast.
@@ -1051,7 +1043,7 @@ func TestBreachHandoffSuccess(t *testing.T) {
 			processACK <- brarErr
 		},
 		BreachRetribution: &lnwallet.BreachRetribution{
-			BreachTransaction: bobClose.CloseTx,
+			BreachTxHash: bobClose.CloseTx.TxHash(),
 			LocalOutputSignDesc: &input.SignDescriptor{
 				Output: &wire.TxOut{
 					PkScript: breachKeys[0],
@@ -1085,7 +1077,7 @@ func TestBreachHandoffSuccess(t *testing.T) {
 			processACK <- brarErr
 		},
 		BreachRetribution: &lnwallet.BreachRetribution{
-			BreachTransaction: bobClose.CloseTx,
+			BreachTxHash: bobClose.CloseTx.TxHash(),
 			LocalOutputSignDesc: &input.SignDescriptor{
 				Output: &wire.TxOut{
 					PkScript: breachKeys[0],
@@ -1137,7 +1129,7 @@ func TestBreachHandoffFail(t *testing.T) {
 			processACK <- brarErr
 		},
 		BreachRetribution: &lnwallet.BreachRetribution{
-			BreachTransaction: bobClose.CloseTx,
+			BreachTxHash: bobClose.CloseTx.TxHash(),
 			LocalOutputSignDesc: &input.SignDescriptor{
 				Output: &wire.TxOut{
 					PkScript: breachKeys[0],
@@ -1166,9 +1158,7 @@ func TestBreachHandoffFail(t *testing.T) {
 	brar, cleanUpArb, err := createTestArbiter(
 		t, contractBreaches, alice.State().Db.GetParentDB(),
 	)
-	if err != nil {
-		t.Fatalf("unable to initialize test breach arbiter: %v", err)
-	}
+	require.NoError(t, err, "unable to initialize test breach arbiter")
 	defer cleanUpArb()
 
 	// Signal a spend of the funding transaction and wait for the close
@@ -1179,7 +1169,7 @@ func TestBreachHandoffFail(t *testing.T) {
 			processACK <- brarErr
 		},
 		BreachRetribution: &lnwallet.BreachRetribution{
-			BreachTransaction: bobClose.CloseTx,
+			BreachTxHash: bobClose.CloseTx.TxHash(),
 			LocalOutputSignDesc: &input.SignDescriptor{
 				Output: &wire.TxOut{
 					PkScript: breachKeys[0],
@@ -1216,7 +1206,7 @@ func TestBreachCreateJusticeTx(t *testing.T) {
 	// to the justice tx, not that we create a valid spend, so we just set
 	// some params making the script generation succeed.
 	aliceKeyPriv, _ := btcec.PrivKeyFromBytes(
-		btcec.S256(), channels.AlicesPrivKey,
+		channels.AlicesPrivKey,
 	)
 	alicePubKey := aliceKeyPriv.PubKey()
 
@@ -1263,7 +1253,7 @@ func TestBreachCreateJusticeTx(t *testing.T) {
 
 	// The spendCommitOuts tx should be spending the 4 typed of commit outs
 	// (note that in practice there will be at most two commit outputs per
-	// commmit, but we test all 4 types here).
+	// commit, but we test all 4 types here).
 	require.Len(t, justiceTxs.spendCommitOuts.TxIn, 4)
 
 	// Finally check that the spendHTLCs tx are spending the two revoked
@@ -1279,7 +1269,7 @@ type breachTest struct {
 
 	// spend2ndLevel requests that second level htlcs be spent *again*, as
 	// if by a remote party or watchtower. The outpoint of the second level
-	// htlc is in effect "readded" to the set of inputs.
+	// htlc is in effect "re-added" to the set of inputs.
 	spend2ndLevel bool
 
 	// sweepHtlc tests that the HTLC output is swept using the revocation
@@ -1377,7 +1367,7 @@ func getSpendTransactions(signer input.Signer, chanPoint *wire.OutPoint,
 	// sign and add the witness to the HTLC sweep.
 	retInfo := newRetributionInfo(chanPoint, retribution)
 
-	hashCache := txscript.NewTxSigHashes(htlcSweep)
+	hashCache := input.NewTxSigHashesV0Only(htlcSweep)
 	for i := range retInfo.breachedOutputs {
 		inp := &retInfo.breachedOutputs[i]
 
@@ -1386,8 +1376,11 @@ func getSpendTransactions(signer input.Signer, chanPoint *wire.OutPoint,
 		case input.HtlcAcceptedRevoke:
 			fallthrough
 		case input.HtlcOfferedRevoke:
+			cannedFetcher := txscript.NewCannedPrevOutputFetcher(
+				nil, 0,
+			)
 			inputScript, err := inp.CraftInputScript(
-				signer, htlcSweep, hashCache, 0,
+				signer, htlcSweep, hashCache, cannedFetcher, 0,
 			)
 			if err != nil {
 				return nil, err
@@ -1618,11 +1611,9 @@ func testBreachSpends(t *testing.T, test breachTest) {
 
 	// Notify the breach arbiter about the breach.
 	retribution, err := lnwallet.NewBreachRetribution(
-		alice.State(), height, 1,
+		alice.State(), height, 1, forceCloseTx,
 	)
-	if err != nil {
-		t.Fatalf("unable to create breach retribution: %v", err)
-	}
+	require.NoError(t, err, "unable to create breach retribution")
 
 	processACK := make(chan error)
 	breach := &ContractBreachEvent{
@@ -1661,9 +1652,7 @@ func testBreachSpends(t *testing.T, test breachTest) {
 		RemoteNextRevocation:    state.RemoteNextRevocation,
 		LocalChanConfig:         state.LocalChanCfg,
 	})
-	if err != nil {
-		t.Fatalf("unable to close channel: %v", err)
-	}
+	require.NoError(t, err, "unable to close channel")
 
 	// After exiting, the breach arbiter should have persisted the
 	// retribution information and the channel should be shown as pending
@@ -1834,11 +1823,9 @@ func TestBreachDelayedJusticeConfirmation(t *testing.T) {
 
 	// Notify the breach arbiter about the breach.
 	retribution, err := lnwallet.NewBreachRetribution(
-		alice.State(), height, uint32(blockHeight),
+		alice.State(), height, uint32(blockHeight), forceCloseTx,
 	)
-	if err != nil {
-		t.Fatalf("unable to create breach retribution: %v", err)
-	}
+	require.NoError(t, err, "unable to create breach retribution")
 
 	processACK := make(chan error, 1)
 	breach := &ContractBreachEvent{
@@ -1878,9 +1865,7 @@ func TestBreachDelayedJusticeConfirmation(t *testing.T) {
 		RemoteNextRevocation:    state.RemoteNextRevocation,
 		LocalChanConfig:         state.LocalChanCfg,
 	})
-	if err != nil {
-		t.Fatalf("unable to close channel: %v", err)
-	}
+	require.NoError(t, err, "unable to close channel")
 
 	// After exiting, the breach arbiter should have persisted the
 	// retribution information and the channel should be shown as pending
@@ -1949,7 +1934,6 @@ func TestBreachDelayedJusticeConfirmation(t *testing.T) {
 		maxIndex = uint32(len(forceCloseTx.TxOut)) - 1
 	)
 	for i := 0; i < 2; i++ {
-
 		var tx *wire.MsgTx
 		select {
 		case tx = <-publTx:
@@ -1989,7 +1973,6 @@ func TestBreachDelayedJusticeConfirmation(t *testing.T) {
 	}
 
 	select {
-
 	// The published tx should spend the same inputs as our second split.
 	case tx := <-publTx:
 		require.Len(t, tx.TxIn, len(splits[1].TxIn))
@@ -2125,9 +2108,7 @@ func assertPendingClosed(t *testing.T, c *lnwallet.LightningChannel) {
 	t.Helper()
 
 	closedChans, err := c.State().Db.FetchClosedChannels(true)
-	if err != nil {
-		t.Fatalf("unable to load pending closed channels: %v", err)
-	}
+	require.NoError(t, err, "unable to load pending closed channels")
 
 	for _, chanSummary := range closedChans {
 		if chanSummary.ChanPoint == *c.ChanPoint {
@@ -2144,9 +2125,7 @@ func assertNotPendingClosed(t *testing.T, c *lnwallet.LightningChannel) {
 	t.Helper()
 
 	closedChans, err := c.State().Db.FetchClosedChannels(true)
-	if err != nil {
-		t.Fatalf("unable to load pending closed channels: %v", err)
-	}
+	require.NoError(t, err, "unable to load pending closed channels")
 
 	for _, chanSummary := range closedChans {
 		if chanSummary.ChanPoint == *c.ChanPoint {
@@ -2166,8 +2145,7 @@ func createTestArbiter(t *testing.T, contractBreaches chan *ContractBreachEvent,
 		return NewRetributionStore(db)
 	})
 
-	aliceKeyPriv, _ := btcec.PrivKeyFromBytes(btcec.S256(),
-		channels.AlicesPrivKey)
+	aliceKeyPriv, _ := btcec.PrivKeyFromBytes(channels.AlicesPrivKey)
 	signer := &mock.SingleSigner{Privkey: aliceKeyPriv}
 
 	// Assemble our test arbiter.
@@ -2201,10 +2179,12 @@ func createTestArbiter(t *testing.T, contractBreaches chan *ContractBreachEvent,
 // initiator.
 func createInitChannels(revocationWindow int) (*lnwallet.LightningChannel, *lnwallet.LightningChannel, func(), error) {
 
-	aliceKeyPriv, aliceKeyPub := btcec.PrivKeyFromBytes(btcec.S256(),
-		channels.AlicesPrivKey)
-	bobKeyPriv, bobKeyPub := btcec.PrivKeyFromBytes(btcec.S256(),
-		channels.BobsPrivKey)
+	aliceKeyPriv, aliceKeyPub := btcec.PrivKeyFromBytes(
+		channels.AlicesPrivKey,
+	)
+	bobKeyPriv, bobKeyPub := btcec.PrivKeyFromBytes(
+		channels.BobsPrivKey,
+	)
 
 	channelCapacity, err := btcutil.NewAmount(10)
 	if err != nil {

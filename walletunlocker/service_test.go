@@ -89,8 +89,9 @@ func createTestWalletWithPw(t *testing.T, pubPw, privPw []byte, dir string,
 
 func createSeedAndMnemonic(t *testing.T,
 	pass []byte) (*aezeed.CipherSeed, aezeed.Mnemonic) {
+
 	cipherSeed, err := aezeed.New(
-		keychain.KeyDerivationVersion, &testEntropy, time.Now(),
+		keychain.CurrentKeyDerivationVersion, &testEntropy, time.Now(),
 	)
 	require.NoError(t, err)
 

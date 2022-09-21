@@ -15,9 +15,14 @@ import (
 // restarts. Payments are transitioned through various payment states, and the
 // ControlTower interface provides access to driving the state transitions.
 type ControlTower interface {
-	// This method checks that no suceeded payment exist for this payment
+	// This method checks that no succeeded payment exist for this payment
 	// hash.
 	InitPayment(lntypes.Hash, *channeldb.PaymentCreationInfo) error
+
+	// DeleteFailedAttempts removes all failed HTLCs from the db. It should
+	// be called for a given payment whenever all inflight htlcs are
+	// completed, and the payment has reached a final settled state.
+	DeleteFailedAttempts(lntypes.Hash) error
 
 	// RegisterAttempt atomically records the provided HTLCAttemptInfo.
 	RegisterAttempt(lntypes.Hash, *channeldb.HTLCAttemptInfo) error
@@ -117,12 +122,18 @@ func NewControlTower(db *channeldb.PaymentControl) ControlTower {
 
 // InitPayment checks or records the given PaymentCreationInfo with the DB,
 // making sure it does not already exist as an in-flight payment. Then this
-// method returns successfully, the payment is guranteeed to be in the InFlight
+// method returns successfully, the payment is guaranteed to be in the InFlight
 // state.
 func (p *controlTower) InitPayment(paymentHash lntypes.Hash,
 	info *channeldb.PaymentCreationInfo) error {
 
 	return p.db.InitPayment(paymentHash, info)
+}
+
+// DeleteFailedAttempts deletes all failed htlcs if the payment was
+// successfully settled.
+func (p *controlTower) DeleteFailedAttempts(paymentHash lntypes.Hash) error {
+	return p.db.DeleteFailedAttempts(paymentHash)
 }
 
 // RegisterAttempt atomically records the provided HTLCAttemptInfo to the
@@ -258,7 +269,7 @@ func (p *controlTower) SubscribePayment(paymentHash lntypes.Hash) (
 // notifySubscribers sends a final payment event to all subscribers of this
 // payment. The channel will be closed after this. Note that this function must
 // be executed atomically (by means of a lock) with the database update to
-// guarantuee consistency of the notifications.
+// guarantee consistency of the notifications.
 func (p *controlTower) notifySubscribers(paymentHash lntypes.Hash,
 	event *channeldb.MPPayment) {
 

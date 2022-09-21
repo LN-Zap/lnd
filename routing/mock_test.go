@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/go-errors/errors"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/htlcswitch"
@@ -304,6 +304,32 @@ func (m *mockControlTowerOld) InitPayment(phash lntypes.Hash,
 	delete(m.failed, phash)
 	m.payments[phash] = &testPayment{
 		info: *c,
+	}
+
+	return nil
+}
+
+func (m *mockControlTowerOld) DeleteFailedAttempts(phash lntypes.Hash) error {
+	p, ok := m.payments[phash]
+	if !ok {
+		return channeldb.ErrPaymentNotInitiated
+	}
+
+	var inFlight bool
+	for _, a := range p.attempts {
+		if a.Settle != nil {
+			continue
+		}
+
+		if a.Failure != nil {
+			continue
+		}
+
+		inFlight = true
+	}
+
+	if inFlight {
+		return channeldb.ErrPaymentInFlight
 	}
 
 	return nil
@@ -632,6 +658,7 @@ var _ PaymentSession = (*mockPaymentSession)(nil)
 
 func (m *mockPaymentSession) RequestRoute(maxAmt, feeLimit lnwire.MilliSatoshi,
 	activeShards, height uint32) (*route.Route, error) {
+
 	args := m.Called(maxAmt, feeLimit, activeShards, height)
 	return args.Get(0).(*route.Route), args.Error(1)
 }
@@ -661,6 +688,11 @@ func (m *mockControlTower) InitPayment(phash lntypes.Hash,
 	c *channeldb.PaymentCreationInfo) error {
 
 	args := m.Called(phash, c)
+	return args.Error(0)
+}
+
+func (m *mockControlTower) DeleteFailedAttempts(phash lntypes.Hash) error {
+	args := m.Called(phash)
 	return args.Error(0)
 }
 

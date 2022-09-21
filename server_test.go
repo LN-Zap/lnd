@@ -20,45 +20,8 @@ import (
 	"time"
 
 	"github.com/lightningnetwork/lnd/lncfg"
+	"github.com/stretchr/testify/require"
 )
-
-func TestParseHexColor(t *testing.T) {
-	var colorTestCases = []struct {
-		test  string
-		valid bool // If valid format
-		R     byte
-		G     byte
-		B     byte
-	}{
-		{"#123", false, 0, 0, 0},
-		{"#1234567", false, 0, 0, 0},
-		{"$123456", false, 0, 0, 0},
-		{"#12345+", false, 0, 0, 0},
-		{"#fFGG00", false, 0, 0, 0},
-		{"", false, 0, 0, 0},
-		{"#123456", true, 0x12, 0x34, 0x56},
-		{"#C0FfeE", true, 0xc0, 0xff, 0xee},
-	}
-
-	// Perform the table driven tests.
-	for _, ct := range colorTestCases {
-
-		color, err := parseHexColor(ct.test)
-		if !ct.valid && err == nil {
-			t.Fatalf("Invalid color string: %s, should return "+
-				"error, but did not", ct.test)
-		}
-
-		if ct.valid && err != nil {
-			t.Fatalf("Color %s valid to parse: %s", ct.test, err)
-		}
-
-		// Ensure that the string to hex decoding is working properly.
-		if color.R != ct.R || color.G != ct.G || color.B != ct.B {
-			t.Fatalf("Color %s incorrectly parsed as %v", ct.test, color)
-		}
-	}
-}
 
 // TestTLSAutoRegeneration creates an expired TLS certificate, to test that a
 // new TLS certificate pair is regenerated when the old pair expires. This is
@@ -75,9 +38,7 @@ func TestTLSAutoRegeneration(t *testing.T) {
 
 	certDerBytes, keyBytes := genExpiredCertPair(t, tempDirPath)
 	expiredCert, err := x509.ParseCertificate(certDerBytes)
-	if err != nil {
-		t.Fatalf("failed to parse certificate: %v", err)
-	}
+	require.NoError(t, err, "failed to parse certificate")
 
 	certBuf := bytes.Buffer{}
 	err = pem.Encode(
@@ -86,9 +47,7 @@ func TestTLSAutoRegeneration(t *testing.T) {
 			Bytes: certDerBytes,
 		},
 	)
-	if err != nil {
-		t.Fatalf("failed to encode certificate: %v", err)
-	}
+	require.NoError(t, err, "failed to encode certificate")
 
 	keyBuf := bytes.Buffer{}
 	err = pem.Encode(
@@ -97,19 +56,13 @@ func TestTLSAutoRegeneration(t *testing.T) {
 			Bytes: keyBytes,
 		},
 	)
-	if err != nil {
-		t.Fatalf("failed to encode private key: %v", err)
-	}
+	require.NoError(t, err, "failed to encode private key")
 
 	// Write cert and key files.
 	err = ioutil.WriteFile(tempDirPath+"/tls.cert", certBuf.Bytes(), 0644)
-	if err != nil {
-		t.Fatalf("failed to write cert file: %v", err)
-	}
+	require.NoError(t, err, "failed to write cert file")
 	err = ioutil.WriteFile(tempDirPath+"/tls.key", keyBuf.Bytes(), 0600)
-	if err != nil {
-		t.Fatalf("failed to write key file: %v", err)
-	}
+	require.NoError(t, err, "failed to write key file")
 
 	rpcListener := net.IPAddr{IP: net.ParseIP("127.0.0.1"), Zone: ""}
 	rpcListeners := make([]net.Addr, 0)
@@ -156,9 +109,7 @@ func genExpiredCertPair(t *testing.T, certDirPath string) ([]byte, []byte) {
 
 	// Generate a serial number that's below the serialNumberLimit.
 	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
-	if err != nil {
-		t.Fatalf("failed to generate serial number: %s", err)
-	}
+	require.NoError(t, err, "failed to generate serial number")
 
 	host := "lightning"
 
@@ -195,14 +146,10 @@ func genExpiredCertPair(t *testing.T, certDirPath string) ([]byte, []byte) {
 	certDerBytes, err := x509.CreateCertificate(
 		rand.Reader, &template, &template, &priv.PublicKey, priv,
 	)
-	if err != nil {
-		t.Fatalf("failed to create certificate: %v", err)
-	}
+	require.NoError(t, err, "failed to create certificate")
 
 	keyBytes, err := x509.MarshalECPrivateKey(priv)
-	if err != nil {
-		t.Fatalf("unable to encode privkey: %v", err)
-	}
+	require.NoError(t, err, "unable to encode privkey")
 
 	return certDerBytes, keyBytes
 }
@@ -246,7 +193,7 @@ func TestShouldPeerBootstrap(t *testing.T) {
 			},
 		},
 
-		// Mainnet active, but boostrap disabled, no boostrap.
+		// Mainnet active, but bootstrap disabled, no bootstrap.
 		{
 			cfg: &Config{
 				Bitcoin: &lncfg.Chain{
@@ -257,7 +204,7 @@ func TestShouldPeerBootstrap(t *testing.T) {
 			},
 		},
 
-		// Mainnet active, should boostrap.
+		// Mainnet active, should bootstrap.
 		{
 			cfg: &Config{
 				Bitcoin: &lncfg.Chain{
@@ -268,7 +215,7 @@ func TestShouldPeerBootstrap(t *testing.T) {
 			shouldBoostrap: true,
 		},
 
-		// Testnet active, should boostrap.
+		// Testnet active, should bootstrap.
 		{
 			cfg: &Config{
 				Bitcoin: &lncfg.Chain{

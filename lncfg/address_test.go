@@ -9,7 +9,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/stretchr/testify/require"
 )
 
@@ -140,7 +140,7 @@ var (
 
 	pubKeyHex = hex.EncodeToString(pubKeyBytes)
 
-	pubKey, _ = btcec.ParsePubKey(pubKeyBytes, btcec.S256())
+	pubKey, _ = btcec.ParsePubKey(pubKeyBytes)
 )
 
 type lnAddressCase struct {
@@ -202,9 +202,7 @@ func testLNAddress(t *testing.T, test lnAddressCase) {
 	lnAddr, err := ParseLNAddressString(
 		test.lnAddress, defaultTestPort, net.ResolveTCPAddr,
 	)
-	if err != nil {
-		t.Fatalf("unable to parse ln address: %v", err)
-	}
+	require.NoError(t, err, "unable to parse ln address")
 
 	// Assert that the public key matches the expected public key.
 	pkBytes := lnAddr.IdentityKey.SerializeCompressed()

@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/davecgh/go-spew/spew"
 	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/lightningnetwork/lnd/channeldb"
@@ -55,7 +55,7 @@ func (ps paymentState) terminated() bool {
 }
 
 // needWaitForShards returns a bool to specify whether we need to wait for the
-// outcome of the shanrdHandler.
+// outcome of the shardHandler.
 func (ps paymentState) needWaitForShards() bool {
 	// If we have in flight shards and the payment is in final stage, we
 	// need to wait for the outcomes from the shards. Or if we have no more
@@ -180,16 +180,27 @@ lifecycle:
 		// TODO(yy): sanity check all the states to make sure
 		// everything is expected.
 		switch {
-
 		// We have a terminal condition and no active shards, we are
 		// ready to exit.
 		case currentState.terminated():
 			// Find the first successful shard and return
 			// the preimage and route.
 			for _, a := range payment.HTLCs {
-				if a.Settle != nil {
-					return a.Settle.Preimage, &a.Route, nil
+				if a.Settle == nil {
+					continue
 				}
+
+				err := p.router.cfg.Control.
+					DeleteFailedAttempts(
+						p.identifier)
+				if err != nil {
+					log.Errorf("Error deleting failed "+
+						"payment attempts for "+
+						"payment %v: %v", p.identifier,
+						err)
+				}
+
+				return a.Settle.Preimage, &a.Route, nil
 			}
 
 			// Payment failed.
@@ -280,7 +291,7 @@ lifecycle:
 			continue lifecycle
 		}
 
-		// If this route will consume the last remeining amount to send
+		// If this route will consume the last remaining amount to send
 		// to the receiver, this will be our last shard (for now).
 		lastShard := rt.ReceiverAmt() == currentState.remainingAmt
 
@@ -470,7 +481,6 @@ type shardResult struct {
 // given HTLC attempt to be available then handle its result. It will fail the
 // payment with the control tower if a terminal error is encountered.
 func (p *shardHandler) collectResultAsync(attempt *channeldb.HTLCAttemptInfo) {
-
 	// errToSend is the error to be sent to sh.shardErrors.
 	var errToSend error
 
@@ -557,7 +567,6 @@ func (p *shardHandler) collectResult(attempt *channeldb.HTLCAttemptInfo) (
 		attempt.AttemptID, p.identifier, errorDecryptor,
 	)
 	switch {
-
 	// If this attempt ID is unknown to the Switch, it means it was never
 	// checkpointed and forwarded by the switch before a restart. In this
 	// case we can safely send a new payment attempt, and wait for its
@@ -600,9 +609,6 @@ func (p *shardHandler) collectResult(attempt *channeldb.HTLCAttemptInfo) (
 
 	case <-p.router.quit:
 		return nil, ErrRouterShuttingDown
-
-	case <-p.quit:
-		return nil, errShardHandlerExiting
 	}
 
 	// In case of a payment failure, fail the attempt with the control
@@ -669,9 +675,9 @@ func (p *shardHandler) createNewPaymentAttempt(rt *route.Route, lastShard bool) 
 		return lnwire.ShortChannelID{}, nil, nil, err
 	}
 
-	// Requesst a new shard from the ShardTracker. If this is an AMP
+	// Request a new shard from the ShardTracker. If this is an AMP
 	// payment, and this is the last shard, the outstanding shards together
-	// with ths one will be enough for the receiver to derive all HTLC
+	// with this one will be enough for the receiver to derive all HTLC
 	// preimages. If this a non-AMP payment, the ShardTracker will return a
 	// simple shard with the payment's static payment hash.
 	shard, err := p.shardTracker.NewShard(attemptID, lastShard)
@@ -780,8 +786,8 @@ func (p *shardHandler) handleSendError(attempt *channeldb.HTLCAttemptInfo,
 
 		// Fail the payment via control tower.
 		if err := p.router.cfg.Control.Fail(
-			p.identifier, *reason); err != nil {
-
+			p.identifier, *reason,
+		); err != nil {
 			log.Errorf("unable to report failure to control "+
 				"tower: %v", err)
 
@@ -886,9 +892,7 @@ func (p *shardHandler) handleFailureMessage(rt *route.Route,
 	// always succeed, otherwise there is something wrong in our
 	// implementation. Therefore return an error.
 	errVertex := rt.Hops[errorSourceIdx-1].PubKeyBytes
-	errSource, err := btcec.ParsePubKey(
-		errVertex[:], btcec.S256(),
-	)
+	errSource, err := btcec.ParsePubKey(errVertex[:])
 	if err != nil {
 		log.Errorf("Cannot parse pubkey: idx=%v, pubkey=%v",
 			errorSourceIdx, errVertex)
@@ -968,7 +972,6 @@ func marshallError(sendError error, time time.Time) *channeldb.HTLCFailInfo {
 	}
 
 	switch sendError {
-
 	case htlcswitch.ErrPaymentIDNotFound:
 		response.Reason = channeldb.HTLCFailInternal
 		return response

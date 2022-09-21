@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"testing"
 
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/lnwallet/chainfee"
 	"github.com/stretchr/testify/require"
@@ -44,7 +44,7 @@ func fundingFee(feeRate chainfee.SatPerKWeight, numInput int, // nolint:unparam
 
 	// Optionally count a change output.
 	if change {
-		weightEstimate.AddP2WKHOutput()
+		weightEstimate.AddP2TROutput()
 	}
 
 	totalWeight := int64(weightEstimate.Weight())
@@ -81,7 +81,7 @@ func TestCalculateFees(t *testing.T) {
 			},
 
 			expectedFeeNoChange:   487,
-			expectedFeeWithChange: 611,
+			expectedFeeWithChange: 659,
 			expectedErr:           nil,
 		},
 
@@ -97,7 +97,7 @@ func TestCalculateFees(t *testing.T) {
 			},
 
 			expectedFeeNoChange:   579,
-			expectedFeeWithChange: 703,
+			expectedFeeWithChange: 751,
 			expectedErr:           nil,
 		},
 

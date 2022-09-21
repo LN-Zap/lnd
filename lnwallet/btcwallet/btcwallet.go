@@ -9,13 +9,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/btcutil/hdkeychain"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
-	"github.com/btcsuite/btcutil/hdkeychain"
 	"github.com/btcsuite/btcwallet/chain"
 	"github.com/btcsuite/btcwallet/waddrmgr"
 	"github.com/btcsuite/btcwallet/wallet"
@@ -25,6 +25,7 @@ import (
 	"github.com/btcsuite/btcwallet/walletdb"
 	"github.com/btcsuite/btcwallet/wtxmgr"
 	"github.com/lightningnetwork/lnd/blockcache"
+	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/labels"
@@ -59,12 +60,24 @@ var (
 	// stored within the top-level waleltdb buckets of btcwallet.
 	waddrmgrNamespaceKey = []byte("waddrmgr")
 
+	// wtxmgrNamespaceKey is the namespace key that the wtxmgr state is
+	// stored within the top-level waleltdb buckets of btcwallet.
+	wtxmgrNamespaceKey = []byte("wtxmgr")
+
 	// lightningAddrSchema is the scope addr schema for all keys that we
 	// derive. We'll treat them all as p2wkh addresses, as atm we must
 	// specify a particular type.
 	lightningAddrSchema = waddrmgr.ScopeAddrSchema{
 		ExternalAddrType: waddrmgr.WitnessPubKey,
 		InternalAddrType: waddrmgr.WitnessPubKey,
+	}
+
+	// LndDefaultKeyScopes is the list of default key scopes that lnd adds
+	// to its wallet.
+	LndDefaultKeyScopes = []waddrmgr.KeyScope{
+		waddrmgr.KeyScopeBIP0049Plus,
+		waddrmgr.KeyScopeBIP0084,
+		waddrmgr.KeyScopeBIP0086,
 	}
 
 	// errNoImportedAddrGen is an error returned when a new address is
@@ -97,6 +110,9 @@ type BtcWallet struct {
 	chainKeyScope waddrmgr.KeyScope
 
 	blockCache *blockcache.BlockCache
+
+	musig2Sessions    map[input.MuSig2SessionID]*muSig2State
+	musig2SessionsMtx sync.Mutex
 }
 
 // A compile time check to ensure that BtcWallet implements the
@@ -159,13 +175,14 @@ func New(cfg Config, blockCache *blockcache.BlockCache) (*BtcWallet, error) {
 	}
 
 	return &BtcWallet{
-		cfg:           &cfg,
-		wallet:        wallet,
-		db:            wallet.Database(),
-		chain:         cfg.ChainSource,
-		netParams:     cfg.NetParams,
-		chainKeyScope: chainKeyScope,
-		blockCache:    blockCache,
+		cfg:            &cfg,
+		wallet:         wallet,
+		db:             wallet.Database(),
+		chain:          cfg.ChainSource,
+		netParams:      cfg.NetParams,
+		chainKeyScope:  chainKeyScope,
+		blockCache:     blockCache,
+		musig2Sessions: make(map[input.MuSig2SessionID]*muSig2State),
 	}, nil
 }
 
@@ -202,7 +219,7 @@ func LoaderWithExternalWalletDB(db kvdb.Backend) LoaderOption {
 
 // NewWalletLoader constructs a wallet loader.
 func NewWalletLoader(chainParams *chaincfg.Params, recoveryWindow uint32,
-	opts ...LoaderOption) (*wallet.Loader, error) {
+	opts ...LoaderOption) (*base.Loader, error) {
 
 	cfg := &loaderCfg{}
 
@@ -320,6 +337,34 @@ func (b *BtcWallet) Start() error {
 				"yet, it still contains private keys; " +
 				"consider turning on the watch-only wallet " +
 				"migration in remote signing mode")
+		}
+	}
+
+	// Because we might add new "default" key scopes over time, they are
+	// created correctly for new wallets. Existing wallets don't
+	// automatically add them, we need to do that manually now.
+	for _, scope := range LndDefaultKeyScopes {
+		_, err := b.wallet.Manager.FetchScopedKeyManager(scope)
+		if waddrmgr.IsError(err, waddrmgr.ErrScopeNotFound) {
+			// The default scope wasn't found, that probably means
+			// it was added recently and older wallets don't know it
+			// yet. Let's add it now.
+			addrSchema := waddrmgr.ScopeAddrMap[scope]
+			err := walletdb.Update(
+				b.db, func(tx walletdb.ReadWriteTx) error {
+					addrmgrNs := tx.ReadWriteBucket(
+						waddrmgrNamespaceKey,
+					)
+
+					_, err := b.wallet.Manager.NewScopedKeyManager(
+						addrmgrNs, scope, addrSchema,
+					)
+					return err
+				},
+			)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -460,6 +505,8 @@ func (b *BtcWallet) keyScopeForAccountAddr(accountName string,
 		addrKeyScope = waddrmgr.KeyScopeBIP0084
 	case lnwallet.NestedWitnessPubKey:
 		addrKeyScope = waddrmgr.KeyScopeBIP0049Plus
+	case lnwallet.TaprootPubkey:
+		addrKeyScope = waddrmgr.KeyScopeBIP0086
 	default:
 		return waddrmgr.KeyScope{}, 0,
 			fmt.Errorf("unknown address type")
@@ -542,6 +589,16 @@ func (b *BtcWallet) IsOurAddress(a btcutil.Address) bool {
 	return result && (err == nil)
 }
 
+// AddressInfo returns the information about an address, if it's known to this
+// wallet.
+//
+// NOTE: This is a part of the WalletController interface.
+func (b *BtcWallet) AddressInfo(a btcutil.Address) (waddrmgr.ManagedAddress,
+	error) {
+
+	return b.wallet.AddressInfo(a)
+}
+
 // ListAccounts retrieves all accounts belonging to the wallet by default. A
 // name and key scope filter can be provided to filter through all of the wallet
 // accounts and return only those matching.
@@ -564,25 +621,20 @@ func (b *BtcWallet) ListAccounts(name string,
 	// Only the name filter was provided.
 	case name != "" && keyScope == nil:
 		// If the name corresponds to the default or imported accounts,
-		// we'll return them for both of our supported key scopes.
+		// we'll return them for all our supported key scopes.
 		if name == lnwallet.DefaultAccountName ||
 			name == waddrmgr.ImportedAddrAccountName {
 
-			a1, err := b.wallet.AccountPropertiesByName(
-				waddrmgr.KeyScopeBIP0049Plus, name,
-			)
-			if err != nil {
-				return nil, err
+			for _, defaultScope := range LndDefaultKeyScopes {
+				a, err := b.wallet.AccountPropertiesByName(
+					defaultScope, name,
+				)
+				if err != nil {
+					return nil, err
+				}
+				res = append(res, a)
 			}
-			res = append(res, a1)
 
-			a2, err := b.wallet.AccountPropertiesByName(
-				waddrmgr.KeyScopeBIP0084, name,
-			)
-			if err != nil {
-				return nil, err
-			}
-			res = append(res, a2)
 			break
 		}
 
@@ -613,25 +665,18 @@ func (b *BtcWallet) ListAccounts(name string,
 	// Neither of the filters were provided, so return all accounts for our
 	// supported key scopes.
 	case name == "" && keyScope == nil:
-		accounts, err := b.wallet.Accounts(waddrmgr.KeyScopeBIP0049Plus)
-		if err != nil {
-			return nil, err
-		}
-		for _, account := range accounts.Accounts {
-			account := account
-			res = append(res, &account.AccountProperties)
-		}
-
-		accounts, err = b.wallet.Accounts(waddrmgr.KeyScopeBIP0084)
-		if err != nil {
-			return nil, err
-		}
-		for _, account := range accounts.Accounts {
-			account := account
-			res = append(res, &account.AccountProperties)
+		for _, defaultScope := range LndDefaultKeyScopes {
+			accounts, err := b.wallet.Accounts(defaultScope)
+			if err != nil {
+				return nil, err
+			}
+			for _, account := range accounts.Accounts {
+				account := account
+				res = append(res, &account.AccountProperties)
+			}
 		}
 
-		accounts, err = b.wallet.Accounts(waddrmgr.KeyScope{
+		accounts, err := b.wallet.Accounts(waddrmgr.KeyScope{
 			Purpose: keychain.BIP0043Purpose,
 			Coin:    b.cfg.CoinType,
 		})
@@ -645,6 +690,22 @@ func (b *BtcWallet) ListAccounts(name string,
 	}
 
 	return res, nil
+}
+
+// RequiredReserve returns the minimum amount of satoshis that should be
+// kept in the wallet in order to fee bump anchor channels if necessary.
+// The value scales with the number of public anchor channels but is
+// capped at a maximum.
+func (b *BtcWallet) RequiredReserve(
+	numAnchorChans uint32) btcutil.Amount {
+
+	anchorChanReservedValue := lnwallet.AnchorChanReservedValue
+	reserved := btcutil.Amount(numAnchorChans) * anchorChanReservedValue
+	if reserved > lnwallet.MaxAnchorChanReservedValue {
+		reserved = lnwallet.MaxAnchorChanReservedValue
+	}
+
+	return reserved
 }
 
 // ImportAccount imports an account backed by an account extended public key.
@@ -718,6 +779,26 @@ func (b *BtcWallet) ImportPublicKey(pubKey *btcec.PublicKey,
 	addrType waddrmgr.AddressType) error {
 
 	return b.wallet.ImportPublicKey(pubKey, addrType)
+}
+
+// ImportTaprootScript imports a user-provided taproot script into the address
+// manager. The imported script will act as a pay-to-taproot address.
+func (b *BtcWallet) ImportTaprootScript(scope waddrmgr.KeyScope,
+	tapscript *waddrmgr.Tapscript) (waddrmgr.ManagedAddress, error) {
+
+	// We want to be able to import script addresses into a watch-only
+	// wallet, which is only possible if we don't encrypt the script with
+	// the private key encryption key. By specifying the script as being
+	// "not secret", we can also decrypt the script in a watch-only wallet.
+	const isSecretScript = false
+
+	// Currently, only v1 (Taproot) scripts are supported. We don't even
+	// know what a v2 witness version would look like at this point.
+	const witnessVersionTaproot byte = 1
+
+	return b.wallet.ImportTaprootScript(
+		scope, tapscript, nil, witnessVersionTaproot, isSecretScript,
+	)
 }
 
 // SendOutputs funds, signs, and broadcasts a Bitcoin transaction paying out to
@@ -836,19 +917,42 @@ func (b *BtcWallet) UnlockOutpoint(o wire.OutPoint) {
 //
 // NOTE: This method requires the global coin selection lock to be held.
 func (b *BtcWallet) LeaseOutput(id wtxmgr.LockID, op wire.OutPoint,
-	duration time.Duration) (time.Time, error) {
+	duration time.Duration) (time.Time, []byte, btcutil.Amount, error) {
 
 	// Make sure we don't attempt to double lock an output that's been
 	// locked by the in-memory implementation.
 	if b.wallet.LockedOutpoint(op) {
-		return time.Time{}, wtxmgr.ErrOutputAlreadyLocked
+		return time.Time{}, nil, 0, wtxmgr.ErrOutputAlreadyLocked
 	}
 
-	return b.wallet.LeaseOutput(id, op, duration)
+	lockedUntil, err := b.wallet.LeaseOutput(id, op, duration)
+	if err != nil {
+		return time.Time{}, nil, 0, err
+	}
+
+	// Get the pkScript and value for this lock from the list of all leased
+	// outputs.
+	allLeases, err := b.wallet.ListLeasedOutputs()
+	if err != nil {
+		return time.Time{}, nil, 0, err
+	}
+
+	for _, lease := range allLeases {
+		if lease.Outpoint == op {
+			return lockedUntil, lease.PkScript,
+				btcutil.Amount(lease.Value), nil
+		}
+	}
+
+	// We MUST find the leased output in the loop above, otherwise something
+	// is seriously wrong.
+	return time.Time{}, nil, 0, wtxmgr.ErrUnknownOutput
 }
 
 // ListLeasedOutputs returns a list of all currently locked outputs.
-func (b *BtcWallet) ListLeasedOutputs() ([]*wtxmgr.LockedOutput, error) {
+func (b *BtcWallet) ListLeasedOutputs() ([]*base.ListLeasedOutputResult,
+	error) {
+
 	return b.wallet.ListLeasedOutputs()
 }
 
@@ -901,10 +1005,13 @@ func (b *BtcWallet) ListUnspentWitness(minConfs, maxConfs int32,
 			// wallet are nested p2pkh. We can't check the redeem script because
 			// the btcwallet service does not include it.
 			addressType = lnwallet.NestedWitnessPubKey
+		} else if txscript.IsPayToTaproot(pkScript) {
+			addressType = lnwallet.TaprootPubkey
 		}
 
 		if addressType == lnwallet.WitnessPubKey ||
-			addressType == lnwallet.NestedWitnessPubKey {
+			addressType == lnwallet.NestedWitnessPubKey ||
+			addressType == lnwallet.TaprootPubkey {
 
 			txid, err := chainhash.NewHashFromStr(output.TxID)
 			if err != nil {
@@ -943,11 +1050,9 @@ func (b *BtcWallet) ListUnspentWitness(minConfs, maxConfs int32,
 // network (either in the mempool or chain) no error will be returned.
 func (b *BtcWallet) PublishTransaction(tx *wire.MsgTx, label string) error {
 	if err := b.wallet.PublishTransaction(tx, label); err != nil {
-
 		// If we failed to publish the transaction, check whether we
 		// got an error of known type.
 		switch err.(type) {
-
 		// If the wallet reports a double spend, convert it to our
 		// internal ErrDoubleSpend and return.
 		case *base.ErrDoubleSpend:
@@ -995,6 +1100,32 @@ func extractBalanceDelta(
 	}
 
 	return balanceDelta, nil
+}
+
+// getPreviousOutpoints is a helper function which gets the previous
+// outpoints of a transaction.
+func getPreviousOutpoints(wireTx *wire.MsgTx,
+	myInputs []wallet.TransactionSummaryInput) []lnwallet.PreviousOutPoint {
+
+	// isOurOutput is a map containing the output indices
+	// controlled by the wallet.
+	// Note: We make use of the information in `myInputs` provided
+	// by the `wallet.TransactionSummary` structure that holds
+	// information only if the input/previous_output is controlled by the wallet.
+	isOurOutput := make(map[uint32]bool, len(myInputs))
+	for _, myInput := range myInputs {
+		isOurOutput[myInput.Index] = true
+	}
+
+	previousOutpoints := make([]lnwallet.PreviousOutPoint, len(wireTx.TxIn))
+	for idx, txIn := range wireTx.TxIn {
+		previousOutpoints[idx] = lnwallet.PreviousOutPoint{
+			OutPoint:    txIn.PreviousOutPoint.String(),
+			IsOurOutput: isOurOutput[uint32(idx)],
+		}
+	}
+
+	return previousOutpoints
 }
 
 // minedTransactionsToDetails is a helper function which converts a summary
@@ -1045,16 +1176,19 @@ func minedTransactionsToDetails(
 			})
 		}
 
+		previousOutpoints := getPreviousOutpoints(wireTx, tx.MyInputs)
+
 		txDetail := &lnwallet.TransactionDetail{
-			Hash:             *tx.Hash,
-			NumConfirmations: currentHeight - block.Height + 1,
-			BlockHash:        block.Hash,
-			BlockHeight:      block.Height,
-			Timestamp:        block.Timestamp,
-			TotalFees:        int64(tx.Fee),
-			OutputDetails:    outputDetails,
-			RawTx:            tx.Transaction,
-			Label:            tx.Label,
+			Hash:              *tx.Hash,
+			NumConfirmations:  currentHeight - block.Height + 1,
+			BlockHash:         block.Hash,
+			BlockHeight:       block.Height,
+			Timestamp:         block.Timestamp,
+			TotalFees:         int64(tx.Fee),
+			OutputDetails:     outputDetails,
+			RawTx:             tx.Transaction,
+			Label:             tx.Label,
+			PreviousOutpoints: previousOutpoints,
 		}
 
 		balanceDelta, err := extractBalanceDelta(tx, wireTx)
@@ -1115,13 +1249,16 @@ func unminedTransactionsToDetail(
 		})
 	}
 
+	previousOutpoints := getPreviousOutpoints(wireTx, summary.MyInputs)
+
 	txDetail := &lnwallet.TransactionDetail{
-		Hash:          *summary.Hash,
-		TotalFees:     int64(summary.Fee),
-		Timestamp:     summary.Timestamp,
-		OutputDetails: outputDetails,
-		RawTx:         summary.Transaction,
-		Label:         summary.Label,
+		Hash:              *summary.Hash,
+		TotalFees:         int64(summary.Fee),
+		Timestamp:         summary.Timestamp,
+		OutputDetails:     outputDetails,
+		RawTx:             summary.Transaction,
+		Label:             summary.Label,
+		PreviousOutpoints: previousOutpoints,
 	}
 
 	err := ensureCorrectLabel(channelRundown, txDetail, wireTx)
@@ -1525,6 +1662,7 @@ func (b *BtcWallet) GetRecoveryInfo() (bool, float64, error) {
 	// rollback happens. In that case, we will return zero progress here.
 	if syncState.Height < birthdayBlock.Height ||
 		bestHeight < birthdayBlock.Height {
+
 		return isRecoveryMode, progress, nil
 	}
 
@@ -1541,6 +1679,49 @@ func (b *BtcWallet) GetRecoveryInfo() (bool, float64, error) {
 		float64(bestHeight-birthdayBlock.Height+1)
 
 	return isRecoveryMode, progress, nil
+}
+
+// FetchTx attempts to fetch a transaction in the wallet's database identified
+// by the passed transaction hash. If the transaction can't be found, then a
+// nil pointer is returned.
+func (b *BtcWallet) FetchTx(txHash chainhash.Hash) (*wire.MsgTx, error) {
+	var targetTx *wtxmgr.TxDetails
+	err := walletdb.View(b.db, func(tx walletdb.ReadTx) error {
+		wtxmgrNs := tx.ReadBucket(wtxmgrNamespaceKey)
+		txDetails, err := b.wallet.TxStore.TxDetails(wtxmgrNs, &txHash)
+		if err != nil {
+			return err
+		}
+
+		targetTx = txDetails
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if targetTx == nil {
+		return nil, nil
+	}
+
+	return &targetTx.TxRecord.MsgTx, nil
+}
+
+// RemoveDescendants attempts to remove any transaction from the wallet's tx
+// store (that may be unconfirmed) that spends outputs created by the passed
+// transaction. This remove propagates recursively down the chain of descendent
+// transactions.
+func (b *BtcWallet) RemoveDescendants(tx *wire.MsgTx) error {
+	txRecord, err := wtxmgr.NewTxRecordFromMsgTx(tx, time.Now())
+	if err != nil {
+		return err
+	}
+
+	return walletdb.Update(b.db, func(tx walletdb.ReadWriteTx) error {
+		wtxmgrNs := tx.ReadWriteBucket(wtxmgrNamespaceKey)
+		return b.wallet.TxStore.RemoveUnminedTx(wtxmgrNs, txRecord)
+	})
 }
 
 func (b *BtcWallet) PrivKeyForAddress(address btcutil.Address) (*btcec.PrivateKey, error) {

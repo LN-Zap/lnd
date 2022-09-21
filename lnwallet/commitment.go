@@ -1,13 +1,15 @@
 package lnwallet
 
 import (
+	"bytes"
 	"fmt"
 
 	"github.com/btcsuite/btcd/blockchain"
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/lnwallet/chainfee"
@@ -193,7 +195,7 @@ type ScriptInfo struct {
 // CommitScriptToSelf constructs the public key script for the output on the
 // commitment transaction paying to the "owner" of said commitment transaction.
 // The `initiator` argument should correspond to the owner of the commitment
-// tranasction which we are generating the to_local script for. If the other
+// transaction which we are generating the to_local script for. If the other
 // party learns of the preimage to the revocation hash, then they can claim all
 // the settled funds in the channel, plus the unsettled funds.
 func CommitScriptToSelf(chanType channeldb.ChannelType, initiator bool,
@@ -234,7 +236,7 @@ func CommitScriptToSelf(chanType channeldb.ChannelType, initiator bool,
 
 // CommitScriptToRemote derives the appropriate to_remote script based on the
 // channel's commitment type. The `initiator` argument should correspond to the
-// owner of the commitment tranasction which we are generating the to_remote
+// owner of the commitment transaction which we are generating the to_remote
 // script for. The second return value is the CSV delay of the output script,
 // what must be satisfied in order to spend the output.
 func CommitScriptToRemote(chanType channeldb.ChannelType, initiator bool,
@@ -293,7 +295,6 @@ func CommitScriptToRemote(chanType channeldb.ChannelType, initiator bool,
 			WitnessScript: p2wkh,
 			PkScript:      p2wkh,
 		}, 0, nil
-
 	}
 }
 
@@ -340,7 +341,7 @@ func HtlcSecondLevelInputSequence(chanType channeldb.ChannelType) uint32 {
 // output for the second-level HTLC transactions. The second level transaction
 // act as a sort of covenant, ensuring that a 2-of-2 multi-sig output can only
 // be spent in a particular way, and to a particular output. The `initiator`
-// argument should correspond to the owner of the commitment tranasction which
+// argument should correspond to the owner of the commitment transaction which
 // we are generating the to_local script for.
 func SecondLevelHtlcScript(chanType channeldb.ChannelType, initiator bool,
 	revocationKey, delayKey *btcec.PublicKey,
@@ -554,6 +555,7 @@ func (cb *CommitmentBuilder) createUnsignedCommitmentTx(ourBalance,
 			cb.chanState.ChanType, false, isOurs, feePerKw,
 			htlc.Amount.ToSatoshis(), dustLimit,
 		) {
+
 			continue
 		}
 
@@ -564,6 +566,7 @@ func (cb *CommitmentBuilder) createUnsignedCommitmentTx(ourBalance,
 			cb.chanState.ChanType, true, isOurs, feePerKw,
 			htlc.Amount.ToSatoshis(), dustLimit,
 		) {
+
 			continue
 		}
 
@@ -647,6 +650,7 @@ func (cb *CommitmentBuilder) createUnsignedCommitmentTx(ourBalance,
 			cb.chanState.ChanType, false, isOurs, feePerKw,
 			htlc.Amount.ToSatoshis(), dustLimit,
 		) {
+
 			continue
 		}
 
@@ -657,13 +661,14 @@ func (cb *CommitmentBuilder) createUnsignedCommitmentTx(ourBalance,
 		if err != nil {
 			return nil, err
 		}
-		cltvs = append(cltvs, htlc.Timeout)
+		cltvs = append(cltvs, htlc.Timeout) // nolint:makezero
 	}
 	for _, htlc := range filteredHTLCView.theirUpdates {
 		if HtlcIsDust(
 			cb.chanState.ChanType, true, isOurs, feePerKw,
 			htlc.Amount.ToSatoshis(), dustLimit,
 		) {
+
 			continue
 		}
 
@@ -674,7 +679,7 @@ func (cb *CommitmentBuilder) createUnsignedCommitmentTx(ourBalance,
 		if err != nil {
 			return nil, err
 		}
-		cltvs = append(cltvs, htlc.Timeout)
+		cltvs = append(cltvs, htlc.Timeout) // nolint:makezero
 	}
 
 	// Set the state hint of the commitment transaction to facilitate
@@ -725,7 +730,7 @@ func (cb *CommitmentBuilder) createUnsignedCommitmentTx(ourBalance,
 // spent after a relative block delay or revocation event, and a remote output
 // paying the counterparty within the channel, which can be spent immediately
 // or after a delay depending on the commitment type. The `initiator` argument
-// should correspond to the owner of the commitment tranasction we are creating.
+// should correspond to the owner of the commitment transaction we are creating.
 func CreateCommitTx(chanType channeldb.ChannelType,
 	fundingOutput wire.TxIn, keyRing *CommitmentKeyRing,
 	localChanCfg, remoteChanCfg *channeldb.ChannelConfig,
@@ -956,4 +961,77 @@ func addHTLC(commitTx *wire.MsgTx, ourCommit bool,
 	}
 
 	return nil
+}
+
+// findOutputIndexesFromRemote finds the index of our and their outputs from
+// the remote commitment transaction. It derives the key ring to compute the
+// output scripts and compares them against the outputs inside the commitment
+// to find the match.
+func findOutputIndexesFromRemote(revocationPreimage *chainhash.Hash,
+	chanState *channeldb.OpenChannel) (uint32, uint32, error) {
+
+	// Init the output indexes as empty.
+	ourIndex := uint32(channeldb.OutputIndexEmpty)
+	theirIndex := uint32(channeldb.OutputIndexEmpty)
+
+	chanCommit := chanState.RemoteCommitment
+	_, commitmentPoint := btcec.PrivKeyFromBytes(revocationPreimage[:])
+
+	// With the commitment point generated, we can now derive the king ring
+	// which will be used to generate the output scripts.
+	keyRing := DeriveCommitmentKeys(
+		commitmentPoint, false, chanState.ChanType,
+		&chanState.LocalChanCfg, &chanState.RemoteChanCfg,
+	)
+
+	// Since it's remote commitment chain, we'd used the mirrored values.
+	//
+	// We use the remote's channel config for the csv delay.
+	theirDelay := uint32(chanState.RemoteChanCfg.CsvDelay)
+
+	// If we are the initiator of this channel, then it's be false from the
+	// remote's PoV.
+	isRemoteInitiator := !chanState.IsInitiator
+
+	var leaseExpiry uint32
+	if chanState.ChanType.HasLeaseExpiration() {
+		leaseExpiry = chanState.ThawHeight
+	}
+
+	// Map the scripts from our PoV. When facing a local commitment, the to
+	// local output belongs to us and the to remote output belongs to them.
+	// When facing a remote commitment, the to local output belongs to them
+	// and the to remote output belongs to us.
+
+	// Compute the to local script. From our PoV, when facing a remote
+	// commitment, the to local output belongs to them.
+	theirScript, err := CommitScriptToSelf(
+		chanState.ChanType, isRemoteInitiator, keyRing.ToLocalKey,
+		keyRing.RevocationKey, theirDelay, leaseExpiry,
+	)
+	if err != nil {
+		return ourIndex, theirIndex, err
+	}
+
+	// Compute the to remote script. From our PoV, when facing a remote
+	// commitment, the to remote output belongs to us.
+	ourScript, _, err := CommitScriptToRemote(
+		chanState.ChanType, isRemoteInitiator, keyRing.ToRemoteKey,
+		leaseExpiry,
+	)
+	if err != nil {
+		return ourIndex, theirIndex, err
+	}
+
+	// Now compare the scripts to find our/their output index.
+	for i, txOut := range chanCommit.CommitTx.TxOut {
+		switch {
+		case bytes.Equal(txOut.PkScript, ourScript.PkScript):
+			ourIndex = uint32(i)
+		case bytes.Equal(txOut.PkScript, theirScript.PkScript):
+			theirIndex = uint32(i)
+		}
+	}
+
+	return ourIndex, theirIndex, nil
 }

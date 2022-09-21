@@ -20,7 +20,8 @@ import (
 // preimage via the witness beacon, we properly settle the HTLC on-chain using
 // the HTLC success transaction in order to ensure we don't lose any funds.
 func testMultiHopHtlcLocalChainClaim(net *lntest.NetworkHarness, t *harnessTest,
-	alice, bob *lntest.HarnessNode, c lnrpc.CommitmentType) {
+	alice, bob *lntest.HarnessNode, c lnrpc.CommitmentType,
+	zeroConf bool) {
 
 	ctxb := context.Background()
 
@@ -28,7 +29,7 @@ func testMultiHopHtlcLocalChainClaim(net *lntest.NetworkHarness, t *harnessTest,
 	// Carol refusing to actually settle or directly cancel any HTLC's
 	// self.
 	aliceChanPoint, bobChanPoint, carol := createThreeHopNetwork(
-		t, net, alice, bob, false, c,
+		t, net, alice, bob, false, c, zeroConf,
 	)
 
 	// Clean up carol's node when the test finishes.
@@ -168,7 +169,7 @@ func testMultiHopHtlcLocalChainClaim(net *lntest.NetworkHarness, t *harnessTest,
 	err = restartBob()
 	require.NoError(t.t, err)
 
-	// After the force close transacion is mined, transactions will be
+	// After the force close transaction is mined, transactions will be
 	// broadcast by both Bob and Carol.
 	switch c {
 	// Carol will broadcast her second level HTLC transaction and Bob will

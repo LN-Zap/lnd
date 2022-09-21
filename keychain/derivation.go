@@ -3,15 +3,26 @@ package keychain
 import (
 	"fmt"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
+	"github.com/btcsuite/btcd/btcec/v2/schnorr"
 )
 
 const (
-	// KeyDerivationVersion is the version of the key derivation schema
-	// defined below. We use a version as this means that we'll be able to
-	// accept new seed in the future and be able to discern if the software
-	// is compatible with the version of the seed.
-	KeyDerivationVersion = 0
+	// KeyDerivationVersionLegacy is the previous version of the key
+	// derivation schema defined below. We use a version as this means that
+	// we'll be able to accept new seed in the future and be able to discern
+	// if the software is compatible with the version of the seed.
+	KeyDerivationVersionLegacy = 0
+
+	// KeyDerivationVersionTaproot is the most recent version of the key
+	// derivation scheme that marks the introduction of the Taproot
+	// derivation with BIP0086 support.
+	KeyDerivationVersionTaproot = 1
+
+	// CurrentKeyDerivationVersion is the current default key derivation
+	// version that is used for new seeds.
+	CurrentKeyDerivationVersion = KeyDerivationVersionTaproot
 
 	// BIP0043Purpose is the "purpose" value that we'll use for the first
 	// version or our key derivation scheme. All keys are expected to be
@@ -23,6 +34,13 @@ const (
 	// NOTE: BRICK SQUUUUUAD.
 	BIP0043Purpose = 1017
 )
+
+// IsKnownVersion returns true if the given version is one of the known
+// derivation scheme versions as defined by this package.
+func IsKnownVersion(internalVersion uint8) bool {
+	return internalVersion == KeyDerivationVersionLegacy ||
+		internalVersion == KeyDerivationVersionTaproot
+}
 
 var (
 	// MaxKeyRangeScan is the maximum number of keys that we'll attempt to
@@ -209,7 +227,7 @@ type MessageSignerRing interface {
 	// SignMessage signs the given message, single or double SHA256 hashing
 	// it first, with the private key described in the key locator.
 	SignMessage(keyLoc KeyLocator, msg []byte,
-		doubleHash bool) (*btcec.Signature, error)
+		doubleHash bool) (*ecdsa.Signature, error)
 
 	// SignMessageCompact signs the given message, single or double SHA256
 	// hashing it first, with the private key described in the key locator
@@ -217,6 +235,13 @@ type MessageSignerRing interface {
 	// format.
 	SignMessageCompact(keyLoc KeyLocator, msg []byte,
 		doubleHash bool) ([]byte, error)
+
+	// SignMessageSchnorr signs the given message, single or double SHA256
+	// hashing it first, with the private key described in the key locator
+	// and the optional Taproot tweak applied to the private key.
+	SignMessageSchnorr(keyLoc KeyLocator, msg []byte,
+		doubleHash bool, taprootTweak []byte) (*schnorr.Signature,
+		error)
 }
 
 // SingleKeyMessageSigner is an abstraction interface that hides the
@@ -232,7 +257,7 @@ type SingleKeyMessageSigner interface {
 
 	// SignMessage signs the given message, single or double SHA256 hashing
 	// it first, with the wrapped private key.
-	SignMessage(message []byte, doubleHash bool) (*btcec.Signature, error)
+	SignMessage(message []byte, doubleHash bool) (*ecdsa.Signature, error)
 
 	// SignMessageCompact signs the given message, single or double SHA256
 	// hashing it first, with the wrapped private key and returns the

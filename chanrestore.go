@@ -5,7 +5,7 @@ import (
 	"math"
 	"net"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/lightningnetwork/lnd/chanbackup"
@@ -133,7 +133,6 @@ func (c *chanDBRestorer) openChannelShell(backup chanbackup.Single) (
 
 	var chanType channeldb.ChannelType
 	switch backup.Version {
-
 	case chanbackup.DefaultSingleVersion:
 		chanType = channeldb.SingleFunderBit
 
@@ -244,7 +243,7 @@ func (c *chanDBRestorer) RestoreChansFromSingles(backups ...chanbackup.Single) e
 		// funding broadcast height to a reasonable value that we
 		// determined earlier.
 		case channel.ShortChanID().BlockHeight == 0:
-			channel.FundingBroadcastHeight = firstChanHeight
+			channel.SetBroadcastHeight(firstChanHeight)
 
 		// Fallback case 2: It is extremely unlikely at this point that
 		// a channel we are trying to restore has a coinbase funding TX.
@@ -256,7 +255,7 @@ func (c *chanDBRestorer) RestoreChansFromSingles(backups ...chanbackup.Single) e
 		// unconfirmed one here.
 		case channel.ShortChannelID.TxIndex == 0:
 			broadcastHeight := channel.ShortChannelID.BlockHeight
-			channel.FundingBroadcastHeight = broadcastHeight
+			channel.SetBroadcastHeight(broadcastHeight)
 			channel.ShortChannelID.BlockHeight = 0
 		}
 	}

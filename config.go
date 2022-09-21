@@ -1,6 +1,6 @@
 // Copyright (c) 2013-2017 The btcsuite developers
 // Copyright (c) 2015-2016 The Decred developers
-// Copyright (C) 2015-2020 The Lightning Network Developers
+// Copyright (C) 2015-2022 The Lightning Network Developers
 
 package lnd
 
@@ -19,8 +19,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcutil"
 	flags "github.com/jessevdk/go-flags"
 	"github.com/lightninglabs/neutrino"
 	"github.com/lightningnetwork/lnd/autopilot"
@@ -35,6 +35,7 @@ import (
 	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/lncfg"
 	"github.com/lightningnetwork/lnd/lnrpc"
+	"github.com/lightningnetwork/lnd/lnrpc/peersrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/routerrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/signrpc"
 	"github.com/lightningnetwork/lnd/lnwallet"
@@ -81,6 +82,10 @@ const (
 	defaultTorControlPort          = 9051
 	defaultTorV2PrivateKeyFilename = "v2_onion_private_key"
 	defaultTorV3PrivateKeyFilename = "v3_onion_private_key"
+
+	// defaultZMQReadDeadline is the default read deadline to be used for
+	// both the block and tx ZMQ subscriptions.
+	defaultZMQReadDeadline = 5 * time.Second
 
 	// DefaultAutogenValidity is the default validity of a self-signed
 	// certificate. The value corresponds to 14 months
@@ -168,9 +173,23 @@ const (
 	// TODO(halseth): find a more scientific choice of value.
 	defaultMaxLocalCSVDelay = 10000
 
-	// defaultChannelCommitInterval is the default maximum time between receiving a
-	// channel state update and signing a new commitment.
+	// defaultChannelCommitInterval is the default maximum time between
+	// receiving a channel state update and signing a new commitment.
 	defaultChannelCommitInterval = 50 * time.Millisecond
+
+	// maxChannelCommitInterval is the maximum time the commit interval can
+	// be configured to.
+	maxChannelCommitInterval = time.Hour
+
+	// defaultPendingCommitInterval specifies the default timeout value
+	// while waiting for the remote party to revoke a locally initiated
+	// commitment state.
+	defaultPendingCommitInterval = 1 * time.Minute
+
+	// maxPendingCommitInterval specifies the max allowed duration when
+	// waiting for the remote party to revoke a locally initiated
+	// commitment state.
+	maxPendingCommitInterval = 5 * time.Minute
 
 	// defaultChannelCommitBatchSize is the default maximum number of
 	// channel state updates that is accumulated before signing a new
@@ -180,6 +199,10 @@ const (
 	// defaultCoinSelectionStrategy is the coin selection strategy that is
 	// used by default to fund transactions.
 	defaultCoinSelectionStrategy = "largest"
+
+	// defaultKeepFailedPaymentAttempts is the default setting for whether
+	// to keep failed payments in the database.
+	defaultKeepFailedPaymentAttempts = false
 )
 
 var (
@@ -257,7 +280,7 @@ type Config struct {
 
 	LetsEncryptDir    string `long:"letsencryptdir" description:"The directory to store Let's Encrypt certificates within"`
 	LetsEncryptListen string `long:"letsencryptlisten" description:"The IP:port on which lnd will listen for Let's Encrypt challenges. Let's Encrypt will always try to contact on port 80. Often non-root processes are not allowed to bind to ports lower than 1024. This configuration option allows a different port to be used, but must be used in combination with port forwarding from port 80. This configuration can also be used to specify another IP address to listen on, for example an IPv6 address."`
-	LetsEncryptDomain string `long:"letsencryptdomain" description:"Request a Let's Encrypt certificate for this domain. Note that the certicate is only requested and stored when the first rpc connection comes in."`
+	LetsEncryptDomain string `long:"letsencryptdomain" description:"Request a Let's Encrypt certificate for this domain. Note that the certificate is only requested and stored when the first rpc connection comes in."`
 
 	// We'll parse these 'raw' string arguments into real net.Addrs in the
 	// loadConfig function. We need to expose the 'raw' strings so the
@@ -267,7 +290,7 @@ type Config struct {
 	RawRESTListeners  []string `long:"restlisten" description:"Add an interface/port/socket to listen for REST connections"`
 	RawListeners      []string `long:"listen" description:"Add an interface/port to listen for peer connections"`
 	RawExternalIPs    []string `long:"externalip" description:"Add an ip:port to the list of local addresses we claim to listen on to peers. If a port is not specified, the default (9735) will be used regardless of other parameters"`
-	ExternalHosts     []string `long:"externalhosts" description:"A set of hosts that should be periodically resolved to announce IPs for"`
+	ExternalHosts     []string `long:"externalhosts" description:"Add a hostname:port that should be periodically resolved to announce IPs for. If a port is not specified, the default (9735) will be used."`
 	RPCListeners      []net.Addr
 	RESTListeners     []net.Addr
 	RestCORS          []string `long:"restcors" description:"Add an ip:port/hostname to allow cross origin access from. To allow all origins, set as \"*\"."`
@@ -279,6 +302,7 @@ type Config struct {
 	WSPingInterval    time.Duration `long:"ws-ping-interval" description:"The ping interval for REST based WebSocket connections, set to 0 to disable sending ping messages from the server side"`
 	WSPongWait        time.Duration `long:"ws-pong-wait" description:"The time we wait for a pong response message on REST based WebSocket connections before the connection is closed as inactive"`
 	NAT               bool          `long:"nat" description:"Toggle NAT traversal support (using either UPnP or NAT-PMP) to automatically advertise your external IP address to the network -- NOTE this does not support devices behind multiple NATs"`
+	AddPeers          []string      `long:"addpeer" description:"Specify peers to connect to first"`
 	MinBackoff        time.Duration `long:"minbackoff" description:"Shortest backoff when reconnecting to persistent peers. Valid time units are {s, m, h}."`
 	MaxBackoff        time.Duration `long:"maxbackoff" description:"Longest backoff when reconnecting to persistent peers. Valid time units are {s, m, h}."`
 	ConnectionTimeout time.Duration `long:"connectiontimeout" description:"The timeout value for network connections. Valid time units are {ms, s, m, h}."`
@@ -327,7 +351,7 @@ type Config struct {
 
 	PaymentsExpirationGracePeriod time.Duration `long:"payments-expiration-grace-period" description:"A period to wait before force closing channels with outgoing htlcs that have timed-out and are a result of this node initiated payments."`
 	TrickleDelay                  int           `long:"trickledelay" description:"Time in milliseconds between each release of announcements to the network"`
-	ChanEnableTimeout             time.Duration `long:"chan-enable-timeout" description:"The duration that a peer connection must be stable before attempting to send a channel update to reenable or cancel a pending disables of the peer's channels on the network."`
+	ChanEnableTimeout             time.Duration `long:"chan-enable-timeout" description:"The duration that a peer connection must be stable before attempting to send a channel update to re-enable or cancel a pending disables of the peer's channels on the network."`
 	ChanDisableTimeout            time.Duration `long:"chan-disable-timeout" description:"The duration that must elapse after first detecting that an already active channel is actually inactive and sending channel update disabling it to the network. The pending disable can be canceled if the peer reconnects and becomes stable for chan-enable-timeout before the disable update is sent."`
 	ChanStatusSampleInterval      time.Duration `long:"chan-status-sample-interval" description:"The polling interval between attempts to detect if an active channel has become inactive due to its peer going offline."`
 	HeightHintCacheQueryDisable   bool          `long:"height-hint-cache-query-disable" description:"Disable queries from the height-hint cache to try to recover channels stuck in the pending close state. Disabling height hint queries may cause longer chain rescans, resulting in a performance hit. Unset this after channels are unstuck so you can get better performance again."`
@@ -337,8 +361,13 @@ type Config struct {
 	MaxChanSize                   int64         `long:"maxchansize" description:"The largest channel size (in satoshis) that we should accept. Incoming channels larger than this will be rejected"`
 	CoopCloseTargetConfs          uint32        `long:"coop-close-target-confs" description:"The target number of blocks that a cooperative channel close transaction should confirm in. This is used to estimate the fee to use as the lower bound during fee negotiation for the channel closure."`
 
-	ChannelCommitInterval  time.Duration `long:"channel-commit-interval" description:"The maximum time that is allowed to pass between receiving a channel state update and signing the next commitment. Setting this to a longer duration allows for more efficient channel operations at the cost of latency."`
-	ChannelCommitBatchSize uint32        `long:"channel-commit-batch-size" description:"The maximum number of channel state updates that is accumulated before signing a new commitment."`
+	ChannelCommitInterval time.Duration `long:"channel-commit-interval" description:"The maximum time that is allowed to pass between receiving a channel state update and signing the next commitment. Setting this to a longer duration allows for more efficient channel operations at the cost of latency."`
+
+	PendingCommitInterval time.Duration `long:"pending-commit-interval" description:"The maximum time that is allowed to pass while waiting for the remote party to revoke a locally initiated commitment state. Setting this to a longer duration if a slow response is expected from the remote party or large number of payments are attempted at the same time."`
+
+	ChannelCommitBatchSize uint32 `long:"channel-commit-batch-size" description:"The maximum number of channel state updates that is accumulated before signing a new commitment."`
+
+	KeepFailedPaymentAttempts bool `long:"keep-failed-payment-attempts" description:"Keeps persistent record of all failed payment attempts for successfully settled payments."`
 
 	DefaultRemoteMaxHtlcs uint16 `long:"default-remote-max-htlcs" description:"The default max_htlc applied when opening or accepting channels. This value limits the number of concurrent HTLCs that the remote party can add to the commitment. The maximum possible value is 483."`
 
@@ -350,6 +379,10 @@ type Config struct {
 	RejectPush bool `long:"rejectpush" description:"If true, lnd will not accept channel opening requests with non-zero push amounts. This should prevent accidental pushes to merchant nodes."`
 
 	RejectHTLC bool `long:"rejecthtlc" description:"If true, lnd will not forward any HTLCs that are meant as onward payments. This option will still allow lnd to send HTLCs and receive HTLCs but lnd won't be used as a hop."`
+
+	// RequireInterceptor determines whether the HTLC interceptor is
+	// registered regardless of whether the RPC is called or not.
+	RequireInterceptor bool `long:"requireinterceptor" description:"Whether to always intercept HTLCs, even if no stream is attached"`
 
 	StaggerInitialReconnect bool `long:"stagger-initial-reconnect" description:"If true, will apply a randomized staggering between 0s and 30s when reconnecting to persistent peers on startup. The first 10 reconnections will be attempted instantly, regardless of the flag's value"`
 
@@ -461,6 +494,7 @@ func DefaultConfig() Config {
 			RPCHost:            defaultRPCHost,
 			EstimateMode:       defaultBitcoindEstimateMode,
 			PrunedNodeMaxPeers: defaultPrunedNodeMaxPeers,
+			ZMQReadDeadline:    defaultZMQReadDeadline,
 		},
 		Litecoin: &lncfg.Chain{
 			MinHTLCIn:     chainreg.DefaultLitecoinMinHTLCInMSat,
@@ -496,6 +530,7 @@ func DefaultConfig() Config {
 		SubRPCServers: &subRPCServerConfigs{
 			SignRPC:   &signrpc.Config{},
 			RouterRPC: routerrpc.DefaultConfig(),
+			PeersRPC:  &peersrpc.Config{},
 		},
 		Autopilot: &lncfg.AutoPilot{
 			MaxChannels:    5,
@@ -583,19 +618,21 @@ func DefaultConfig() Config {
 		Invoices: &lncfg.Invoices{
 			HoldExpiryDelta: lncfg.DefaultHoldInvoiceExpiryDelta,
 		},
-		MaxOutgoingCltvExpiry:   htlcswitch.DefaultMaxOutgoingCltvExpiry,
-		MaxChannelFeeAllocation: htlcswitch.DefaultMaxLinkFeeAllocation,
-		MaxCommitFeeRateAnchors: lnwallet.DefaultAnchorsCommitMaxFeeRateSatPerVByte,
-		DustThreshold:           uint64(htlcswitch.DefaultDustThreshold.ToSatoshis()),
-		LogWriter:               build.NewRotatingLogWriter(),
-		DB:                      lncfg.DefaultDB(),
-		Cluster:                 lncfg.DefaultCluster(),
-		RPCMiddleware:           lncfg.DefaultRPCMiddleware(),
-		registeredChains:        chainreg.NewChainRegistry(),
-		ActiveNetParams:         chainreg.BitcoinTestNetParams,
-		ChannelCommitInterval:   defaultChannelCommitInterval,
-		ChannelCommitBatchSize:  defaultChannelCommitBatchSize,
-		CoinSelectionStrategy:   defaultCoinSelectionStrategy,
+		MaxOutgoingCltvExpiry:     htlcswitch.DefaultMaxOutgoingCltvExpiry,
+		MaxChannelFeeAllocation:   htlcswitch.DefaultMaxLinkFeeAllocation,
+		MaxCommitFeeRateAnchors:   lnwallet.DefaultAnchorsCommitMaxFeeRateSatPerVByte,
+		DustThreshold:             uint64(htlcswitch.DefaultDustThreshold.ToSatoshis()),
+		LogWriter:                 build.NewRotatingLogWriter(),
+		DB:                        lncfg.DefaultDB(),
+		Cluster:                   lncfg.DefaultCluster(),
+		RPCMiddleware:             lncfg.DefaultRPCMiddleware(),
+		registeredChains:          chainreg.NewChainRegistry(),
+		ActiveNetParams:           chainreg.BitcoinTestNetParams,
+		ChannelCommitInterval:     defaultChannelCommitInterval,
+		PendingCommitInterval:     defaultPendingCommitInterval,
+		ChannelCommitBatchSize:    defaultChannelCommitBatchSize,
+		CoinSelectionStrategy:     defaultCoinSelectionStrategy,
+		KeepFailedPaymentAttempts: defaultKeepFailedPaymentAttempts,
 		RemoteSigner: &lncfg.RemoteSigner{
 			Timeout: lncfg.DefaultRemoteSignerRPCTimeout,
 		},
@@ -641,11 +678,22 @@ func LoadConfig(interceptor signal.Interceptor) (*Config, error) {
 	// file within it.
 	configFileDir := CleanAndExpandPath(preCfg.LndDir)
 	configFilePath := CleanAndExpandPath(preCfg.ConfigFile)
-	if configFileDir != DefaultLndDir {
-		if configFilePath == DefaultConfigFile {
-			configFilePath = filepath.Join(
-				configFileDir, lncfg.DefaultConfigFilename,
-			)
+	switch {
+	// User specified --lnddir but no --configfile. Update the config file
+	// path to the lnd config directory, but don't require it to exist.
+	case configFileDir != DefaultLndDir &&
+		configFilePath == DefaultConfigFile:
+
+		configFilePath = filepath.Join(
+			configFileDir, lncfg.DefaultConfigFilename,
+		)
+
+	// User did specify an explicit --configfile, so we check that it does
+	// exist under that path to avoid surprises.
+	case configFilePath != DefaultConfigFile:
+		if !fileExists(configFilePath) {
+			return nil, fmt.Errorf("specified config file does "+
+				"not exist in %s", configFilePath)
 		}
 	}
 
@@ -826,7 +874,17 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 	cfg.BtcdMode.Dir = CleanAndExpandPath(cfg.BtcdMode.Dir)
 	cfg.LtcdMode.Dir = CleanAndExpandPath(cfg.LtcdMode.Dir)
 	cfg.BitcoindMode.Dir = CleanAndExpandPath(cfg.BitcoindMode.Dir)
+	cfg.BitcoindMode.ConfigPath = CleanAndExpandPath(
+		cfg.BitcoindMode.ConfigPath,
+	)
+	cfg.BitcoindMode.RPCCookie = CleanAndExpandPath(cfg.BitcoindMode.RPCCookie)
 	cfg.LitecoindMode.Dir = CleanAndExpandPath(cfg.LitecoindMode.Dir)
+	cfg.LitecoindMode.ConfigPath = CleanAndExpandPath(
+		cfg.LitecoindMode.ConfigPath,
+	)
+	cfg.LitecoindMode.RPCCookie = CleanAndExpandPath(
+		cfg.LitecoindMode.RPCCookie,
+	)
 	cfg.Tor.PrivateKeyPath = CleanAndExpandPath(cfg.Tor.PrivateKeyPath)
 	cfg.Tor.WatchtowerKeyPath = CleanAndExpandPath(cfg.Tor.WatchtowerKeyPath)
 	cfg.Watchtower.TowerDir = CleanAndExpandPath(cfg.Watchtower.TowerDir)
@@ -897,7 +955,7 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 		)
 	}
 
-	// Don't allow superflous --maxchansize greater than
+	// Don't allow superfluous --maxchansize greater than
 	// BOLT 02 soft-limit for non-wumbo channel
 	if !cfg.ProtocolOptions.Wumbo() &&
 		cfg.MaxChanSize > int64(MaxFundingAmount) {
@@ -1559,6 +1617,22 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 			maxRemoteHtlcs)
 	}
 
+	// Clamp the ChannelCommitInterval so that commitment updates can still
+	// happen in a reasonable timeframe.
+	if cfg.ChannelCommitInterval > maxChannelCommitInterval {
+		return nil, mkErr("channel-commit-interval (%v) must be less "+
+			"than %v", cfg.ChannelCommitInterval,
+			maxChannelCommitInterval)
+	}
+
+	// Limit PendingCommitInterval so we don't wait too long for the remote
+	// party to send back a revoke.
+	if cfg.PendingCommitInterval > maxPendingCommitInterval {
+		return nil, mkErr("pending-commit-interval (%v) must be less "+
+			"than %v", cfg.PendingCommitInterval,
+			maxPendingCommitInterval)
+	}
+
 	if err := cfg.Gossip.Parse(); err != nil {
 		return nil, mkErr("error parsing gossip syncer: %v", err)
 	}
@@ -1593,7 +1667,7 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 	// Finally, ensure that the user's color is correctly formatted,
 	// otherwise the server will not be able to start after the unlocking
 	// the wallet.
-	_, err = parseHexColor(cfg.Color)
+	_, err = lncfg.ParseHexColor(cfg.Color)
 	if err != nil {
 		return nil, mkErr("unable to parse node color: %v", err)
 	}
@@ -1679,7 +1753,7 @@ func parseRPCParams(cConfig *lncfg.Chain, nodeConfig interface{},
 	// First, we'll check our node config to make sure the RPC parameters
 	// were set correctly. We'll also determine the path to the conf file
 	// depending on the backend node.
-	var daemonName, confDir, confFile string
+	var daemonName, confDir, confFile, confFileBase string
 	switch conf := nodeConfig.(type) {
 	case *lncfg.Btcd:
 		// If both RPCUser and RPCPass are set, we assume those
@@ -1693,11 +1767,11 @@ func parseRPCParams(cConfig *lncfg.Chain, nodeConfig interface{},
 		case chainreg.BitcoinChain:
 			daemonName = "btcd"
 			confDir = conf.Dir
-			confFile = "btcd"
+			confFileBase = "btcd"
 		case chainreg.LitecoinChain:
 			daemonName = "ltcd"
 			confDir = conf.Dir
-			confFile = "ltcd"
+			confFileBase = "ltcd"
 		}
 
 		// If only ONE of RPCUser or RPCPass is set, we assume the
@@ -1728,23 +1802,60 @@ func parseRPCParams(cConfig *lncfg.Chain, nodeConfig interface{},
 			}
 		}
 
-		// If all of RPCUser, RPCPass, ZMQBlockHost, and ZMQTxHost are
-		// set, we assume those parameters are good to use.
-		if conf.RPCUser != "" && conf.RPCPass != "" &&
-			conf.ZMQPubRawBlock != "" && conf.ZMQPubRawTx != "" {
-			return nil
-		}
-
 		// Get the daemon name for displaying proper errors.
 		switch net {
 		case chainreg.BitcoinChain:
 			daemonName = "bitcoind"
 			confDir = conf.Dir
-			confFile = "bitcoin"
+			confFile = conf.ConfigPath
+			confFileBase = "bitcoin"
 		case chainreg.LitecoinChain:
 			daemonName = "litecoind"
 			confDir = conf.Dir
-			confFile = "litecoin"
+			confFile = conf.ConfigPath
+			confFileBase = "litecoin"
+		}
+
+		// Check that cookie and credentials don't contradict each
+		// other.
+		if (conf.RPCUser != "" || conf.RPCPass != "") &&
+			conf.RPCCookie != "" {
+
+			return fmt.Errorf("please only provide either "+
+				"%[1]v.rpccookie or %[1]v.rpcuser and "+
+				"%[1]v.rpcpass", daemonName)
+		}
+
+		// We convert the cookie into a user name and password.
+		if conf.RPCCookie != "" {
+			cookie, err := ioutil.ReadFile(conf.RPCCookie)
+			if err != nil {
+				return fmt.Errorf("cannot read cookie file: %w",
+					err)
+			}
+
+			splitCookie := strings.Split(string(cookie), ":")
+			if len(splitCookie) != 2 {
+				return fmt.Errorf("cookie file has a wrong " +
+					"format")
+			}
+			conf.RPCUser = splitCookie[0]
+			conf.RPCPass = splitCookie[1]
+		}
+
+		if conf.RPCUser != "" && conf.RPCPass != "" {
+			// If all of RPCUser, RPCPass, ZMQBlockHost, and
+			// ZMQTxHost are set, we assume those parameters are
+			// good to use.
+			if conf.ZMQPubRawBlock != "" && conf.ZMQPubRawTx != "" {
+				return nil
+			}
+
+			// If RPCUser and RPCPass are set and RPCPolling is
+			// enabled, we assume the parameters are good to use.
+			if conf.RPCPolling {
+				return nil
+			}
 		}
 
 		// If not all of the parameters are set, we'll assume the user
@@ -1752,9 +1863,9 @@ func parseRPCParams(cConfig *lncfg.Chain, nodeConfig interface{},
 		if conf.RPCUser != "" || conf.RPCPass != "" ||
 			conf.ZMQPubRawBlock != "" || conf.ZMQPubRawTx != "" {
 
-			return fmt.Errorf("please set all or none of "+
-				"%[1]v.rpcuser, %[1]v.rpcpass, "+
-				"%[1]v.zmqpubrawblock, %[1]v.zmqpubrawtx",
+			return fmt.Errorf("please set %[1]v.rpcuser and "+
+				"%[1]v.rpcpass (or %[1]v.rpccookie) together "+
+				"with %[1]v.zmqpubrawblock, %[1]v.zmqpubrawtx",
 				daemonName)
 		}
 	}
@@ -1769,7 +1880,10 @@ func parseRPCParams(cConfig *lncfg.Chain, nodeConfig interface{},
 
 	fmt.Println("Attempting automatic RPC configuration to " + daemonName)
 
-	confFile = filepath.Join(confDir, fmt.Sprintf("%v.conf", confFile))
+	if confFile == "" {
+		confFile = filepath.Join(confDir, fmt.Sprintf("%v.conf",
+			confFileBase))
+	}
 	switch cConfig.Node {
 	case "btcd", "ltcd":
 		nConf := nodeConfig.(*lncfg.Btcd)
@@ -1783,7 +1897,8 @@ func parseRPCParams(cConfig *lncfg.Chain, nodeConfig interface{},
 	case "bitcoind", "litecoind":
 		nConf := nodeConfig.(*lncfg.Bitcoind)
 		rpcUser, rpcPass, zmqBlockHost, zmqTxHost, err :=
-			extractBitcoindRPCParams(netParams.Params.Name, confFile)
+			extractBitcoindRPCParams(netParams.Params.Name,
+				nConf.Dir, confFile, nConf.RPCCookie)
 		if err != nil {
 			return fmt.Errorf("unable to extract RPC credentials: "+
 				"%v, cannot start w/o RPC connection", err)
@@ -1843,12 +1958,11 @@ func extractBtcdRPCParams(btcdConfigPath string) (string, string, error) {
 }
 
 // extractBitcoindRPCParams attempts to extract the RPC credentials for an
-// existing bitcoind node instance. The passed path is expected to be the
-// location of bitcoind's bitcoin.conf on the target system. The routine looks
-// for a cookie first, optionally following the datadir configuration option in
-// the bitcoin.conf. If it doesn't find one, it looks for rpcuser/rpcpassword.
-func extractBitcoindRPCParams(networkName string,
-	bitcoindConfigPath string) (string, string, string, string, error) {
+// existing bitcoind node instance. The routine looks for a cookie first,
+// optionally following the datadir configuration option in the bitcoin.conf. If
+// it doesn't find one, it looks for rpcuser/rpcpassword.
+func extractBitcoindRPCParams(networkName, bitcoindDataDir, bitcoindConfigPath,
+	rpcCookiePath string) (string, string, string, string, error) {
 
 	// First, we'll open up the bitcoind configuration file found at the
 	// target destination.
@@ -1896,6 +2010,9 @@ func extractBitcoindRPCParams(networkName string,
 	// Next, we'll try to find an auth cookie. We need to detect the chain
 	// by seeing if one is specified in the configuration file.
 	dataDir := filepath.Dir(bitcoindConfigPath)
+	if bitcoindDataDir != "" {
+		dataDir = bitcoindDataDir
+	}
 	dataDirRE, err := regexp.Compile(`(?m)^\s*datadir\s*=\s*([^\s]+)`)
 	if err != nil {
 		return "", "", "", "", err
@@ -1905,7 +2022,7 @@ func extractBitcoindRPCParams(networkName string,
 		dataDir = string(dataDirSubmatches[1])
 	}
 
-	chainDir := ""
+	var chainDir string
 	switch networkName {
 	case "mainnet":
 		chainDir = ""
@@ -1915,7 +2032,11 @@ func extractBitcoindRPCParams(networkName string,
 		return "", "", "", "", fmt.Errorf("unexpected networkname %v", networkName)
 	}
 
-	cookie, err := ioutil.ReadFile(filepath.Join(dataDir, chainDir, ".cookie"))
+	cookiePath := filepath.Join(dataDir, chainDir, ".cookie")
+	if rpcCookiePath != "" {
+		cookiePath = rpcCookiePath
+	}
+	cookie, err := ioutil.ReadFile(cookiePath)
 	if err == nil {
 		splitCookie := strings.Split(string(cookie), ":")
 		if len(splitCookie) == 2 {
@@ -1932,10 +2053,6 @@ func extractBitcoindRPCParams(networkName string,
 		return "", "", "", "", err
 	}
 	userSubmatches := rpcUserRegexp.FindSubmatch(configContents)
-	if userSubmatches == nil {
-		return "", "", "", "", fmt.Errorf("unable to find rpcuser in " +
-			"config")
-	}
 
 	// Similarly, we'll use another regular expression to find the set
 	// rpcpass (if any). If we can't find the pass, then we'll exit with an
@@ -1945,6 +2062,18 @@ func extractBitcoindRPCParams(networkName string,
 		return "", "", "", "", err
 	}
 	passSubmatches := rpcPassRegexp.FindSubmatch(configContents)
+
+	// Exit with an error if the cookie file, is defined in config, and
+	// can not be found, with both rpcuser and rpcpassword undefined.
+	if rpcCookiePath != "" && userSubmatches == nil && passSubmatches == nil {
+		return "", "", "", "", fmt.Errorf("unable to open cookie file (%v)",
+			rpcCookiePath)
+	}
+
+	if userSubmatches == nil {
+		return "", "", "", "", fmt.Errorf("unable to find rpcuser in " +
+			"config")
+	}
 	if passSubmatches == nil {
 		return "", "", "", "", fmt.Errorf("unable to find rpcpassword " +
 			"in config")

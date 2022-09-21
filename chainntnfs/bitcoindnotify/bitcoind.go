@@ -7,11 +7,11 @@ import (
 	"sync/atomic"
 
 	"github.com/btcsuite/btcd/btcjson"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
 	"github.com/btcsuite/btcwallet/chain"
 	"github.com/lightningnetwork/lnd/blockcache"
 	"github.com/lightningnetwork/lnd/chainntnfs"
@@ -19,9 +19,14 @@ import (
 )
 
 const (
-	// notifierType uniquely identifies this concrete implementation of the
-	// ChainNotifier interface.
-	notifierType = "bitcoind"
+	// notifierType uniquely identifies a concrete implementation of the
+	// ChainNotifier interface that makes use of the bitcoind ZMQ interface.
+	notifierTypeZMQ = "bitcoind"
+
+	// notifierTypeRPCPolling uniquely identifies a concrete implementation
+	// of the ChainNotifier interface that makes use of the bitcoind RPC
+	// interface.
+	notifierTypeRPCPolling = "bitcoind-rpc-polling"
 )
 
 // TODO(roasbeef): generalize struct below:

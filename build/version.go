@@ -1,7 +1,7 @@
 // Copyright (c) 2013-2017 The btcsuite developers
 // Copyright (c) 2015-2016 The Decred developers
 // Heavily inspired by https://github.com/btcsuite/btcd/blob/master/version.go
-// Copyright (C) 2015-2017 The Lightning Network Developers
+// Copyright (C) 2015-2022 The Lightning Network Developers
 
 package build
 
@@ -26,7 +26,7 @@ var (
 	RawTags string
 
 	// GoVersion stores the go version that the executable was compiled
-	// with. This hsould be set using -ldflags during compilation.
+	// with. This should be set using -ldflags during compilation.
 	GoVersion string
 )
 
@@ -41,22 +41,22 @@ const (
 	AppMajor uint = 0
 
 	// AppMinor defines the minor version of this binary.
-	AppMinor uint = 14
+	AppMinor uint = 15
 
 	// AppPatch defines the application patch for this binary.
-	AppPatch uint = 2
+	AppPatch uint = 1
 
 	// AppPreRelease MUST only contain characters from semanticAlphabet
 	// per the semantic versioning spec.
 	AppPreRelease = "beta"
 
-	// StrikeMajor defines the major version for LND-Strike
-	StrikeMajor uint = 2
+	// StrikeMajor defines the major version for LND-Strike.
+	StrikeMajor uint = 3
 
-	// StrikeMinor defines the minor version for LND-Strike
+	// StrikeMinor defines the minor version for LND-Strike.
 	StrikeMinor uint = 99
 
-	// StrikePatch defines the patch version for LND-Strike
+	// StrikePatch defines the patch version for LND-Strike.
 	StrikePatch uint = 99
 )
 

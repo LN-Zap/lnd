@@ -9,10 +9,10 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
 	lnwire "github.com/lightningnetwork/lnd/channeldb/migration/lnwire21"
 	mig "github.com/lightningnetwork/lnd/channeldb/migration_01_to_11"
 	"github.com/lightningnetwork/lnd/channeldb/migtest"
@@ -62,7 +62,7 @@ var (
 		},
 		LockTime: 5,
 	}
-	_, pubKey = btcec.PrivKeyFromBytes(btcec.S256(), key[:])
+	_, pubKey = btcec.PrivKeyFromBytes(key[:])
 )
 
 // TestMigrateFwdPkgCleanup asserts that the migration will delete all the
@@ -187,7 +187,7 @@ func genAfterMigration(deleted, untouched []int) func(kvdb.RwTx) error {
 		// Reading deleted buckets should return nil
 		for _, id := range deleted {
 			chanID := lnwire.NewShortChanIDFromInt(uint64(id))
-			sourceKey := makeLogKey(chanID.ToUint64())
+			sourceKey := MakeLogKey(chanID.ToUint64())
 			sourceBkt := fwdPkgBkt.NestedReadBucket(sourceKey[:])
 			if sourceBkt != nil {
 				return fmt.Errorf(
@@ -200,7 +200,7 @@ func genAfterMigration(deleted, untouched []int) func(kvdb.RwTx) error {
 		// Reading untouched buckets should return not nil
 		for _, id := range untouched {
 			chanID := lnwire.NewShortChanIDFromInt(uint64(id))
-			sourceKey := makeLogKey(chanID.ToUint64())
+			sourceKey := MakeLogKey(chanID.ToUint64())
 			sourceBkt := fwdPkgBkt.NestedReadBucket(sourceKey[:])
 			if sourceBkt == nil {
 				return fmt.Errorf(
@@ -259,7 +259,7 @@ func createTestFwdPkgBucket(tx kvdb.RwTx, chanID lnwire.ShortChannelID) error {
 		return err
 	}
 
-	source := makeLogKey(chanID.ToUint64())
+	source := MakeLogKey(chanID.ToUint64())
 	if _, err := fwdPkgBkt.CreateBucketIfNotExists(source[:]); err != nil {
 		return err
 	}

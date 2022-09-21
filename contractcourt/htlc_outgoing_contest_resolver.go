@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/btcsuite/btcutil"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/lnwallet"
 )
@@ -188,14 +188,6 @@ func (h *htlcOutgoingContestResolver) Stop() {
 // NOTE: Part of the ContractResolver interface.
 func (h *htlcOutgoingContestResolver) IsResolved() bool {
 	return h.resolved
-}
-
-// SupplementState allows the user of a ContractResolver to supplement it with
-// state required for the proper resolution of a contract.
-//
-// NOTE: Part of the ContractResolver interface.
-func (h *htlcOutgoingContestResolver) SupplementState(state *channeldb.OpenChannel) {
-	h.htlcTimeoutResolver.SupplementState(state)
 }
 
 // Encode writes an encoded version of the ContractResolver into the passed

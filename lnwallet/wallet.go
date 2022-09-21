@@ -11,14 +11,14 @@ import (
 	"sync/atomic"
 
 	"github.com/btcsuite/btcd/blockchain"
-	"github.com/btcsuite/btcd/btcec"
+	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/btcutil/psbt"
+	"github.com/btcsuite/btcd/btcutil/txsort"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/btcsuite/btcutil"
-	"github.com/btcsuite/btcutil/psbt"
-	"github.com/btcsuite/btcutil/txsort"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/input"
@@ -35,18 +35,18 @@ const (
 	// outside word.
 	msgBufferSize = 100
 
-	// anchorChanReservedValue is the amount we'll keep around in the
+	// AnchorChanReservedValue is the amount we'll keep around in the
 	// wallet in case we have to fee bump anchor channels on force close.
 	// TODO(halseth): update constant to target a specific commit size at
 	// set fee rate.
-	anchorChanReservedValue = btcutil.Amount(10_000)
+	AnchorChanReservedValue = btcutil.Amount(10_000)
 
-	// maxAnchorChanReservedValue is the maximum value we'll reserve for
+	// MaxAnchorChanReservedValue is the maximum value we'll reserve for
 	// anchor channel fee bumping. We cap it at 10 times the per-channel
 	// amount such that nodes with a high number of channels don't have to
 	// keep around a very large amount for the unlikely scenario that they
 	// all close at the same time.
-	maxAnchorChanReservedValue = 10 * anchorChanReservedValue
+	MaxAnchorChanReservedValue = 10 * AnchorChanReservedValue
 )
 
 var (
@@ -152,6 +152,18 @@ type InitFundingReserveMsg struct {
 	// specified, then the default chanfunding.WalletAssembler will be
 	// used.
 	ChanFunder chanfunding.Assembler
+
+	// ZeroConf is a boolean that is true if a zero-conf channel was
+	// negotiated.
+	ZeroConf bool
+
+	// OptionScidAlias is a boolean that is true if an option-scid-alias
+	// channel type was explicitly negotiated.
+	OptionScidAlias bool
+
+	// ScidAliasFeature is true if the option-scid-alias feature bit was
+	// negotiated.
+	ScidAliasFeature bool
 
 	// err is a channel in which all errors will be sent across. Will be
 	// nil if this initial set is successful.
@@ -763,7 +775,7 @@ func (l *LightningWallet) handleFundingReserveRequest(req *InitFundingReserveMsg
 			FeeRate:      req.FundingFeePerKw,
 			ChangeAddr: func() (btcutil.Address, error) {
 				return l.NewAddress(
-					WitnessPubKey, true, DefaultAccountName,
+					TaprootPubkey, true, DefaultAccountName,
 				)
 			},
 		}
@@ -845,10 +857,8 @@ func (l *LightningWallet) handleFundingReserveRequest(req *InitFundingReserveMsg
 
 	id := atomic.AddUint64(&l.nextFundingID, 1)
 	reservation, err := NewChannelReservation(
-		capacity, localFundingAmt, req.CommitFeePerKw, l, id,
-		req.PushMSat, l.Cfg.NetParams.GenesisHash, req.Flags,
-		req.CommitType, req.ChanFunder, req.PendingChanID,
-		thawHeight,
+		capacity, localFundingAmt, l, id, l.Cfg.NetParams.GenesisHash,
+		thawHeight, req,
 	)
 	if err != nil {
 		fundingIntent.Cancel()
@@ -900,7 +910,7 @@ func (l *LightningWallet) enforceNewReservedValue(fundingIntent chanfunding.Inte
 		return nil
 	}
 
-	numAnchors, err := l.currentNumAnchorChans()
+	numAnchors, err := l.CurrentNumAnchorChans()
 	if err != nil {
 		return err
 	}
@@ -919,9 +929,9 @@ func (l *LightningWallet) enforceNewReservedValue(fundingIntent chanfunding.Inte
 	})
 }
 
-// currentNumAnchorChans returns the current number of non-private anchor
+// CurrentNumAnchorChans returns the current number of non-private anchor
 // channels the wallet should be ready to fee bump if needed.
-func (l *LightningWallet) currentNumAnchorChans() (int, error) {
+func (l *LightningWallet) CurrentNumAnchorChans() (int, error) {
 	// Count all anchor channels that are open or pending
 	// open, or waiting close.
 	chans, err := l.Cfg.Database.FetchAllChannels()
@@ -941,7 +951,6 @@ func (l *LightningWallet) currentNumAnchorChans() (int, error) {
 		if c.ChanType.HasAnchors() {
 			numAnchors++
 		}
-
 	}
 
 	for _, c := range chans {
@@ -1047,9 +1056,9 @@ func (l *LightningWallet) CheckReservedValue(in []wire.OutPoint,
 	}
 
 	// We reserve a given amount for each anchor channel.
-	reserved := btcutil.Amount(numAnchorChans) * anchorChanReservedValue
-	if reserved > maxAnchorChanReservedValue {
-		reserved = maxAnchorChanReservedValue
+	reserved := btcutil.Amount(numAnchorChans) * AnchorChanReservedValue
+	if reserved > MaxAnchorChanReservedValue {
+		reserved = MaxAnchorChanReservedValue
 	}
 
 	if walletBalance < reserved {
@@ -1070,7 +1079,7 @@ func (l *LightningWallet) CheckReservedValue(in []wire.OutPoint,
 func (l *LightningWallet) CheckReservedValueTx(req CheckReservedValueTxReq) (
 	btcutil.Amount, error) {
 
-	numAnchors, err := l.currentNumAnchorChans()
+	numAnchors, err := l.CurrentNumAnchorChans()
 	if err != nil {
 		return 0, err
 	}
@@ -1084,7 +1093,6 @@ func (l *LightningWallet) CheckReservedValueTx(req CheckReservedValueTxReq) (
 		inputs, req.Tx.TxOut, numAnchors,
 	)
 	switch {
-
 	// If the error returned from CheckReservedValue is
 	// ErrReservedValueInvalidated, then it did nonetheless return
 	// the required reserved value and we check for the optional
@@ -1221,7 +1229,7 @@ func (l *LightningWallet) handleFundingCancelRequest(req *fundingReserveCancelMs
 	pendingReservation.Lock()
 	defer pendingReservation.Unlock()
 
-	// Mark all previously locked outpoints as useable for future funding
+	// Mark all previously locked outpoints as usable for future funding
 	// requests.
 	for _, unusedInput := range pendingReservation.ourContribution.Inputs {
 		delete(l.lockedOutPoints, unusedInput.PreviousOutPoint)
@@ -1321,7 +1329,7 @@ func (l *LightningWallet) handleContributionMsg(req *addContributionMsg) {
 	shutdown := req.contribution.UpfrontShutdown
 	if len(shutdown) > 0 {
 		// Validate the shutdown script.
-		if !validateUpfrontShutdown(shutdown, &l.Cfg.NetParams) {
+		if !ValidateUpfrontShutdown(shutdown, &l.Cfg.NetParams) {
 			req.err <- fmt.Errorf("invalid shutdown script")
 			return
 		}
@@ -1617,7 +1625,7 @@ func (l *LightningWallet) handleChanPointReady(req *continueContributionMsg) {
 		KeyDesc:       ourKey,
 		Output:        fundingOutput,
 		HashType:      txscript.SigHashAll,
-		SigHashes:     txscript.NewTxSigHashes(theirCommitTx),
+		SigHashes:     input.NewTxSigHashesV0Only(theirCommitTx),
 		InputIndex:    0,
 	}
 	sigTheirCommit, err := l.Cfg.Signer.SignOutputRaw(theirCommitTx, &signDesc)
@@ -1652,7 +1660,7 @@ func (l *LightningWallet) handleSingleContribution(req *addSingleContributionMsg
 	shutdown := req.contribution.UpfrontShutdown
 	if len(shutdown) > 0 {
 		// Validate the shutdown script.
-		if !validateUpfrontShutdown(shutdown, &l.Cfg.NetParams) {
+		if !ValidateUpfrontShutdown(shutdown, &l.Cfg.NetParams) {
 			req.err <- fmt.Errorf("invalid shutdown script")
 			return
 		}
@@ -1692,7 +1700,7 @@ func (l *LightningWallet) verifyFundingInputs(fundingTx *wire.MsgTx,
 	remoteInputScripts []*input.Script) error {
 
 	sigIndex := 0
-	fundingHashCache := txscript.NewTxSigHashes(fundingTx)
+	fundingHashCache := input.NewTxSigHashesV0Only(fundingTx)
 	inputScripts := remoteInputScripts
 	for i, txin := range fundingTx.TxIn {
 		if len(inputScripts) != 0 && len(txin.Witness) == 0 {
@@ -1729,6 +1737,9 @@ func (l *LightningWallet) verifyFundingInputs(fundingTx *wire.MsgTx,
 				output.PkScript, fundingTx, i,
 				txscript.StandardVerifyFlags, nil,
 				fundingHashCache, output.Value,
+				txscript.NewCannedPrevOutputFetcher(
+					output.PkScript, output.Value,
+				),
 			)
 			if err != nil {
 				return fmt.Errorf("cannot create script "+
@@ -1808,7 +1819,7 @@ func (l *LightningWallet) handleFundingCounterPartySigs(msg *addCounterPartySigs
 	// Next, create the spending scriptSig, and then verify that the script
 	// is complete, allowing us to spend from the funding transaction.
 	channelValue := int64(res.partialState.Capacity)
-	hashCache := txscript.NewTxSigHashes(commitTx)
+	hashCache := input.NewTxSigHashesV0Only(commitTx)
 	sigHash, err := txscript.CalcWitnessSigHash(
 		witnessScript, hashCache, txscript.SigHashAll, commitTx,
 		0, channelValue,
@@ -1959,7 +1970,7 @@ func (l *LightningWallet) handleSingleFunderSigs(req *addSingleFunderSigsMsg) {
 		req.fundingOutpoint, spew.Sdump(theirCommitTx))
 
 	channelValue := int64(pendingReservation.partialState.Capacity)
-	hashCache := txscript.NewTxSigHashes(ourCommitTx)
+	hashCache := input.NewTxSigHashesV0Only(ourCommitTx)
 	theirKey := pendingReservation.theirContribution.MultiSigKey
 	ourKey := pendingReservation.ourContribution.MultiSigKey
 	witnessScript, _, err := input.GenFundingPkScript(
@@ -2010,7 +2021,7 @@ func (l *LightningWallet) handleSingleFunderSigs(req *addSingleFunderSigsMsg) {
 			Value:    channelValue,
 		},
 		HashType:   txscript.SigHashAll,
-		SigHashes:  txscript.NewTxSigHashes(theirCommitTx),
+		SigHashes:  input.NewTxSigHashesV0Only(theirCommitTx),
 		InputIndex: 0,
 	}
 	sigTheirCommit, err := l.Cfg.Signer.SignOutputRaw(theirCommitTx, &signDesc)
@@ -2076,8 +2087,8 @@ func (l *LightningWallet) WithCoinSelectLock(f func() error) error {
 // state hints from the root to be used for a new channel. The obfuscator is
 // generated via the following computation:
 //
-//   * sha256(initiatorKey || responderKey)[26:]
-//     * where both keys are the multi-sig keys of the respective parties
+//   - sha256(initiatorKey || responderKey)[26:]
+//     -- where both keys are the multi-sig keys of the respective parties
 //
 // The first 6 bytes of the resulting hash are used as the state hint.
 func DeriveStateHintObfuscator(key1, key2 *btcec.PublicKey) [StateHintSize]byte {
@@ -2243,25 +2254,71 @@ func (s *shimKeyRing) DeriveNextKey(keyFam keychain.KeyFamily) (keychain.KeyDesc
 	return *fundingKeys.LocalKey, nil
 }
 
-// validateUpfrontShutdown checks whether the provided upfront_shutdown_script
+// ValidateUpfrontShutdown checks whether the provided upfront_shutdown_script
 // is of a valid type that we accept.
-func validateUpfrontShutdown(shutdown lnwire.DeliveryAddress,
+func ValidateUpfrontShutdown(shutdown lnwire.DeliveryAddress,
 	params *chaincfg.Params) bool {
 
 	// We don't need to worry about a large UpfrontShutdownScript since it
 	// was already checked in lnwire when decoding from the wire.
 	scriptClass, _, _, _ := txscript.ExtractPkScriptAddrs(shutdown, params)
 
-	switch scriptClass {
-	case txscript.PubKeyHashTy,
-		txscript.WitnessV0PubKeyHashTy,
-		txscript.ScriptHashTy,
-		txscript.WitnessV0ScriptHashTy:
-		// The above four types are permitted according to BOLT#02.
-		// Everything else is disallowed.
+	switch {
+	case scriptClass == txscript.WitnessV0PubKeyHashTy,
+		scriptClass == txscript.WitnessV0ScriptHashTy,
+		scriptClass == txscript.WitnessV1TaprootTy:
+
+		// The above three types are permitted according to BOLT#02 and
+		// BOLT#05.  Everything else is disallowed.
 		return true
+
+	// In this case, we don't know about the actual script template, but it
+	// might be a witness program with versions 2-16. So we'll check that
+	// now
+	case txscript.IsWitnessProgram(shutdown):
+		version, _, err := txscript.ExtractWitnessProgramInfo(shutdown)
+		if err != nil {
+			walletLog.Warnf("unable to extract witness program "+
+				"version (script=%x): %v", shutdown, err)
+			return false
+		}
+
+		return version >= 1 && version <= 16
 
 	default:
 		return false
+	}
+}
+
+// WalletPrevOutputFetcher is a txscript.PrevOutputFetcher that can fetch
+// outputs from a given wallet controller.
+type WalletPrevOutputFetcher struct {
+	wc WalletController
+}
+
+// A compile time assertion that WalletPrevOutputFetcher implements the
+// txscript.PrevOutputFetcher interface.
+var _ txscript.PrevOutputFetcher = (*WalletPrevOutputFetcher)(nil)
+
+// NewWalletPrevOutputFetcher creates a new WalletPrevOutputFetcher that fetches
+// previous outputs from the given wallet controller.
+func NewWalletPrevOutputFetcher(wc WalletController) *WalletPrevOutputFetcher {
+	return &WalletPrevOutputFetcher{
+		wc: wc,
+	}
+}
+
+// FetchPrevOutput attempts to fetch the previous output referenced by the
+// passed outpoint. A nil value will be returned if the passed outpoint doesn't
+// exist.
+func (w *WalletPrevOutputFetcher) FetchPrevOutput(op wire.OutPoint) *wire.TxOut {
+	utxo, err := w.wc.FetchInputInfo(&op)
+	if err != nil {
+		return nil
+	}
+
+	return &wire.TxOut{
+		Value:    int64(utxo.Value),
+		PkScript: utxo.PkScript,
 	}
 }
