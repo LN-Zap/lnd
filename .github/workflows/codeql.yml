@@ -36,6 +36,11 @@ jobs:
         # Learn more about CodeQL language support at https://aka.ms/codeql-docs/language-support
 
     steps:
+    - name: Configure git for private modules
+      env:
+        TOKEN: ${{ secrets.ZAP_CI_GITHUB_TOKEN }}
+      run: git config --global url."https://zapci:${TOKEN}@github.com".insteadOf "https://github.com"
+    
     - name: Checkout repository
       uses: actions/checkout@v3
 
