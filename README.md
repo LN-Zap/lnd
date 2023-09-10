@@ -31,7 +31,7 @@ We consider `origin/master` to be the main branch where the source code of HEAD 
 
 We consider `origin/stable` to be the main branch where the source code of HEAD always reflects a production-ready state. Each time when changes are merged back into `stable`, this is a new production release _by definition_.
 
-#### `upstream-master`
+#### `upstream/master`
 
 We consider `origin/upstream-master` to be the main branch where the source code of HEAD reflects the `master` branch of the upstream LND repository. This is tracked to merge new versions of LND into a production release.
 
