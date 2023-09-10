@@ -4,6 +4,25 @@
 
 ![Logo](logo.png)
 
+## Cuatomisations
+
+- `/lnrpc.Lightning/IsOurAddress` RPC to check whether an address is controlled by the node's wallet or not
+  - NOTE: Merged upstream in https://github.com/lightningnetwork/lnd/pull/5476
+- `/lnrpc.Lightning/GetTransaction` RPC to return data for any transaction given its id
+  - Note: `btcwallet` dependency replaced with our own `btcwallet-strike` fork
+  - See https://github.com/btcsuite/btcwallet/pull/779 for details
+- `/walletrpc.WalletKit/SignMessageFromAddress` RPC that signs a given message with the private key for the given address
+- `Dockerfile` customisations to allow fetching private fork of btcwallet depenndency
+- `.github/workflows/codeql.yml` githib actions workflow added to check code ssecurity
+- `.github/workflows/automated-release.yml` github action added to create new releases for Strike
+- `.github/workflows/docker.yml` github actions removed to prevent nightly builds
+- `.github/workflows/main.yml` github actions workflow removed
+- `.github/workflows/release.yaml` github actions workflow removed to prevent creating release on tag pushes
+- `.github/workflows/version-check-on-pr.yaml` github actions workflow added to check version on PR to stable branch
+- `--strike-version` lnd cli flag to print the LND-Strike version
+- `Makefile` updated to support builds that include private forks of dependencies
+- `README` updated with Strike specific docs
+
 ## Versioning
 
 LND-Strike uses [semantic versioning](https://semver.org/) and incorporates the LND version it is based on via the _pre-release_ label. However, each time the LND version is increased it also results in a major, minor or patch level increase of LND-Strike (and the pre-release tag is therefore considered as informational only).
