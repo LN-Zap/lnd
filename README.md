@@ -12,10 +12,10 @@ LND-Strike uses [semantic versioning](https://semver.org/) and incorporates the 
 
 This allows updating LND-Strike as a dependency and knowing exactly what kind of changes are introduced (breaking changes, features or fixes).
 
-LND-Strike is currently being supported in two distinct versions:
- * `0.1.0-lnd.0.12.1.beta` following LND 0.12.1,
- * `1.0.0-lnd.0.13.0.beta.rc5` following LND 0.13.0-rc5 and
- * `2.0.0-lnd.0.14.2.beta.rc1` following LND 0.14.2-rc1
+LND-Strike is currently being supported in the following distinct versions:
+
+ * `2.0.5-lnd.0.14.2.beta` following LND 0.14.2
+ * `3.0.4-lnd.0.15.5.beta` following LND 0.15.5
 
 The changes in each can be obtained from their releases.
 
