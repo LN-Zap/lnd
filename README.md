@@ -4,8 +4,6 @@
 
 ![Logo](logo.png)
 
-TODO
-
 ## Versioning
 
 LND-Strike uses [semantic versioning](https://semver.org/) and incorporates the LND version it is based on via the _pre-release_ label. However, each time the LND version is increased it also results in a major, minor or patch level increase of LND-Strike (and the pre-release tag is therefore considered as informational only).
@@ -25,15 +23,15 @@ The changes in each can be obtained from their releases.
 
 #### `master`
 
-We consider `origin/master` to be the main branch where the source code of HEAD always reflects a state with the latest delivered development changes for the next release.
+We consider `master` to be the main branch where the source code of HEAD always reflects a state with the latest delivered development changes for the next release.
 
 #### `stable`
 
-We consider `origin/stable` to be the main branch where the source code of HEAD always reflects a production-ready state. Each time when changes are merged back into `stable`, this is a new production release _by definition_.
+We consider `stable` to be the main branch where the source code of HEAD always reflects a production-ready state. Each time when changes are merged back into `stable`, this is a new production release _by definition_.
 
 #### `upstream/master`
 
-We consider `origin/upstream-master` to be the main branch where the source code of HEAD reflects the `master` branch of the upstream LND repository. This is tracked to merge new versions of LND into a production release.
+We consider `upstream/master` to be the main branch where the source code of HEAD reflects the `master` branch of the upstream LND repository. This is tracked to merge new versions of LND into a production release.
 
 ### Suporting Branches
 
