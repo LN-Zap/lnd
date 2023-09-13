@@ -4,7 +4,24 @@
 
 ![Logo](logo.png)
 
-TODO
+## Customisations
+
+- `/lnrpc.Lightning/IsOurAddress` RPC to check whether an address is controlled by the node's wallet or not
+  - NOTE: Merged upstream in https://github.com/lightningnetwork/lnd/pull/5476
+- `/lnrpc.Lightning/GetTransaction` RPC to return data for any transaction given its id
+  - Note: `btcwallet` dependency replaced with our own `btcwallet-strike` fork
+  - See https://github.com/btcsuite/btcwallet/pull/779 for details
+- `/walletrpc.WalletKit/SignMessageFromAddress` RPC that signs a given message with the private key for the given address
+- `Dockerfile` customisations to allow fetching private fork of btcwallet dependency
+- `.github/workflows/codeql.yml` githib actions workflow added to check code ssecurity
+- `.github/workflows/automated-release.yml` github action added to create new releases for Strike
+- `.github/workflows/docker.yml` github actions removed to prevent nightly builds
+- `.github/workflows/main.yml` github actions workflow removed
+- `.github/workflows/release.yaml` github actions workflow removed to prevent creating release on tag pushes
+- `.github/workflows/version-check-on-pr.yaml` github actions workflow added to check version on PR to stable branch
+- `--strike-version` lnd cli flag to print the LND-Strike version
+- `Makefile` updated to support builds that include private forks of dependencies
+- `README` updated with Strike specific docs
 
 ## Versioning
 
@@ -12,10 +29,10 @@ LND-Strike uses [semantic versioning](https://semver.org/) and incorporates the 
 
 This allows updating LND-Strike as a dependency and knowing exactly what kind of changes are introduced (breaking changes, features or fixes).
 
-LND-Strike is currently being supported in two distinct versions:
- * `0.1.0-lnd.0.12.1.beta` following LND 0.12.1,
- * `1.0.0-lnd.0.13.0.beta.rc5` following LND 0.13.0-rc5 and
- * `2.0.0-lnd.0.14.2.beta.rc1` following LND 0.14.2-rc1
+LND-Strike is currently being supported in the following distinct versions:
+
+ * `2.0.5-lnd.0.14.2.beta` following LND 0.14.2
+ * `3.0.4-lnd.0.15.5.beta` following LND 0.15.5
 
 The changes in each can be obtained from their releases.
 
@@ -25,15 +42,15 @@ The changes in each can be obtained from their releases.
 
 #### `master`
 
-We consider `origin/master` to be the main branch where the source code of HEAD always reflects a state with the latest delivered development changes for the next release.
+We consider `master` to be the main branch where the source code of HEAD always reflects a state with the latest delivered development changes for the next release.
 
 #### `stable`
 
-We consider `origin/stable` to be the main branch where the source code of HEAD always reflects a production-ready state. Each time when changes are merged back into `stable`, this is a new production release _by definition_.
+We consider `stable` to be the main branch where the source code of HEAD always reflects a production-ready state. Each time when changes are merged back into `stable`, this is a new production release _by definition_.
 
-#### `upstream-master`
+#### `upstream/master`
 
-We consider `origin/upstream-master` to be the main branch where the source code of HEAD reflects the `master` branch of the upstream LND repository. This is tracked to merge new versions of LND into a production release.
+We consider `upstream/master` to be the main branch where the source code of HEAD reflects the `master` branch of the upstream LND repository. This is tracked to merge new versions of LND into a production release.
 
 ### Suporting Branches
 
