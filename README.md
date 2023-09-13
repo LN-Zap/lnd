@@ -4,7 +4,7 @@
 
 ![Logo](logo.png)
 
-## Cuatomisations
+## Customisations
 
 - `/lnrpc.Lightning/IsOurAddress` RPC to check whether an address is controlled by the node's wallet or not
   - NOTE: Merged upstream in https://github.com/lightningnetwork/lnd/pull/5476
@@ -12,7 +12,7 @@
   - Note: `btcwallet` dependency replaced with our own `btcwallet-strike` fork
   - See https://github.com/btcsuite/btcwallet/pull/779 for details
 - `/walletrpc.WalletKit/SignMessageFromAddress` RPC that signs a given message with the private key for the given address
-- `Dockerfile` customisations to allow fetching private fork of btcwallet depenndency
+- `Dockerfile` customisations to allow fetching private fork of btcwallet dependency
 - `.github/workflows/codeql.yml` githib actions workflow added to check code ssecurity
 - `.github/workflows/automated-release.yml` github action added to create new releases for Strike
 - `.github/workflows/docker.yml` github actions removed to prevent nightly builds
