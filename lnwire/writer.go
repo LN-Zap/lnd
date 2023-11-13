@@ -154,7 +154,7 @@ func WriteShortChannelID(buf *bytes.Buffer, shortChanID ShortChannelID) error {
 
 // WriteSig appends the signature to the provided buffer.
 func WriteSig(buf *bytes.Buffer, sig Sig) error {
-	return WriteBytes(buf, sig[:])
+	return WriteBytes(buf, sig.bytes[:])
 }
 
 // WriteSigs appends the slice of signatures to the provided buffer with its
@@ -239,6 +239,11 @@ func WritePingPayload(buf *bytes.Buffer, payload PingPayload) error {
 // WritePongPayload appends the payload to the provided buffer.
 func WritePongPayload(buf *bytes.Buffer, payload PongPayload) error {
 	return writeDataWithLength(buf, payload)
+}
+
+// WriteWarningData appends the data to the provided buffer.
+func WriteWarningData(buf *bytes.Buffer, data WarningData) error {
+	return writeDataWithLength(buf, data)
 }
 
 // WriteErrorData appends the data to the provided buffer.

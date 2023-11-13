@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/lightningnetwork/lnd/lnencrypt"
 	"github.com/stretchr/testify/require"
 )
 
@@ -52,9 +53,7 @@ func assertFileDeleted(t *testing.T, filePath string) {
 func TestUpdateAndSwap(t *testing.T) {
 	t.Parallel()
 
-	tempTestDir, err := ioutil.TempDir("", "")
-	require.NoError(t, err, "unable to make temp dir")
-	defer os.Remove(tempTestDir)
+	tempTestDir := t.TempDir()
 
 	testCases := []struct {
 		fileName     string
@@ -96,11 +95,6 @@ func TestUpdateAndSwap(t *testing.T) {
 		},
 	}
 	for i, testCase := range testCases {
-		// Ensure that all created files are removed at the end of the
-		// test case.
-		defer os.Remove(testCase.fileName)
-		defer os.Remove(testCase.tempFileName)
-
 		backupFile := NewMultiFile(testCase.fileName)
 
 		// To start with, we'll make a random byte slice that'll pose
@@ -113,10 +107,11 @@ func TestUpdateAndSwap(t *testing.T) {
 		// If the old temporary file is meant to exist, then we'll
 		// create it now as an empty file.
 		if testCase.oldTempExists {
-			_, err := os.Create(testCase.tempFileName)
+			f, err := os.Create(testCase.tempFileName)
 			if err != nil {
 				t.Fatalf("unable to create temp file: %v", err)
 			}
+			require.NoError(t, f.Close())
 
 			// TODO(roasbeef): mock out fs calls?
 		}
@@ -186,7 +181,7 @@ func assertMultiEqual(t *testing.T, a, b *Multi) {
 func TestExtractMulti(t *testing.T) {
 	t.Parallel()
 
-	keyRing := &mockKeyRing{}
+	keyRing := &lnencrypt.MockKeyRing{}
 
 	// First, as prep, we'll create a single chan backup, then pack that
 	// fully into a multi backup.
@@ -205,10 +200,13 @@ func TestExtractMulti(t *testing.T) {
 	packedMulti := PackedMulti(b.Bytes())
 
 	// Finally, we'll make a new temporary file, then write out the packed
-	// multi directly to to it.
-	tempFile, err := ioutil.TempFile("", "")
+	// multi directly to it.
+	tempFile, err := os.CreateTemp("", "")
 	require.NoError(t, err, "unable to create temp file")
-	defer os.Remove(tempFile.Name())
+	t.Cleanup(func() {
+		require.NoError(t, tempFile.Close())
+		require.NoError(t, os.Remove(tempFile.Name()))
+	})
 
 	_, err = tempFile.Write(packedMulti)
 	require.NoError(t, err, "unable to write temp file")

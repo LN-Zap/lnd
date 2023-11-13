@@ -24,7 +24,7 @@ env:
   # /dev.Dockerfile
   # /make/builder.Dockerfile
   # /.github/workflows/release.yml
-  GO_VERSION: 1.19.3
+  GO_VERSION: 1.21.0
 
   # Configure Go to prevent proxying the private repository.
   GOPRIVATE: "github.com/LN-Zap/btcwallet-strike"
@@ -68,6 +68,7 @@ jobs:
         run: make rpc-js-compile
 
   ########################
+
   # lint code
   ########################
   lint:
@@ -107,6 +108,7 @@ jobs:
         run: GOGC=50 make lint
 
   ########################
+
   # sample configuration check
   ########################
   sample-conf-check:
@@ -149,6 +151,7 @@ jobs:
           - btcd unit-race
           - unit tags="kvdb_etcd"
           - unit tags="kvdb_postgres"
+
     steps:
       - name: Configure git for private modules
         env:
@@ -180,6 +183,7 @@ jobs:
       - name: run ${{ matrix.unit_type }}
         run: make ${{ matrix.unit_type }}
 
+
   ########################
   # run integration tests
   ########################
@@ -193,6 +197,7 @@ jobs:
         include:
           - name: btcd
             args: backend=btcd
+
     steps:
       - name: Configure git for private modules
         env:
@@ -224,7 +229,9 @@ jobs:
       - name: run ${{ matrix.name }}
         run: make itest-parallel ${{ matrix.args }}
 
+
   ########################
+
   # check pinned dependencies
   ########################
   dep-pin:
@@ -235,7 +242,7 @@ jobs:
       fail-fast: false
       matrix:
         pinned_dep:
-          - google.golang.org/grpc v1.38.0
+          - google.golang.org/grpc v1.53.0
           - github.com/golang/protobuf v1.5.2
 
     steps:
@@ -249,3 +256,4 @@ jobs:
 
       - name: ensure dependences at correct version
         run: if ! grep -q "${{ matrix.pinned_dep }}" go.mod; then echo dependency ${{ matrix.pinned_dep }} should not be altered ; exit 1 ; fi
+

@@ -10,8 +10,10 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/clock"
+	"github.com/lightningnetwork/lnd/lnmock"
 	"github.com/lightningnetwork/lnd/lnwallet/chainfee"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,7 +29,6 @@ func TestMailBoxCouriers(t *testing.T) {
 	// First, we'll create new instance of the current default mailbox
 	// type.
 	ctx := newMailboxContext(t, time.Now(), testExpiry)
-	defer ctx.mailbox.Stop()
 
 	// We'll be adding 10 message of both types to the mailbox.
 	const numPackets = 10
@@ -193,6 +194,35 @@ type mailboxContext struct {
 	forwards chan *htlcPacket
 }
 
+// newMailboxContextWithClock creates a new mailbox context with the given
+// mocked clock.
+//
+// TODO(yy): replace all usage of `newMailboxContext` with this method.
+func newMailboxContextWithClock(t *testing.T,
+	clock clock.Clock) *mailboxContext {
+
+	ctx := &mailboxContext{
+		t:        t,
+		forwards: make(chan *htlcPacket, 1),
+	}
+
+	failMailboxUpdate := func(outScid,
+		mboxScid lnwire.ShortChannelID) lnwire.FailureMessage {
+
+		return &lnwire.FailTemporaryNodeFailure{}
+	}
+
+	ctx.mailbox = newMemoryMailBox(&mailBoxConfig{
+		failMailboxUpdate: failMailboxUpdate,
+		forwardPackets:    ctx.forward,
+		clock:             clock,
+	})
+	ctx.mailbox.Start()
+	t.Cleanup(ctx.mailbox.Stop)
+
+	return ctx
+}
+
 func newMailboxContext(t *testing.T, startTime time.Time,
 	expiry time.Duration) *mailboxContext {
 
@@ -215,6 +245,7 @@ func newMailboxContext(t *testing.T, startTime time.Time,
 		expiry:            expiry,
 	})
 	ctx.mailbox.Start()
+	t.Cleanup(ctx.mailbox.Stop)
 
 	return ctx
 }
@@ -294,7 +325,7 @@ func (c *mailboxContext) checkFails(adds []*htlcPacket) {
 
 	select {
 	case pkt := <-c.forwards:
-		c.t.Fatalf("unexpected forward: %v", pkt)
+		c.t.Fatalf("unexpected forward: %v", pkt.keystone())
 	case <-time.After(50 * time.Millisecond):
 	}
 }
@@ -311,7 +342,6 @@ func TestMailBoxFailAdd(t *testing.T) {
 		thirdBatchExpiry = thirdBatchStart.Add(expiry)
 	)
 	ctx := newMailboxContext(t, firstBatchStart, expiry)
-	defer ctx.mailbox.Stop()
 
 	failAdds := func(adds []*htlcPacket) {
 		for _, add := range adds {
@@ -377,7 +407,6 @@ func TestMailBoxPacketPrioritization(t *testing.T) {
 	// First, we'll create new instance of the current default mailbox
 	// type.
 	ctx := newMailboxContext(t, time.Now(), testExpiry)
-	defer ctx.mailbox.Stop()
 
 	const numPackets = 5
 
@@ -463,35 +492,44 @@ func TestMailBoxPacketPrioritization(t *testing.T) {
 	}
 }
 
-// TestMailBoxAddExpiry asserts that the mailbox will cancel back Adds that have
-// reached their expiry time.
+// TestMailBoxAddExpiry asserts that the mailbox will cancel back Adds that
+// have reached their expiry time.
 func TestMailBoxAddExpiry(t *testing.T) {
-	var (
-		expiry            = time.Minute
-		batchDelay        = time.Second
-		firstBatchStart   = time.Now()
-		firstBatchExpiry  = firstBatchStart.Add(expiry)
-		secondBatchStart  = firstBatchStart.Add(batchDelay)
-		secondBatchExpiry = secondBatchStart.Add(expiry)
-	)
-
-	ctx := newMailboxContext(t, firstBatchStart, expiry)
-	defer ctx.mailbox.Stop()
-
 	// Each batch will consist of 10 messages.
 	const numBatchPackets = 10
 
-	firstBatch := ctx.sendAdds(0, numBatchPackets)
+	// deadline is the returned value from the `pktWithExpiry.deadline`.
+	deadline := make(chan time.Time, numBatchPackets*2)
 
-	ctx.clock.SetTime(secondBatchStart)
+	// Create a mock clock and mock the methods.
+	mockClock := &lnmock.MockClock{}
+	mockClock.On("Now").Return(time.Now())
+
+	// Mock TickAfter, which mounts the above `deadline` channel to the
+	// returned value from `pktWithExpiry.deadline`.
+	mockClock.On("TickAfter", mock.Anything).Return(deadline)
+
+	// Create a test mailbox context.
+	ctx := newMailboxContextWithClock(t, mockClock)
+
+	// Send 10 packets and assert no failures are sent back.
+	firstBatch := ctx.sendAdds(0, numBatchPackets)
 	ctx.checkFails(nil)
 
+	// Send another 10 packets and assert no failures are sent back.
 	secondBatch := ctx.sendAdds(numBatchPackets, numBatchPackets)
+	ctx.checkFails(nil)
 
-	ctx.clock.SetTime(firstBatchExpiry)
+	// Tick 10 times and we should see the first batch expired.
+	for i := 0; i < numBatchPackets; i++ {
+		deadline <- time.Now()
+	}
 	ctx.checkFails(firstBatch)
 
-	ctx.clock.SetTime(secondBatchExpiry)
+	// Tick another 10 times and we should see the second batch expired.
+	for i := 0; i < numBatchPackets; i++ {
+		deadline <- time.Now()
+	}
 	ctx.checkFails(secondBatch)
 }
 
@@ -503,7 +541,6 @@ func TestMailBoxDuplicateAddPacket(t *testing.T) {
 
 	ctx := newMailboxContext(t, time.Now(), testExpiry)
 	ctx.mailbox.Start()
-	defer ctx.mailbox.Stop()
 
 	addTwice := func(t *testing.T, pkt *htlcPacket) {
 		// The first add should succeed.
@@ -553,7 +590,6 @@ func testMailBoxDust(t *testing.T, chantype channeldb.ChannelType) {
 	t.Parallel()
 
 	ctx := newMailboxContext(t, time.Now(), testExpiry)
-	defer ctx.mailbox.Stop()
 
 	_, _, aliceID, bobID := genIDs()
 

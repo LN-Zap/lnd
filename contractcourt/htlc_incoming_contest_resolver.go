@@ -8,12 +8,15 @@ import (
 	"io"
 
 	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/txscript"
 	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/htlcswitch/hop"
 	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
+	"github.com/lightningnetwork/lnd/queue"
 )
 
 // htlcIncomingContestResolver is a ContractResolver that's able to resolve an
@@ -50,16 +53,40 @@ func newIncomingContestResolver(
 	}
 }
 
+func (h *htlcIncomingContestResolver) processFinalHtlcFail() error {
+	// Mark the htlc as final failed.
+	err := h.ChainArbitratorConfig.PutFinalHtlcOutcome(
+		h.ChannelArbitratorConfig.ShortChanID, h.htlc.HtlcIndex, false,
+	)
+	if err != nil {
+		return err
+	}
+
+	// Send notification.
+	h.ChainArbitratorConfig.HtlcNotifier.NotifyFinalHtlcEvent(
+		models.CircuitKey{
+			ChanID: h.ShortChanID,
+			HtlcID: h.htlc.HtlcIndex,
+		},
+		channeldb.FinalHtlcInfo{
+			Settled:  false,
+			Offchain: false,
+		},
+	)
+
+	return nil
+}
+
 // Resolve attempts to resolve this contract. As we don't yet know of the
 // preimage for the contract, we'll wait for one of two things to happen:
 //
-//   1. We learn of the preimage! In this case, we can sweep the HTLC incoming
-//      and ensure that if this was a multi-hop HTLC we are made whole. In this
-//      case, an additional ContractResolver will be returned to finish the
-//      job.
+//  1. We learn of the preimage! In this case, we can sweep the HTLC incoming
+//     and ensure that if this was a multi-hop HTLC we are made whole. In this
+//     case, an additional ContractResolver will be returned to finish the
+//     job.
 //
-//   2. The HTLC expires. If this happens, then the contract is fully resolved
-//      as we have no remaining actions left at our disposal.
+//  2. The HTLC expires. If this happens, then the contract is fully resolved
+//     as we have no remaining actions left at our disposal.
 //
 // NOTE: Part of the ContractResolver interface.
 func (h *htlcIncomingContestResolver) Resolve() (ContractResolver, error) {
@@ -78,10 +105,14 @@ func (h *htlcIncomingContestResolver) Resolve() (ContractResolver, error) {
 
 		// If we've locked in an htlc with an invalid payload on our
 		// commitment tx, we don't need to resolve it. The other party
-		// will time it out and get their funds back. This situation can
-		// present itself when we crash before processRemoteAdds in the
-		// link has ran.
+		// will time it out and get their funds back. This situation
+		// can present itself when we crash before processRemoteAdds in
+		// the link has ran.
 		h.resolved = true
+
+		if err := h.processFinalHtlcFail(); err != nil {
+			return nil, err
+		}
 
 		// We write a report to disk that indicates we could not decode
 		// the htlc.
@@ -111,6 +142,9 @@ func (h *htlcIncomingContestResolver) Resolve() (ContractResolver, error) {
 		return nil, errResolverShuttingDown
 	}
 
+	log.Debugf("%T(%v): Resolving incoming HTLC(expiry=%v, height=%v)", h,
+		h.htlcResolution.ClaimOutpoint, h.htlcExpiry, currentHeight)
+
 	// We'll first check if this HTLC has been timed out, if so, we can
 	// return now and mark ourselves as resolved. If we're past the point of
 	// expiry of the HTLC, then at this point the sender can sweep it, so
@@ -128,6 +162,10 @@ func (h *htlcIncomingContestResolver) Resolve() (ContractResolver, error) {
 			"abandoning", h, h.htlcResolution.ClaimOutpoint,
 			h.htlcExpiry, currentHeight)
 		h.resolved = true
+
+		if err := h.processFinalHtlcFail(); err != nil {
+			return nil, err
+		}
 
 		// Finally, get our report and checkpoint our resolver with a
 		// timeout outcome report.
@@ -156,17 +194,41 @@ func (h *htlcIncomingContestResolver) Resolve() (ContractResolver, error) {
 		log.Infof("%T(%v): applied preimage=%v", h,
 			h.htlcResolution.ClaimOutpoint, preimage)
 
+		isSecondLevel := h.htlcResolution.SignedSuccessTx != nil
+
+		// If we didn't have to go to the second level to claim (this
+		// is the remote commitment transaction), then we don't need to
+		// modify our canned witness.
+		if !isSecondLevel {
+			return nil
+		}
+
+		isTaproot := txscript.IsPayToTaproot(
+			h.htlcResolution.SignedSuccessTx.TxOut[0].PkScript,
+		)
+
 		// If this is our commitment transaction, then we'll need to
 		// populate the witness for the second-level HTLC transaction.
-		if h.htlcResolution.SignedSuccessTx != nil {
-			// Within the witness for the success transaction, the
-			// preimage is the 4th element as it looks like:
-			//
-			//  * <sender sig> <recvr sig> <preimage> <witness script>
-			//
-			// We'll populate it within the witness, as since this
-			// was a "contest" resolver, we didn't yet know of the
-			// preimage.
+		switch {
+		// For taproot channels, the witness for sweeping with success
+		// looks like:
+		//   - <sender sig> <receiver sig> <preimage> <success_script>
+		//     <control_block>
+		//
+		// So we'll insert it at the 3rd index of the witness.
+		case isTaproot:
+			//nolint:lll
+			h.htlcResolution.SignedSuccessTx.TxIn[0].Witness[2] = preimage[:]
+
+		// Within the witness for the success transaction, the
+		// preimage is the 4th element as it looks like:
+		//
+		//  * <0> <sender sig> <recvr sig> <preimage> <witness script>
+		//
+		// We'll populate it within the witness, as since this
+		// was a "contest" resolver, we didn't yet know of the
+		// preimage.
+		case !isTaproot:
 			h.htlcResolution.SignedSuccessTx.TxIn[0].Witness[3] = preimage[:]
 		}
 
@@ -201,6 +263,10 @@ func (h *htlcIncomingContestResolver) Resolve() (ContractResolver, error) {
 
 			h.resolved = true
 
+			if err := h.processFinalHtlcFail(); err != nil {
+				return nil, err
+			}
+
 			// Checkpoint our resolver with an abandoned outcome
 			// because we take no further action on this htlc.
 			report := h.report().resolverReport(
@@ -218,31 +284,38 @@ func (h *htlcIncomingContestResolver) Resolve() (ContractResolver, error) {
 	}
 
 	var (
-		hodlChan       chan interface{}
+		hodlChan       <-chan interface{}
 		witnessUpdates <-chan lntypes.Preimage
 	)
 	if payload.FwdInfo.NextHop == hop.Exit {
 		// Create a buffered hodl chan to prevent deadlock.
-		hodlChan = make(chan interface{}, 1)
+		hodlQueue := queue.NewConcurrentQueue(10)
+		hodlQueue.Start()
+
+		hodlChan = hodlQueue.ChanOut()
 
 		// Notify registry that we are potentially resolving as an exit
 		// hop on-chain. If this HTLC indeed pays to an existing
 		// invoice, the invoice registry will tell us what to do with
 		// the HTLC. This is identical to HTLC resolution in the link.
-		circuitKey := channeldb.CircuitKey{
+		circuitKey := models.CircuitKey{
 			ChanID: h.ShortChanID,
 			HtlcID: h.htlc.HtlcIndex,
 		}
 
 		resolution, err := h.Registry.NotifyExitHopHtlc(
 			h.htlc.RHash, h.htlc.Amt, h.htlcExpiry, currentHeight,
-			circuitKey, hodlChan, payload,
+			circuitKey, hodlQueue.ChanIn(), payload,
 		)
 		if err != nil {
 			return nil, err
 		}
 
-		defer h.Registry.HodlUnsubscribeAll(hodlChan)
+		defer func() {
+			h.Registry.HodlUnsubscribeAll(hodlQueue.ChanIn())
+
+			hodlQueue.Stop()
+		}()
 
 		// Take action based on the resolution we received. If the htlc
 		// was settled, or a htlc for a known invoice failed we can
@@ -342,6 +415,10 @@ func (h *htlcIncomingContestResolver) Resolve() (ContractResolver, error) {
 					h.htlcResolution.ClaimOutpoint,
 					h.htlcExpiry, currentHeight)
 				h.resolved = true
+
+				if err := h.processFinalHtlcFail(); err != nil {
+					return nil, err
+				}
 
 				report := h.report().resolverReport(
 					nil,
@@ -443,7 +520,7 @@ func (h *htlcIncomingContestResolver) Supplement(htlc channeldb.HTLC) {
 func (h *htlcIncomingContestResolver) decodePayload() (*hop.Payload,
 	[]byte, error) {
 
-	onionReader := bytes.NewReader(h.htlc.OnionBlob)
+	onionReader := bytes.NewReader(h.htlc.OnionBlob[:])
 	iterator, err := h.OnionProcessor.ReconstructHopIterator(
 		onionReader, h.htlc.RHash[:],
 	)

@@ -23,7 +23,6 @@ var errShardHandlerExiting = fmt.Errorf("shard handler exiting")
 // needed to resume if from any point.
 type paymentLifecycle struct {
 	router        *ChannelRouter
-	totalAmount   lnwire.MilliSatoshi
 	feeLimit      lnwire.MilliSatoshi
 	identifier    lntypes.Hash
 	paySession    PaymentSession
@@ -83,9 +82,10 @@ func (p *paymentLifecycle) fetchPaymentState() (*channeldb.MPPayment,
 	sentAmt, fees := payment.SentAmt()
 
 	// Sanity check we haven't sent a value larger than the payment amount.
-	if sentAmt > p.totalAmount {
+	totalAmt := payment.Info.Value
+	if sentAmt > totalAmt {
 		return nil, nil, fmt.Errorf("amount sent %v exceeds "+
-			"total amount %v", sentAmt, p.totalAmount)
+			"total amount %v", sentAmt, totalAmt)
 	}
 
 	// We'll subtract the used fee from our fee budget, but allow the fees
@@ -109,7 +109,7 @@ func (p *paymentLifecycle) fetchPaymentState() (*channeldb.MPPayment,
 	// Update the payment state.
 	state := &paymentState{
 		numShardsInFlight: len(payment.InFlightHTLCs()),
-		remainingAmt:      p.totalAmount - sentAmt,
+		remainingAmt:      totalAmt - sentAmt,
 		remainingFees:     feeBudget,
 		terminate:         terminate,
 	}
@@ -190,9 +190,9 @@ lifecycle:
 					continue
 				}
 
-				err := p.router.cfg.Control.
-					DeleteFailedAttempts(
-						p.identifier)
+				err := p.router.cfg.Control.DeleteFailedAttempts(
+					p.identifier,
+				)
 				if err != nil {
 					log.Errorf("Error deleting failed "+
 						"payment attempts for "+
@@ -233,7 +233,7 @@ lifecycle:
 			// tower, no further shards will be launched and we'll
 			// return with an error the moment all active shards
 			// have finished.
-			saveErr := p.router.cfg.Control.Fail(
+			saveErr := p.router.cfg.Control.FailPayment(
 				p.identifier, channeldb.FailureReasonTimeout,
 			)
 			if saveErr != nil {
@@ -273,7 +273,7 @@ lifecycle:
 					"failed with no route: %v",
 					p.identifier, failureCode)
 
-				saveErr := p.router.cfg.Control.Fail(
+				saveErr := p.router.cfg.Control.FailPayment(
 					p.identifier, failureCode,
 				)
 				if saveErr != nil {
@@ -290,6 +290,8 @@ lifecycle:
 			}
 			continue lifecycle
 		}
+
+		log.Tracef("Found route: %s", spew.Sdump(rt.Hops))
 
 		// If this route will consume the last remaining amount to send
 		// to the receiver, this will be our last shard (for now).
@@ -337,7 +339,6 @@ lifecycle:
 		// Now that the shard was successfully sent, launch a go
 		// routine that will handle its result when its back.
 		shardHandler.collectResultAsync(attempt)
-
 	}
 }
 
@@ -563,7 +564,7 @@ func (p *shardHandler) collectResult(attempt *channeldb.HTLCAttemptInfo) (
 
 	// Now ask the switch to return the result of the payment when
 	// available.
-	resultChan, err := p.router.cfg.Payer.GetPaymentResult(
+	resultChan, err := p.router.cfg.Payer.GetAttemptResult(
 		attempt.AttemptID, p.identifier, errorDecryptor,
 	)
 	switch {
@@ -785,7 +786,7 @@ func (p *shardHandler) handleSendError(attempt *channeldb.HTLCAttemptInfo,
 			p.identifier, *reason, sendErr)
 
 		// Fail the payment via control tower.
-		if err := p.router.cfg.Control.Fail(
+		if err := p.router.cfg.Control.FailPayment(
 			p.identifier, *reason,
 		); err != nil {
 			log.Errorf("unable to report failure to control "+
@@ -932,7 +933,7 @@ func (p *shardHandler) handleFailureMessage(rt *route.Route,
 	}
 
 	// Apply channel update to the channel edge policy in our db.
-	if !p.router.applyChannelUpdate(update, errSource) {
+	if !p.router.applyChannelUpdate(update) {
 		log.Debugf("Invalid channel update received: node=%v",
 			errVertex)
 	}

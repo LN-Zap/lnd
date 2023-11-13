@@ -3,8 +3,6 @@ package macaroons_test
 import (
 	"context"
 	"encoding/hex"
-	"io/ioutil"
-	"os"
 	"path"
 	"testing"
 
@@ -33,36 +31,39 @@ var (
 // default password of 'hello'. Only the path to the temporary
 // DB file is returned, because the service will open the file
 // and read the store on its own.
-func setupTestRootKeyStorage(t *testing.T) (string, kvdb.Backend) {
-	tempDir, err := ioutil.TempDir("", "macaroonstore-")
-	require.NoError(t, err, "Error creating temp dir")
+func setupTestRootKeyStorage(t *testing.T) kvdb.Backend {
 	db, err := kvdb.Create(
-		kvdb.BoltBackendName, path.Join(tempDir, "macaroons.db"), true,
+		kvdb.BoltBackendName, path.Join(t.TempDir(), "macaroons.db"), true,
 		kvdb.DefaultDBTimeout,
 	)
 	require.NoError(t, err, "Error opening store DB")
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+	})
+
 	store, err := macaroons.NewRootKeyStorage(db)
-	if err != nil {
-		db.Close()
-		t.Fatalf("Error creating root key store: %v", err)
-	}
-	defer store.Close()
+	require.NoError(t, err, "Error creating root key store")
+
 	err = store.CreateUnlock(&defaultPw)
+	require.NoError(t, store.Close())
 	require.NoError(t, err, "error creating unlock")
-	return tempDir, db
+
+	return db
 }
 
 // TestNewService tests the creation of the macaroon service.
 func TestNewService(t *testing.T) {
 	// First, initialize a dummy DB file with a store that the service
 	// can read from. Make sure the file is removed in the end.
-	tempDir, db := setupTestRootKeyStorage(t)
-	defer os.RemoveAll(tempDir)
+	db := setupTestRootKeyStorage(t)
+
+	rootKeyStore, err := macaroons.NewRootKeyStorage(db)
+	require.NoError(t, err)
 
 	// Second, create the new service instance, unlock it and pass in a
 	// checker that we expect it to add to the bakery.
 	service, err := macaroons.NewService(
-		db, "lnd", false, macaroons.IPLockChecker,
+		rootKeyStore, "lnd", false, macaroons.IPLockChecker,
 	)
 	require.NoError(t, err, "Error creating new service")
 	defer service.Close()
@@ -104,10 +105,11 @@ func TestNewService(t *testing.T) {
 // incoming context.
 func TestValidateMacaroon(t *testing.T) {
 	// First, initialize the service and unlock it.
-	tempDir, db := setupTestRootKeyStorage(t)
-	defer os.RemoveAll(tempDir)
+	db := setupTestRootKeyStorage(t)
+	rootKeyStore, err := macaroons.NewRootKeyStorage(db)
+	require.NoError(t, err)
 	service, err := macaroons.NewService(
-		db, "lnd", false, macaroons.IPLockChecker,
+		rootKeyStore, "lnd", false, macaroons.IPLockChecker,
 	)
 	require.NoError(t, err, "Error creating new service")
 	defer service.Close()
@@ -149,13 +151,14 @@ func TestValidateMacaroon(t *testing.T) {
 func TestListMacaroonIDs(t *testing.T) {
 	// First, initialize a dummy DB file with a store that the service
 	// can read from. Make sure the file is removed in the end.
-	tempDir, db := setupTestRootKeyStorage(t)
-	defer os.RemoveAll(tempDir)
+	db := setupTestRootKeyStorage(t)
 
 	// Second, create the new service instance, unlock it and pass in a
 	// checker that we expect it to add to the bakery.
+	rootKeyStore, err := macaroons.NewRootKeyStorage(db)
+	require.NoError(t, err)
 	service, err := macaroons.NewService(
-		db, "lnd", false, macaroons.IPLockChecker,
+		rootKeyStore, "lnd", false, macaroons.IPLockChecker,
 	)
 	require.NoError(t, err, "Error creating new service")
 	defer service.Close()
@@ -181,13 +184,14 @@ func TestDeleteMacaroonID(t *testing.T) {
 
 	// First, initialize a dummy DB file with a store that the service
 	// can read from. Make sure the file is removed in the end.
-	tempDir, db := setupTestRootKeyStorage(t)
-	defer os.RemoveAll(tempDir)
+	db := setupTestRootKeyStorage(t)
 
 	// Second, create the new service instance, unlock it and pass in a
 	// checker that we expect it to add to the bakery.
+	rootKeyStore, err := macaroons.NewRootKeyStorage(db)
+	require.NoError(t, err)
 	service, err := macaroons.NewService(
-		db, "lnd", false, macaroons.IPLockChecker,
+		rootKeyStore, "lnd", false, macaroons.IPLockChecker,
 	)
 	require.NoError(t, err, "Error creating new service")
 	defer service.Close()

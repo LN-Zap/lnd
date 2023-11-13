@@ -15,14 +15,9 @@ func TestStore(t *testing.T) {
 	t.Run("bolt", func(t *testing.T) {
 
 		// Create new store.
-		cdb, cleanUp, err := channeldb.MakeTestDB()
+		cdb, err := channeldb.MakeTestDB(t)
 		if err != nil {
 			t.Fatalf("unable to open channel db: %v", err)
-		}
-		defer cleanUp()
-
-		if err != nil {
-			t.Fatal(err)
 		}
 
 		testStore(t, func() (SweeperStore, error) {
@@ -45,15 +40,6 @@ func testStore(t *testing.T, createStore func() (SweeperStore, error)) {
 	store, err := createStore()
 	if err != nil {
 		t.Fatal(err)
-	}
-
-	// Initially we expect the store not to have a last published tx.
-	retrievedTx, err := store.GetLastPublishedTx()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if retrievedTx != nil {
-		t.Fatal("expected no last published tx")
 	}
 
 	// Notify publication of tx1
@@ -86,16 +72,6 @@ func testStore(t *testing.T, createStore func() (SweeperStore, error)) {
 	store, err = createStore()
 	if err != nil {
 		t.Fatal(err)
-	}
-
-	// Assert that last published tx2 is present.
-	retrievedTx, err = store.GetLastPublishedTx()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if tx2.TxHash() != retrievedTx.TxHash() {
-		t.Fatal("txes do not match")
 	}
 
 	// Assert that both txes are recognized as our own.

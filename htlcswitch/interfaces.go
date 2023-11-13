@@ -3,10 +3,10 @@ package htlcswitch
 import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/lnpeer"
 	"github.com/lightningnetwork/lnd/lntypes"
-	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwallet/chainfee"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/record"
@@ -17,7 +17,7 @@ import (
 type InvoiceDatabase interface {
 	// LookupInvoice attempts to look up an invoice according to its 32
 	// byte payment hash.
-	LookupInvoice(lntypes.Hash) (channeldb.Invoice, error)
+	LookupInvoice(lntypes.Hash) (invoices.Invoice, error)
 
 	// NotifyExitHopHtlc attempts to mark an invoice as settled. If the
 	// invoice is a debug invoice, then this method is a noop as debug
@@ -28,7 +28,7 @@ type InvoiceDatabase interface {
 	// for decoding purposes.
 	NotifyExitHopHtlc(payHash lntypes.Hash, paidAmount lnwire.MilliSatoshi,
 		expiry uint32, currentHeight int32,
-		circuitKey channeldb.CircuitKey, hodlChan chan<- interface{},
+		circuitKey models.CircuitKey, hodlChan chan<- interface{},
 		payload invoices.Payload) (invoices.HtlcResolution, error)
 
 	// CancelInvoice attempts to cancel the invoice corresponding to the
@@ -142,20 +142,19 @@ type ChannelUpdateHandler interface {
 // incoming htlc requests, applying the changes to the channel, and also
 // propagating/forwarding it to htlc switch.
 //
-//  abstraction level
-//       ^
-//       |
-//       | - - - - - - - - - - - - Lightning - - - - - - - - - - - - -
-//       |
-//       | (Switch)		     (Switch)		       (Switch)
-//       |  Alice <-- channel link --> Bob <-- channel link --> Carol
-//       |
-//       | - - - - - - - - - - - - - TCP - - - - - - - - - - - - - - -
-//       |
-//       |  (Peer) 		     (Peer)	                (Peer)
-//       |  Alice <----- tcp conn --> Bob <---- tcp conn -----> Carol
-//       |
-//
+//	abstraction level
+//	     ^
+//	     |
+//	     | - - - - - - - - - - - - Lightning - - - - - - - - - - - - -
+//	     |
+//	     | (Switch)		     (Switch)		       (Switch)
+//	     |  Alice <-- channel link --> Bob <-- channel link --> Carol
+//	     |
+//	     | - - - - - - - - - - - - - TCP - - - - - - - - - - - - - - -
+//	     |
+//	     |  (Peer) 		     (Peer)	                (Peer)
+//	     |  Alice <----- tcp conn --> Bob <---- tcp conn -----> Carol
+//	     |
 type ChannelLink interface {
 	// TODO(roasbeef): modify interface to embed mail boxes?
 
@@ -192,7 +191,7 @@ type ChannelLink interface {
 	// UpdateForwardingPolicy updates the forwarding policy for the target
 	// ChannelLink. Once updated, the link will use the new forwarding
 	// policy to govern if it an incoming HTLC should be forwarded or not.
-	UpdateForwardingPolicy(ForwardingPolicy)
+	UpdateForwardingPolicy(models.ForwardingPolicy)
 
 	// CheckHtlcForward should return a nil error if the passed HTLC details
 	// satisfy the current forwarding policy fo the target link. Otherwise,
@@ -253,13 +252,9 @@ type TowerClient interface {
 
 	// BackupState initiates a request to back up a particular revoked
 	// state. If the method returns nil, the backup is guaranteed to be
-	// successful unless the tower is unavailable and client is force quit,
-	// or the justice transaction would create dust outputs when trying to
-	// abide by the negotiated policy. If the channel we're trying to back
-	// up doesn't have a tweak for the remote party's output, then
-	// isTweakless should be true.
-	BackupState(*lnwire.ChannelID, *lnwallet.BreachRetribution,
-		channeldb.ChannelType) error
+	// successful unless the justice transaction would create dust outputs
+	// when trying to abide by the negotiated policy.
+	BackupState(chanID *lnwire.ChannelID, stateNum uint64) error
 }
 
 // InterceptableHtlcForwarder is the interface to set the interceptor
@@ -285,7 +280,7 @@ type ForwardInterceptor func(InterceptedPacket) error
 type InterceptedPacket struct {
 	// IncomingCircuit contains the incoming channel and htlc id of the
 	// packet.
-	IncomingCircuit channeldb.CircuitKey
+	IncomingCircuit models.CircuitKey
 
 	// OutgoingChanID is the destination channel for this packet.
 	OutgoingChanID lnwire.ShortChannelID
@@ -313,6 +308,10 @@ type InterceptedPacket struct {
 
 	// OnionBlob is the onion packet for the next hop
 	OnionBlob [lnwire.OnionPacketSize]byte
+
+	// AutoFailHeight is the block height at which this intercept will be
+	// failed back automatically.
+	AutoFailHeight int32
 }
 
 // InterceptedForward is passed to the ForwardInterceptor for every forwarded
@@ -367,4 +366,9 @@ type htlcNotifier interface {
 	// settled.
 	NotifySettleEvent(key HtlcKey, preimage lntypes.Preimage,
 		eventType HtlcEventType)
+
+	// NotifyFinalHtlcEvent notifies the HtlcNotifier that the final outcome
+	// for an htlc has been determined.
+	NotifyFinalHtlcEvent(key models.CircuitKey,
+		info channeldb.FinalHtlcInfo)
 }

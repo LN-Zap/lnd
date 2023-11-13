@@ -2,7 +2,6 @@ package peer
 
 import (
 	"bytes"
-	"io/ioutil"
 	"testing"
 	"time"
 
@@ -13,9 +12,11 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/channelnotifier"
 	"github.com/lightningnetwork/lnd/contractcourt"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/lntest/mock"
+	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwallet/chancloser"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/pool"
@@ -44,11 +45,10 @@ func TestPeerChannelClosureAcceptFeeResponder(t *testing.T) {
 
 	mockSwitch := &mockMessageSwitch{}
 
-	alicePeer, bobChan, cleanUp, err := createTestPeer(
-		notifier, broadcastTxChan, noUpdate, mockSwitch,
+	alicePeer, bobChan, err := createTestPeer(
+		t, notifier, broadcastTxChan, noUpdate, mockSwitch,
 	)
 	require.NoError(t, err, "unable to create test channels")
-	defer cleanUp()
 
 	chanID := lnwire.NewChanIDFromOutPoint(bobChan.ChannelPoint())
 
@@ -148,11 +148,10 @@ func TestPeerChannelClosureAcceptFeeInitiator(t *testing.T) {
 
 	mockSwitch := &mockMessageSwitch{}
 
-	alicePeer, bobChan, cleanUp, err := createTestPeer(
-		notifier, broadcastTxChan, noUpdate, mockSwitch,
+	alicePeer, bobChan, err := createTestPeer(
+		t, notifier, broadcastTxChan, noUpdate, mockSwitch,
 	)
 	require.NoError(t, err, "unable to create test channels")
-	defer cleanUp()
 
 	chanID := lnwire.NewChanIDFromOutPoint(bobChan.ChannelPoint())
 	mockLink := newMockUpdateHandler(chanID)
@@ -271,11 +270,10 @@ func TestPeerChannelClosureFeeNegotiationsResponder(t *testing.T) {
 
 	mockSwitch := &mockMessageSwitch{}
 
-	alicePeer, bobChan, cleanUp, err := createTestPeer(
-		notifier, broadcastTxChan, noUpdate, mockSwitch,
+	alicePeer, bobChan, err := createTestPeer(
+		t, notifier, broadcastTxChan, noUpdate, mockSwitch,
 	)
 	require.NoError(t, err, "unable to create test channels")
-	defer cleanUp()
 
 	chanID := lnwire.NewChanIDFromOutPoint(bobChan.ChannelPoint())
 
@@ -457,11 +455,10 @@ func TestPeerChannelClosureFeeNegotiationsInitiator(t *testing.T) {
 
 	mockSwitch := &mockMessageSwitch{}
 
-	alicePeer, bobChan, cleanUp, err := createTestPeer(
-		notifier, broadcastTxChan, noUpdate, mockSwitch,
+	alicePeer, bobChan, err := createTestPeer(
+		t, notifier, broadcastTxChan, noUpdate, mockSwitch,
 	)
 	require.NoError(t, err, "unable to create test channels")
-	defer cleanUp()
 
 	chanID := lnwire.NewChanIDFromOutPoint(bobChan.ChannelPoint())
 	mockLink := newMockUpdateHandler(chanID)
@@ -785,14 +782,13 @@ func TestCustomShutdownScript(t *testing.T) {
 			mockSwitch := &mockMessageSwitch{}
 
 			// Open a channel.
-			alicePeer, bobChan, cleanUp, err := createTestPeer(
-				notifier, broadcastTxChan, test.update,
+			alicePeer, bobChan, err := createTestPeer(
+				t, notifier, broadcastTxChan, test.update,
 				mockSwitch,
 			)
 			if err != nil {
 				t.Fatalf("unable to create test channels: %v", err)
 			}
-			defer cleanUp()
 
 			chanPoint := bobChan.ChannelPoint()
 			chanID := lnwire.NewChanIDFromOutPoint(chanPoint)
@@ -1003,10 +999,7 @@ func TestPeerCustomMessage(t *testing.T) {
 	t.Parallel()
 
 	// Set up node Alice.
-	alicePath, err := ioutil.TempDir("", "alicedb")
-	require.NoError(t, err)
-
-	dbAlice, err := channeldb.Open(alicePath)
+	dbAlice, err := channeldb.Open(t.TempDir())
 	require.NoError(t, err)
 
 	aliceKey, err := btcec.NewPrivateKey()
@@ -1044,6 +1037,14 @@ func TestPeerCustomMessage(t *testing.T) {
 		ConfChan:  make(chan *chainntnfs.TxConfirmation),
 	}
 
+	// TODO(yy): change ChannelNotifier to be an interface.
+	channelNotifier := channelnotifier.New(dbAlice.ChannelStateDB())
+	require.NoError(t, channelNotifier.Start())
+	t.Cleanup(func() {
+		require.NoError(t, channelNotifier.Stop(),
+			"stop channel notifier failed")
+	})
+
 	alicePeer := NewBrontide(Config{
 		PubKeyBytes: remoteKey,
 		ChannelDB:   dbAlice.ChannelStateDB(),
@@ -1066,7 +1067,8 @@ func TestPeerCustomMessage(t *testing.T) {
 			}
 			return nil
 		},
-		PongBuf: make([]byte, lnwire.MaxPongBytes),
+		PongBuf:         make([]byte, lnwire.MaxPongBytes),
+		ChannelNotifier: channelNotifier,
 	})
 
 	// Set up the init sequence.
@@ -1116,4 +1118,225 @@ func TestPeerCustomMessage(t *testing.T) {
 	receivedCustom := <-receivedCustomChan
 	require.Equal(t, remoteKey, receivedCustom.peer)
 	require.Equal(t, receivedCustomMsg, &receivedCustom.msg)
+}
+
+// TestUpdateNextRevocation checks that the method `updateNextRevocation` is
+// behave as expected.
+func TestUpdateNextRevocation(t *testing.T) {
+	t.Parallel()
+
+	require := require.New(t)
+
+	// TODO(yy): create interface for lnwallet.LightningChannel so we can
+	// easily mock it without the following setups.
+	notifier := &mock.ChainNotifier{
+		SpendChan: make(chan *chainntnfs.SpendDetail),
+		EpochChan: make(chan *chainntnfs.BlockEpoch),
+		ConfChan:  make(chan *chainntnfs.TxConfirmation),
+	}
+	broadcastTxChan := make(chan *wire.MsgTx)
+	mockSwitch := &mockMessageSwitch{}
+
+	alicePeer, bobChan, err := createTestPeer(
+		t, notifier, broadcastTxChan, noUpdate, mockSwitch,
+	)
+	require.NoError(err, "unable to create test channels")
+
+	// testChannel is used to test the updateNextRevocation function.
+	testChannel := bobChan.State()
+
+	// Update the next revocation for a known channel should give us no
+	// error.
+	err = alicePeer.updateNextRevocation(testChannel)
+	require.NoError(err, "expected no error")
+
+	// Test an error is returned when the chanID cannot be found in
+	// `activeChannels` map.
+	testChannel.FundingOutpoint = wire.OutPoint{Index: 0}
+	err = alicePeer.updateNextRevocation(testChannel)
+	require.Error(err, "expected an error")
+
+	// Test an error is returned when the chanID's corresponding channel is
+	// nil.
+	testChannel.FundingOutpoint = wire.OutPoint{Index: 1}
+	chanID := lnwire.NewChanIDFromOutPoint(&testChannel.FundingOutpoint)
+	alicePeer.activeChannels.Store(chanID, nil)
+
+	err = alicePeer.updateNextRevocation(testChannel)
+	require.Error(err, "expected an error")
+
+	// TODO(yy): should also test `InitNextRevocation` is called on
+	// `lnwallet.LightningWallet` once it's interfaced.
+}
+
+// TODO(yy): add test for `addActiveChannel` and `handleNewActiveChannel` once
+// we have interfaced `lnwallet.LightningChannel` and
+// `*contractcourt.ChainArbitrator`.
+
+// TestHandleNewPendingChannel checks the method `handleNewPendingChannel`
+// behaves as expected.
+func TestHandleNewPendingChannel(t *testing.T) {
+	t.Parallel()
+
+	// Create three channel IDs for testing.
+	chanIDActive := lnwire.ChannelID{0}
+	chanIDNotExist := lnwire.ChannelID{1}
+	chanIDPending := lnwire.ChannelID{2}
+
+	// Create a test brontide.
+	dummyConfig := Config{}
+	peer := NewBrontide(dummyConfig)
+
+	// Create the test state.
+	peer.activeChannels.Store(chanIDActive, &lnwallet.LightningChannel{})
+	peer.activeChannels.Store(chanIDPending, nil)
+
+	// Assert test state, we should have two channels store, one active and
+	// one pending.
+	require.Equal(t, 2, peer.activeChannels.Len())
+
+	testCases := []struct {
+		name   string
+		chanID lnwire.ChannelID
+
+		// expectChanAdded specifies whether this chanID will be added
+		// to the peer's state.
+		expectChanAdded bool
+	}{
+		{
+			name:            "noop on active channel",
+			chanID:          chanIDActive,
+			expectChanAdded: false,
+		},
+		{
+			name:            "noop on pending channel",
+			chanID:          chanIDPending,
+			expectChanAdded: false,
+		},
+		{
+			name:            "new channel should be added",
+			chanID:          chanIDNotExist,
+			expectChanAdded: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+
+		// Create a request for testing.
+		errChan := make(chan error, 1)
+		req := &newChannelMsg{
+			channelID: tc.chanID,
+			err:       errChan,
+		}
+
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require := require.New(t)
+
+			// Get the number of channels before mutating the
+			// state.
+			numChans := peer.activeChannels.Len()
+
+			// Call the method.
+			peer.handleNewPendingChannel(req)
+
+			// Add one if we expect this channel to be added.
+			if tc.expectChanAdded {
+				numChans++
+			}
+
+			// Assert the number of channels is correct.
+			require.Equal(numChans, peer.activeChannels.Len())
+
+			// Assert the request's error chan is closed.
+			err, ok := <-req.err
+			require.False(ok, "expect err chan to be closed")
+			require.NoError(err, "expect no error")
+		})
+	}
+}
+
+// TestHandleRemovePendingChannel checks the method
+// `handleRemovePendingChannel` behaves as expected.
+func TestHandleRemovePendingChannel(t *testing.T) {
+	t.Parallel()
+
+	// Create three channel IDs for testing.
+	chanIDActive := lnwire.ChannelID{0}
+	chanIDNotExist := lnwire.ChannelID{1}
+	chanIDPending := lnwire.ChannelID{2}
+
+	// Create a test brontide.
+	dummyConfig := Config{}
+	peer := NewBrontide(dummyConfig)
+
+	// Create the test state.
+	peer.activeChannels.Store(chanIDActive, &lnwallet.LightningChannel{})
+	peer.activeChannels.Store(chanIDPending, nil)
+
+	// Assert test state, we should have two channels store, one active and
+	// one pending.
+	require.Equal(t, 2, peer.activeChannels.Len())
+
+	testCases := []struct {
+		name   string
+		chanID lnwire.ChannelID
+
+		// expectDeleted specifies whether this chanID will be removed
+		// from the peer's state.
+		expectDeleted bool
+	}{
+		{
+			name:          "noop on active channel",
+			chanID:        chanIDActive,
+			expectDeleted: false,
+		},
+		{
+			name:          "pending channel should be removed",
+			chanID:        chanIDPending,
+			expectDeleted: true,
+		},
+		{
+			name:          "noop on non-exist channel",
+			chanID:        chanIDNotExist,
+			expectDeleted: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+
+		// Create a request for testing.
+		errChan := make(chan error, 1)
+		req := &newChannelMsg{
+			channelID: tc.chanID,
+			err:       errChan,
+		}
+
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			require := require.New(t)
+
+			// Get the number of channels before mutating the
+			// state.
+			numChans := peer.activeChannels.Len()
+
+			// Call the method.
+			peer.handleRemovePendingChannel(req)
+
+			// Minus one if we expect this channel to be removed.
+			if tc.expectDeleted {
+				numChans--
+			}
+
+			// Assert the number of channels is correct.
+			require.Equal(numChans, peer.activeChannels.Len())
+
+			// Assert the request's error chan is closed.
+			err, ok := <-req.err
+			require.False(ok, "expect err chan to be closed")
+			require.NoError(err, "expect no error")
+		})
+	}
 }

@@ -110,6 +110,13 @@ func (w *WalletController) RequiredReserve(uint32) btcutil.Amount {
 	return 0
 }
 
+// ListAddresses currently returns a dummy value.
+func (w *WalletController) ListAddresses(string,
+	bool) (lnwallet.AccountAddressMap, error) {
+
+	return nil, nil
+}
+
 // ImportAccount currently returns a dummy value.
 func (w *WalletController) ImportAccount(string, *hdkeychain.ExtendedKey,
 	uint32, *waddrmgr.AddressType, bool) (*waddrmgr.AccountProperties,
@@ -123,6 +130,13 @@ func (w *WalletController) ImportPublicKey(*btcec.PublicKey,
 	waddrmgr.AddressType) error {
 
 	return nil
+}
+
+// ImportTaprootScript currently returns a dummy value.
+func (w *WalletController) ImportTaprootScript(waddrmgr.KeyScope,
+	*waddrmgr.Tapscript) (waddrmgr.ManagedAddress, error) {
+
+	return nil, nil
 }
 
 // SendOutputs currently returns dummy values.
@@ -198,14 +212,14 @@ func (w *WalletController) ListLeasedOutputs() ([]*base.ListLeasedOutputResult,
 
 // FundPsbt currently does nothing.
 func (w *WalletController) FundPsbt(*psbt.Packet, int32, chainfee.SatPerKWeight,
-	string) (int32, error) {
+	string, *waddrmgr.KeyScope) (int32, error) {
 
 	return 0, nil
 }
 
 // SignPsbt currently does nothing.
-func (w *WalletController) SignPsbt(*psbt.Packet) error {
-	return nil
+func (w *WalletController) SignPsbt(*psbt.Packet) ([]uint32, error) {
+	return nil, nil
 }
 
 // FinalizePsbt currently does nothing.

@@ -6,17 +6,12 @@ TOOLS_DIR := tools
 BTCD_PKG := github.com/btcsuite/btcd
 GOACC_PKG := github.com/ory/go-acc
 GOIMPORTS_PKG := github.com/rinchsan/gosimports/cmd/gosimports
-GOFUZZ_BUILD_PKG := github.com/dvyukov/go-fuzz/go-fuzz-build
-GOFUZZ_PKG := github.com/dvyukov/go-fuzz/go-fuzz
-GOFUZZ_DEP_PKG := github.com/dvyukov/go-fuzz/go-fuzz-dep
 
 GO_BIN := ${GOPATH}/bin
 BTCD_BIN := $(GO_BIN)/btcd
 GOIMPORTS_BIN := $(GO_BIN)/gosimports
-GOMOBILE_BIN := GO111MODULE=off $(GO_BIN)/gomobile
+GOMOBILE_BIN := $(GO_BIN)/gomobile
 GOACC_BIN := $(GO_BIN)/go-acc
-GOFUZZ_BUILD_BIN := $(GO_BIN)/go-fuzz-build
-GOFUZZ_BIN := $(GO_BIN)/go-fuzz
 
 MOBILE_BUILD_DIR :=${GOPATH}/src/$(MOBILE_PKG)/build
 IOS_BUILD_DIR := $(MOBILE_BUILD_DIR)/ios
@@ -25,13 +20,11 @@ ANDROID_BUILD_DIR := $(MOBILE_BUILD_DIR)/android
 ANDROID_BUILD := $(ANDROID_BUILD_DIR)/Lndmobile.aar
 
 COMMIT := $(shell git describe --tags --dirty)
-COMMIT_HASH := $(shell git rev-parse HEAD)
 
 GOBUILD := go build -v
 GOINSTALL := go install -v
 GOTEST := go test
 
-GOVERSION := $(shell go version | awk '{print $$3}')
 GOFILES_NOVENDOR = $(shell find . -type f -name '*.go' -not -path "./vendor/*" -not -name "*pb.go" -not -name "*pb.gw.go" -not -name "*.pb.json.go")
 
 RM := rm -f
@@ -48,19 +41,13 @@ DEV_TAGS := $(if ${tags},$(DEV_TAGS) ${tags},$(DEV_TAGS))
 # We only return the part inside the double quote here to avoid escape issues
 # when calling the external release script. The second parameter can be used to
 # add additional ldflags if needed (currently only used for the release).
-make_ldflags = $(2) -X $(PKG)/build.Commit=$(COMMIT) \
-	-X $(PKG)/build.CommitHash=$(COMMIT_HASH) \
-	-X $(PKG)/build.GoVersion=$(GOVERSION) \
-	-X $(PKG)/build.RawTags=$(shell echo $(1) | sed -e 's/ /,/g')
+make_ldflags = $(1) -X $(PKG)/build.Commit=$(COMMIT)
 
 DEV_GCFLAGS := -gcflags "all=-N -l"
-LDFLAGS := -ldflags "$(call make_ldflags, ${tags}, -s -w)"
-DEV_LDFLAGS := -ldflags "$(call make_ldflags, $(DEV_TAGS))"
-ITEST_LDFLAGS := -ldflags "$(call make_ldflags, $(ITEST_TAGS))"
-
+DEV_LDFLAGS := -ldflags "$(call make_ldflags)"
 # For the release, we want to remove the symbol table and debug information (-s)
 # and omit the DWARF symbol table (-w). Also we clear the build ID.
-RELEASE_LDFLAGS := $(call make_ldflags, $(RELEASE_TAGS), -s -w -buildid=)
+RELEASE_LDFLAGS := $(call make_ldflags, -s -w -buildid=)
 
 # Linting uses a lot of memory, so keep it under control by limiting the number
 # of workers if requested.
@@ -68,7 +55,7 @@ ifneq ($(workers),)
 LINT_WORKERS = --concurrency=$(workers)
 endif
 
-DOCKER_TOOLS = docker run -v $$(pwd):/build lnd-tools
+DOCKER_TOOLS = docker run --rm -v $$(pwd):/build lnd-tools
 
 GREEN := "\\033[0;32m"
 NC := "\\033[0m"
@@ -95,18 +82,6 @@ $(GOIMPORTS_BIN):
 	@$(call print, "Installing goimports.")
 	cd $(TOOLS_DIR); go install -trimpath $(GOIMPORTS_PKG)
 
-$(GOFUZZ_BIN):
-	@$(call print, "Installing go-fuzz.")
-	cd $(TOOLS_DIR); go install -trimpath $(GOFUZZ_PKG)
-
-$(GOFUZZ_BUILD_BIN):
-	@$(call print, "Installing go-fuzz-build.")
-	cd $(TOOLS_DIR); go install -trimpath $(GOFUZZ_BUILD_PKG)
-
-$(GOFUZZ_DEP_BIN):
-	@$(call print, "Installing go-fuzz-dep.")
-	cd $(TOOLS_DIR); go install -trimpath $(GOFUZZ_DEP_PKG)
-
 # ============
 # INSTALLATION
 # ============
@@ -118,24 +93,24 @@ build:
 
 build-itest:
 	@$(call print, "Building itest btcd and lnd.")
-	CGO_ENABLED=0 $(GOBUILD) -tags="rpctest" -o lntest/itest/btcd-itest$(EXEC_SUFFIX) $(ITEST_LDFLAGS) $(BTCD_PKG)
-	CGO_ENABLED=0 $(GOBUILD) -tags="$(ITEST_TAGS)" -o lntest/itest/lnd-itest$(EXEC_SUFFIX) $(ITEST_LDFLAGS) $(PKG)/cmd/lnd
+	CGO_ENABLED=0 $(GOBUILD) -tags="integration" -o itest/btcd-itest$(EXEC_SUFFIX) $(DEV_LDFLAGS) $(BTCD_PKG)
+	CGO_ENABLED=0 $(GOBUILD) -tags="$(ITEST_TAGS)" -o itest/lnd-itest$(EXEC_SUFFIX) $(DEV_LDFLAGS) $(PKG)/cmd/lnd
 
 	@$(call print, "Building itest binary for ${backend} backend.")
-	CGO_ENABLED=0 $(GOTEST) -v ./lntest/itest -tags="$(DEV_TAGS) $(RPC_TAGS) rpctest $(backend)" -c -o lntest/itest/itest.test$(EXEC_SUFFIX)
+	CGO_ENABLED=0 $(GOTEST) -v ./itest -tags="$(DEV_TAGS) $(RPC_TAGS) integration $(backend)" -c -o itest/itest.test$(EXEC_SUFFIX)
 
 build-itest-race:
 	@$(call print, "Building itest btcd and lnd with race detector.")
-	CGO_ENABLED=0 $(GOBUILD) -tags="rpctest" -o lntest/itest/btcd-itest$(EXEC_SUFFIX) $(ITEST_LDFLAGS) $(BTCD_PKG)
-	CGO_ENABLED=1 $(GOBUILD) -race -tags="$(ITEST_TAGS)" -o lntest/itest/lnd-itest$(EXEC_SUFFIX) $(ITEST_LDFLAGS) $(PKG)/cmd/lnd
+	CGO_ENABLED=0 $(GOBUILD) -tags="integration" -o itest/btcd-itest$(EXEC_SUFFIX) $(DEV_LDFLAGS) $(BTCD_PKG)
+	CGO_ENABLED=1 $(GOBUILD) -race -tags="$(ITEST_TAGS)" -o itest/lnd-itest$(EXEC_SUFFIX) $(DEV_LDFLAGS) $(PKG)/cmd/lnd
 
 	@$(call print, "Building itest binary for ${backend} backend.")
-	CGO_ENABLED=0 $(GOTEST) -v ./lntest/itest -tags="$(DEV_TAGS) $(RPC_TAGS) rpctest $(backend)" -c -o lntest/itest/itest.test$(EXEC_SUFFIX)
+	CGO_ENABLED=0 $(GOTEST) -v ./itest -tags="$(DEV_TAGS) $(RPC_TAGS) integration $(backend)" -c -o itest/itest.test$(EXEC_SUFFIX)
 
 install:
 	@$(call print, "Installing lnd and lncli.")
-	$(GOINSTALL) -tags="${tags}" $(LDFLAGS) $(PKG)/cmd/lnd
-	$(GOINSTALL) -tags="${tags}" $(LDFLAGS) $(PKG)/cmd/lncli
+	$(GOINSTALL) -tags="${tags}" -ldflags="$(RELEASE_LDFLAGS)" $(PKG)/cmd/lnd
+	$(GOINSTALL) -tags="${tags}" -ldflags="$(RELEASE_LDFLAGS)" $(PKG)/cmd/lncli
 
 release-install:
 	@$(call print, "Installing release lnd and lncli.")
@@ -157,7 +132,7 @@ docker-release:
 
 	# Run the actual compilation inside the docker image. We pass in all flags
 	# that we might want to overwrite in manual tests.
-	$(DOCKER_RELEASE_HELPER) make release tag="$(tag)" sys="$(sys)" COMMIT="$(COMMIT)" COMMIT_HASH="$(COMMIT_HASH)"
+	$(DOCKER_RELEASE_HELPER) make release tag="$(tag)" sys="$(sys)" COMMIT="$(COMMIT)" 
 
 docker-tools:
 	@$(call print, "Building tools docker image.")
@@ -189,7 +164,7 @@ endif
 
 itest-only: db-instance
 	@$(call print, "Running integration tests with ${backend} backend.")
-	rm -rf lntest/itest/*.log lntest/itest/.logs-*; date
+	rm -rf itest/*.log itest/.logs-*; date
 	EXEC_SUFFIX=$(EXEC_SUFFIX) scripts/itest_part.sh 0 1 $(TEST_FLAGS) $(ITEST_FLAGS)
 
 itest: build-itest itest-only
@@ -198,7 +173,7 @@ itest-race: build-itest-race itest-only
 
 itest-parallel: build-itest db-instance
 	@$(call print, "Running tests")
-	rm -rf lntest/itest/*.log lntest/itest/.logs-*; date
+	rm -rf itest/*.log itest/.logs-*; date
 	EXEC_SUFFIX=$(EXEC_SUFFIX) echo "$$(seq 0 $$(expr $(ITEST_PARALLELISM) - 1))" | xargs -P $(ITEST_PARALLELISM) -n 1 -I {} scripts/itest_part.sh {} $(NUM_ITEST_TRANCHES) $(TEST_FLAGS) $(ITEST_FLAGS)
 
 itest-clean:
@@ -209,17 +184,25 @@ unit: $(BTCD_BIN)
 	@$(call print, "Running unit tests.")
 	$(UNIT)
 
+unit-module:
+	@$(call print, "Running submodule unit tests.")
+	scripts/unit_test_modules.sh
+
 unit-debug: $(BTCD_BIN)
 	@$(call print, "Running debug unit tests.")
 	$(UNIT_DEBUG)
 
 unit-cover: $(GOACC_BIN)
 	@$(call print, "Running unit coverage tests.")
-	$(GOACC_BIN) $(COVER_PKG) -- -tags="$(DEV_TAGS) $(LOG_TAGS)"
+	$(GOACC)
 
 unit-race:
 	@$(call print, "Running unit race tests.")
 	env CGO_ENABLED=1 GORACE="history_size=7 halt_on_errors=1" $(UNIT_RACE)
+
+unit-bench: $(BTCD_BIN)
+	@$(call print, "Running benchmark tests.")
+	$(UNIT_BENCH)
 
 # =============
 # FLAKE HUNTING
@@ -240,13 +223,10 @@ flakehunter-parallel:
 # =============
 # FUZZING
 # =============
-fuzz-build: $(GOFUZZ_BUILD_BIN) $(GOFUZZ_DEP_BIN)
-	@$(call print, "Creating fuzz harnesses for packages '$(FUZZPKG)'.")
-	scripts/fuzz.sh build "$(FUZZPKG)"
 
-fuzz-run: $(GOFUZZ_BIN)
+fuzz:
 	@$(call print, "Fuzzing packages '$(FUZZPKG)'.")
-	scripts/fuzz.sh run "$(FUZZPKG)" "$(FUZZ_TEST_RUN_TIME)" "$(FUZZ_TEST_TIMEOUT)" "$(FUZZ_NUM_PROCESSES)" "$(FUZZ_BASE_WORKDIR)"
+	scripts/fuzz.sh run "$(FUZZPKG)" "$(FUZZ_TEST_RUN_TIME)" "$(FUZZ_NUM_PROCESSES)"
 
 # =========
 # UTILITIES
@@ -258,9 +238,20 @@ fmt: $(GOIMPORTS_BIN)
 	@$(call print, "Formatting source.")
 	gofmt -l -w -s $(GOFILES_NOVENDOR)
 
+fmt-check: fmt
+	@$(call print, "Checking fmt results.")
+	if test -n "$$(git status --porcelain)"; then echo "code not formatted correctly, please run `make fmt` again!"; git status; git diff; exit 1; fi
+
 lint: docker-tools
 	@$(call print, "Linting source.")
 	$(DOCKER_TOOLS) golangci-lint run -v $(LINT_WORKERS)
+
+tidy-module:
+	echo "Running 'go mod tidy' for all modules"
+	scripts/tidy_modules.sh
+
+tidy-module-check: tidy-module
+	if test -n "$$(git status --porcelain)"; then echo "modules not updated, please run `make tidy-module` again!"; git status; exit 1; fi
 
 list:
 	@$(call print, "Listing commands.")
@@ -268,6 +259,14 @@ list:
 		awk -F':' '/^[a-zA-Z0-9][^$$#\/\t=]*:([^=]|$$)/ {split($$1,A,/ /);for(i in A)print A[i]}' | \
 		grep -v Makefile | \
 		sort
+
+sqlc:
+	@$(call print, "Generating sql models and queries in Go")
+	./scripts/gen_sqlc_docker.sh
+
+sqlc-check: sqlc
+	@$(call print, "Verifying sql code generation.")
+	if test -n "$$(git status --porcelain '*.go')"; then echo "SQL models not properly generated!"; git status --porcelain '*.go'; exit 1; fi
 
 rpc:
 	@$(call print, "Compiling protos.")
@@ -287,8 +286,8 @@ rpc-js-compile:
 	GOOS=js GOARCH=wasm $(GOBUILD) -tags="$(WASM_RELEASE_TAGS)" $(PKG)/lnrpc/...
 
 sample-conf-check:
-	@$(call print, "Making sure every flag has an example in the sample-lnd.conf file")
-	for flag in $$(GO_FLAGS_COMPLETION=1 go run -tags="$(RELEASE_TAGS)" $(PKG)/cmd/lnd -- | grep -v help | cut -c3-); do if ! grep -q $$flag sample-lnd.conf; then echo "Command line flag --$$flag not added to sample-lnd.conf"; exit 1; fi; done
+	@$(call print, "Checking that default values in the sample-lnd.conf file are set correctly")
+	scripts/check-sample-lnd-conf.sh "$(RELEASE_TAGS)"
 
 mobile-rpc:
 	@$(call print, "Creating mobile RPC from protos.")
@@ -298,25 +297,25 @@ vendor:
 	@$(call print, "Re-creating vendor directory.")
 	rm -r vendor/; go mod vendor
 
-apple: vendor mobile-rpc
+apple: mobile-rpc
 	@$(call print, "Building iOS and macOS cxframework ($(IOS_BUILD)).")
 	mkdir -p $(IOS_BUILD_DIR)
-	$(GOMOBILE_BIN) bind -target=ios,iossimulator,macos -tags="mobile $(DEV_TAGS) $(RPC_TAGS)" $(LDFLAGS) -v -o $(IOS_BUILD) $(MOBILE_PKG)
+	$(GOMOBILE_BIN) bind -target=ios,iossimulator,macos -tags="mobile $(DEV_TAGS) $(RPC_TAGS)" -ldflags "$(RELEASE_LDFLAGS)" -v -o $(IOS_BUILD) $(MOBILE_PKG)
 
-ios: vendor mobile-rpc
+ios: mobile-rpc
 	@$(call print, "Building iOS cxframework ($(IOS_BUILD)).")
 	mkdir -p $(IOS_BUILD_DIR)
-	$(GOMOBILE_BIN) bind -target=ios,iossimulator -tags="mobile $(DEV_TAGS) $(RPC_TAGS)" $(LDFLAGS) -v -o $(IOS_BUILD) $(MOBILE_PKG)
+	$(GOMOBILE_BIN) bind -target=ios,iossimulator -tags="mobile $(DEV_TAGS) $(RPC_TAGS)" -ldflags "$(RELEASE_LDFLAGS)" -v -o $(IOS_BUILD) $(MOBILE_PKG)
 
-macos: vendor mobile-rpc
+macos: mobile-rpc
 	@$(call print, "Building macOS cxframework ($(IOS_BUILD)).")
 	mkdir -p $(IOS_BUILD_DIR)
-	$(GOMOBILE_BIN) bind -target=macos -tags="mobile $(DEV_TAGS) $(RPC_TAGS)" $(LDFLAGS) -v -o $(IOS_BUILD) $(MOBILE_PKG)
+	$(GOMOBILE_BIN) bind -target=macos -tags="mobile $(DEV_TAGS) $(RPC_TAGS)" -ldflags "$(RELEASE_LDFLAGS)" -v -o $(IOS_BUILD) $(MOBILE_PKG)
 
-android: vendor mobile-rpc
+android: mobile-rpc
 	@$(call print, "Building Android library ($(ANDROID_BUILD)).")
 	mkdir -p $(ANDROID_BUILD_DIR)
-	$(GOMOBILE_BIN) bind -target=android -tags="mobile $(DEV_TAGS) $(RPC_TAGS)" $(LDFLAGS) -v -o $(ANDROID_BUILD) $(MOBILE_PKG)
+	$(GOMOBILE_BIN) bind -target=android -androidapi 21 -tags="mobile $(DEV_TAGS) $(RPC_TAGS)" -ldflags "$(RELEASE_LDFLAGS)" -v -o $(ANDROID_BUILD) $(MOBILE_PKG)
 
 mobile: ios android
 

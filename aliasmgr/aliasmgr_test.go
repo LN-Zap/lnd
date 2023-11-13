@@ -1,9 +1,7 @@
 package aliasmgr
 
 import (
-	"io/ioutil"
 	"math/rand"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -18,11 +16,7 @@ func TestAliasStorePeerAlias(t *testing.T) {
 	t.Parallel()
 
 	// Create the backend database and use this to create the aliasStore.
-	dbDir, err := ioutil.TempDir("", "aliasStore")
-	require.NoError(t, err)
-	defer os.RemoveAll(dbDir)
-
-	dbPath := filepath.Join(dbDir, "testdb")
+	dbPath := filepath.Join(t.TempDir(), "testdb")
 	db, err := kvdb.Create(
 		kvdb.BoltBackendName, dbPath, true, kvdb.DefaultDBTimeout,
 	)
@@ -38,12 +32,12 @@ func TestAliasStorePeerAlias(t *testing.T) {
 
 	// Test that we can put the (chanID, alias) mapping in the database.
 	// Also check that we retrieve exactly what we put in.
-	err = aliasStore.PutPeerAlias(chanID1, startingAlias)
+	err = aliasStore.PutPeerAlias(chanID1, StartingAlias)
 	require.NoError(t, err)
 
 	storedAlias, err := aliasStore.GetPeerAlias(chanID1)
 	require.NoError(t, err)
-	require.Equal(t, startingAlias, storedAlias)
+	require.Equal(t, StartingAlias, storedAlias)
 }
 
 // TestAliasStoreRequest tests that the aliasStore delivers the expected SCID.
@@ -51,11 +45,7 @@ func TestAliasStoreRequest(t *testing.T) {
 	t.Parallel()
 
 	// Create the backend database and use this to create the aliasStore.
-	dbDir, err := ioutil.TempDir("", "aliasStore")
-	require.NoError(t, err)
-	defer os.RemoveAll(dbDir)
-
-	dbPath := filepath.Join(dbDir, "testdb")
+	dbPath := filepath.Join(t.TempDir(), "testdb")
 	db, err := kvdb.Create(
 		kvdb.BoltBackendName, dbPath, true, kvdb.DefaultDBTimeout,
 	)
@@ -65,12 +55,12 @@ func TestAliasStoreRequest(t *testing.T) {
 	aliasStore, err := NewManager(db)
 	require.NoError(t, err)
 
-	// We'll assert that the very first alias we receive is startingAlias.
+	// We'll assert that the very first alias we receive is StartingAlias.
 	alias1, err := aliasStore.RequestAlias()
 	require.NoError(t, err)
-	require.Equal(t, startingAlias, alias1)
+	require.Equal(t, StartingAlias, alias1)
 
-	// The next alias should be the result of passing in startingAlias to
+	// The next alias should be the result of passing in StartingAlias to
 	// getNextScid.
 	nextAlias := getNextScid(alias1)
 	alias2, err := aliasStore.RequestAlias()
@@ -88,7 +78,7 @@ func TestGetNextScid(t *testing.T) {
 	}{
 		{
 			name:    "starting alias",
-			current: startingAlias,
+			current: StartingAlias,
 			expected: lnwire.ShortChannelID{
 				BlockHeight: uint32(startingBlockHeight),
 				TxIndex:     0,

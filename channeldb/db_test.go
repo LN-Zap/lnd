@@ -1,11 +1,9 @@
 package channeldb
 
 import (
-	"io/ioutil"
 	"math"
 	"math/rand"
 	"net"
-	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -14,7 +12,6 @@ import (
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/davecgh/go-spew/spew"
 	"github.com/lightningnetwork/lnd/keychain"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -32,15 +29,13 @@ func TestOpenWithCreate(t *testing.T) {
 
 	// First, create a temporary directory to be used for the duration of
 	// this test.
-	tempDirName, err := ioutil.TempDir("", "channeldb")
-	require.NoError(t, err, "unable to create temp dir")
-	defer os.RemoveAll(tempDirName)
+	tempDirName := t.TempDir()
 
 	// Next, open thereby creating channeldb for the first time.
 	dbPath := filepath.Join(tempDirName, "cdb")
 	backend, cleanup, err := kvdb.GetTestBackend(dbPath, "cdb")
 	require.NoError(t, err, "unable to get test db backend")
-	defer cleanup()
+	t.Cleanup(cleanup)
 
 	cdb, err := CreateWithBackend(backend)
 	require.NoError(t, err, "unable to create channeldb")
@@ -70,15 +65,13 @@ func TestWipe(t *testing.T) {
 
 	// First, create a temporary directory to be used for the duration of
 	// this test.
-	tempDirName, err := ioutil.TempDir("", "channeldb")
-	require.NoError(t, err, "unable to create temp dir")
-	defer os.RemoveAll(tempDirName)
+	tempDirName := t.TempDir()
 
 	// Next, open thereby creating channeldb for the first time.
 	dbPath := filepath.Join(tempDirName, "cdb")
 	backend, cleanup, err := kvdb.GetTestBackend(dbPath, "cdb")
 	require.NoError(t, err, "unable to get test db backend")
-	defer cleanup()
+	t.Cleanup(cleanup)
 
 	fullDB, err := CreateWithBackend(backend)
 	require.NoError(t, err, "unable to create channeldb")
@@ -107,9 +100,8 @@ func TestFetchClosedChannelForID(t *testing.T) {
 
 	const numChans = 101
 
-	fullDB, cleanUp, err := MakeTestDB()
+	fullDB, err := MakeTestDB(t)
 	require.NoError(t, err, "unable to make test database")
-	defer cleanUp()
 
 	cdb := fullDB.ChannelStateDB()
 
@@ -178,9 +170,8 @@ func TestFetchClosedChannelForID(t *testing.T) {
 func TestAddrsForNode(t *testing.T) {
 	t.Parallel()
 
-	fullDB, cleanUp, err := MakeTestDB()
+	fullDB, err := MakeTestDB(t)
 	require.NoError(t, err, "unable to make test database")
-	defer cleanUp()
 
 	graph := fullDB.ChannelGraph()
 
@@ -232,9 +223,8 @@ func TestAddrsForNode(t *testing.T) {
 func TestFetchChannel(t *testing.T) {
 	t.Parallel()
 
-	fullDB, cleanUp, err := MakeTestDB()
+	fullDB, err := MakeTestDB(t)
 	require.NoError(t, err, "unable to make test database")
-	defer cleanUp()
 
 	cdb := fullDB.ChannelStateDB()
 
@@ -247,21 +237,31 @@ func TestFetchChannel(t *testing.T) {
 
 	// The decoded channel state should be identical to what we stored
 	// above.
-	if !reflect.DeepEqual(channelState, dbChannel) {
-		t.Fatalf("channel state doesn't match:: %v vs %v",
-			spew.Sdump(channelState), spew.Sdump(dbChannel))
-	}
+	require.Equal(t, channelState, dbChannel)
 
-	// If we attempt to query for a non-exist ante channel, then we should
+	// Next, attempt to fetch the channel by its channel ID.
+	chanID := lnwire.NewChanIDFromOutPoint(&channelState.FundingOutpoint)
+	dbChannel, err = cdb.FetchChannelByID(nil, chanID)
+	require.NoError(t, err, "unable to fetch channel")
+
+	// The decoded channel state should be identical to what we stored
+	// above.
+	require.Equal(t, channelState, dbChannel)
+
+	// If we attempt to query for a non-existent channel, then we should
 	// get an error.
 	channelState2 := createTestChannelState(t, cdb)
 	require.NoError(t, err, "unable to create channel state")
-	channelState2.FundingOutpoint.Index ^= 1
+
+	uniqueOutputIndex.Add(1)
+	channelState2.FundingOutpoint.Index = uniqueOutputIndex.Load()
 
 	_, err = cdb.FetchChannel(nil, channelState2.FundingOutpoint)
-	if err == nil {
-		t.Fatalf("expected query to fail")
-	}
+	require.ErrorIs(t, err, ErrChannelNotFound)
+
+	chanID2 := lnwire.NewChanIDFromOutPoint(&channelState2.FundingOutpoint)
+	_, err = cdb.FetchChannelByID(nil, chanID2)
+	require.ErrorIs(t, err, ErrChannelNotFound)
 }
 
 func genRandomChannelShell() (*ChannelShell, error) {
@@ -330,9 +330,8 @@ func genRandomChannelShell() (*ChannelShell, error) {
 func TestRestoreChannelShells(t *testing.T) {
 	t.Parallel()
 
-	fullDB, cleanUp, err := MakeTestDB()
+	fullDB, err := MakeTestDB(t)
 	require.NoError(t, err, "unable to make test database")
-	defer cleanUp()
 
 	cdb := fullDB.ChannelStateDB()
 
@@ -365,7 +364,7 @@ func TestRestoreChannelShells(t *testing.T) {
 	// Ensure that it isn't possible to modify the commitment state machine
 	// of this restored channel.
 	channel := nodeChans[0]
-	err = channel.UpdateCommitment(nil, nil)
+	_, err = channel.UpdateCommitment(nil, nil)
 	if err != ErrNoRestoredChannelMutation {
 		t.Fatalf("able to mutate restored channel")
 	}
@@ -420,9 +419,8 @@ func TestRestoreChannelShells(t *testing.T) {
 func TestAbandonChannel(t *testing.T) {
 	t.Parallel()
 
-	fullDB, cleanUp, err := MakeTestDB()
+	fullDB, err := MakeTestDB(t)
 	require.NoError(t, err, "unable to make test database")
-	defer cleanUp()
 
 	cdb := fullDB.ChannelStateDB()
 
@@ -587,12 +585,11 @@ func TestFetchChannels(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			fullDB, cleanUp, err := MakeTestDB()
+			fullDB, err := MakeTestDB(t)
 			if err != nil {
 				t.Fatalf("unable to make test "+
 					"database: %v", err)
 			}
-			defer cleanUp()
 
 			cdb := fullDB.ChannelStateDB()
 
@@ -658,9 +655,8 @@ func TestFetchChannels(t *testing.T) {
 
 // TestFetchHistoricalChannel tests lookup of historical channels.
 func TestFetchHistoricalChannel(t *testing.T) {
-	fullDB, cleanUp, err := MakeTestDB()
+	fullDB, err := MakeTestDB(t)
 	require.NoError(t, err, "unable to make test database")
-	defer cleanUp()
 
 	cdb := fullDB.ChannelStateDB()
 

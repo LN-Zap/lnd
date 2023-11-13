@@ -75,6 +75,7 @@ func TestMigrateRevocationLog(t *testing.T) {
 	}
 
 	fmt.Printf("Running %d test cases...\n", len(testCases))
+	fmt.Printf("withAmtData is set to: %v\n", withAmtData)
 
 	for i, tc := range testCases {
 		tc := tc
@@ -103,11 +104,18 @@ func TestMigrateRevocationLog(t *testing.T) {
 				return nil
 			}
 
-			migtest.ApplyMigrationWithDb(
+			cfg := &MigrateRevLogConfigImpl{
+				NoAmountData: !withAmtData,
+			}
+
+			migtest.ApplyMigrationWithDB(
 				t,
 				beforeMigration,
 				afterMigration,
-				MigrateRevocationLog,
+				func(db kvdb.Backend) error {
+					return MigrateRevocationLog(db, cfg)
+				},
+				false,
 			)
 		})
 		if !success {
@@ -164,8 +172,7 @@ func TestValidateMigration(t *testing.T) {
 		tc := tc
 
 		// Create a test db.
-		cdb, cleanUp, err := migtest.MakeDB()
-		defer cleanUp()
+		cdb, err := migtest.MakeDB(t)
 		require.NoError(t, err, "failed to create test db")
 
 		t.Run(tc.name, func(t *testing.T) {
@@ -505,6 +512,10 @@ func assertRevocationLog(t testing.TB, want, got RevocationLog) {
 		"wrong TheirOutputIndex")
 	require.Equal(t, want.CommitTxHash, got.CommitTxHash,
 		"wrong CommitTxHash")
+	require.Equal(t, want.TheirBalance, got.TheirBalance,
+		"wrong TheirBalance")
+	require.Equal(t, want.OurBalance, got.OurBalance,
+		"wrong OurBalance")
 	require.Equal(t, len(want.HTLCEntries), len(got.HTLCEntries),
 		"wrong HTLCEntries length")
 
@@ -559,8 +570,12 @@ func BenchmarkMigration(b *testing.B) {
 		return setupTestLogs(db, c, oldLogs, nil)
 	}
 
+	cfg := &MigrateRevLogConfigImpl{
+		NoAmountData: !withAmtData,
+	}
+
 	// Run the migration test.
-	migtest.ApplyMigrationWithDb(
+	migtest.ApplyMigrationWithDB(
 		b,
 		beforeMigration,
 		nil,
@@ -568,7 +583,8 @@ func BenchmarkMigration(b *testing.B) {
 			b.StartTimer()
 			defer b.StopTimer()
 
-			return MigrateRevocationLog(db)
+			return MigrateRevocationLog(db, cfg)
 		},
+		false,
 	)
 }

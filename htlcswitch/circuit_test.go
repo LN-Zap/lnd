@@ -3,7 +3,6 @@ package htlcswitch_test
 import (
 	"bytes"
 	"fmt"
-	"io/ioutil"
 	"reflect"
 	"testing"
 
@@ -624,15 +623,12 @@ func equalIgnoreLFD(c, c2 *htlcswitch.PaymentCircuit) bool {
 // will be created.
 func makeCircuitDB(t *testing.T, path string) *channeldb.DB {
 	if path == "" {
-		var err error
-		path, err = ioutil.TempDir("", "circuitdb")
-		if err != nil {
-			t.Fatalf("unable to create temp path: %v", err)
-		}
+		path = t.TempDir()
 	}
 
 	db, err := channeldb.Open(path)
 	require.NoError(t, err, "unable to open channel db")
+	t.Cleanup(func() { db.Close() })
 
 	return db
 }

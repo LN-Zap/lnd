@@ -17,9 +17,11 @@
 * [A bug has been fixed that caused fee estimation to be incorrect for taproot
   inputs when using the `SendOutputs` call.](https://github.com/lightningnetwork/lnd/pull/6941)
 
+
 * [A bug has been fixed that could cause lnd to underpay for co-op close
   transaction when or both of the outputs used a P2TR
   addresss.](https://github.com/lightningnetwork/lnd/pull/6957)
+
 
 ## Taproot
 
@@ -31,9 +33,13 @@ necessary when upgrading from `lnd v0.14.x-beta` to `lnd v0.15.x-beta`, see [the
 remote signing documentation for more
 details](../remote-signing.md#migrating-a-remote-signing-setup-from-014x-to-015x).
 
+## Performance improvements
+
+* [Refactor hop hint selection
+  algorithm](https://github.com/lightningnetwork/lnd/pull/6914)
+
 # Contributors (Alphabetical Order)
 
 * Eugene Siegel
 * Jordi Montes
-* Olaoluwa Osuntokun
 * Oliver Gugger

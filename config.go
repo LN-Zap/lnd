@@ -39,8 +39,10 @@ import (
 	"github.com/lightningnetwork/lnd/lnrpc/routerrpc"
 	"github.com/lightningnetwork/lnd/lnrpc/signrpc"
 	"github.com/lightningnetwork/lnd/lnwallet"
+	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing"
 	"github.com/lightningnetwork/lnd/signal"
+	"github.com/lightningnetwork/lnd/sweep"
 	"github.com/lightningnetwork/lnd/tor"
 )
 
@@ -95,6 +97,10 @@ const (
 	// minTimeLockDelta is the minimum timelock we require for incoming
 	// HTLCs on our channels.
 	minTimeLockDelta = routing.MinCLTVDelta
+
+	// MaxTimeLockDelta is the maximum CLTV delta that can be applied to
+	// forwarded HTLCs.
+	MaxTimeLockDelta = routing.MaxCLTVDelta
 
 	// defaultAcceptorTimeout is the time after which an RPCAcceptor will time
 	// out and return false if it hasn't yet received a response.
@@ -169,9 +175,10 @@ const (
 	defaultRemoteMaxHtlcs = 483
 
 	// defaultMaxLocalCSVDelay is the maximum delay we accept on our
-	// commitment output.
-	// TODO(halseth): find a more scientific choice of value.
-	defaultMaxLocalCSVDelay = 10000
+	// commitment output. The local csv delay maximum is now equal to
+	// the remote csv delay maximum we require for the remote commitment
+	// transaction.
+	defaultMaxLocalCSVDelay = 2016
 
 	// defaultChannelCommitInterval is the default maximum time between
 	// receiving a channel state update and signing a new commitment.
@@ -203,6 +210,21 @@ const (
 	// defaultKeepFailedPaymentAttempts is the default setting for whether
 	// to keep failed payments in the database.
 	defaultKeepFailedPaymentAttempts = false
+
+	// defaultGrpcServerPingTime is the default duration for the amount of
+	// time of no activity after which the server pings the client to see if
+	// the transport is still alive. If set below 1s, a minimum value of 1s
+	// will be used instead.
+	defaultGrpcServerPingTime = time.Minute
+
+	// defaultGrpcServerPingTimeout is the default duration the server waits
+	// after having pinged for keepalive check, and if no activity is seen
+	// even after that the connection is closed.
+	defaultGrpcServerPingTimeout = 20 * time.Second
+
+	// defaultGrpcClientPingMinWait is the default minimum amount of time a
+	// client should wait before sending a keepalive ping.
+	defaultGrpcClientPingMinWait = 5 * time.Second
 )
 
 var (
@@ -252,6 +274,8 @@ var (
 //
 // See LoadConfig for further details regarding the configuration
 // loading+parsing process.
+//
+//nolint:lll
 type Config struct {
 	ShowVersion       bool `short:"V" long:"version" description:"Display version information and exit"`
 	ShowStrikeVersion bool `long:"strike-version" description:"Display LND-Strike version information and exit"`
@@ -268,6 +292,7 @@ type Config struct {
 	TLSAutoRefresh     bool          `long:"tlsautorefresh" description:"Re-generate TLS certificate and key if the IPs or domains are changed"`
 	TLSDisableAutofill bool          `long:"tlsdisableautofill" description:"Do not include the interface IPs or the system hostname in TLS certificate, use first --tlsextradomain as Common Name instead, if set"`
 	TLSCertDuration    time.Duration `long:"tlscertduration" description:"The duration for which the auto-generated TLS certificate will be valid for"`
+	TLSEncryptKey      bool          `long:"tlsencryptkey" description:"Automatically encrypts the TLS private key and generates ephemeral TLS key pairs when the wallet is locked or not initialized"`
 
 	NoMacaroons     bool          `long:"no-macaroons" description:"Disable macaroon authentication, can only be used if server is not listening on a public interface."`
 	AdminMacPath    string        `long:"adminmacaroonpath" description:"Path to write the admin macaroon for lnd's RPC and REST services if it doesn't exist"`
@@ -312,6 +337,9 @@ type Config struct {
 	CPUProfile string `long:"cpuprofile" description:"Write CPU profile to the specified file"`
 
 	Profile string `long:"profile" description:"Enable HTTP profiling on either a port or host:port"`
+
+	BlockingProfile int `long:"blockingprofile" description:"Used to enable a blocking profile to be served on the profiling port. This takes a value from 0 to 1, with 1 including every blocking event, and 0 including no events."`
+	MutexProfile    int `long:"mutexprofile" description:"Used to Enable a mutex profile to be served on the profiling port. This takes a value from 0 to 1, with 1 including every mutex event, and 0 including no events."`
 
 	UnsafeDisconnect   bool   `long:"unsafe-disconnect" description:"DEPRECATED: Allows the rpcserver to intentionally disconnect from peers with open channels. THIS FLAG WILL BE REMOVED IN 0.10.0"`
 	UnsafeReplay       bool   `long:"unsafe-replay" description:"Causes a link to replay the adds on its commitment txn after starting up, this enables testing of the sphinx replay logic."`
@@ -368,6 +396,8 @@ type Config struct {
 	ChannelCommitBatchSize uint32 `long:"channel-commit-batch-size" description:"The maximum number of channel state updates that is accumulated before signing a new commitment."`
 
 	KeepFailedPaymentAttempts bool `long:"keep-failed-payment-attempts" description:"Keeps persistent record of all failed payment attempts for successfully settled payments."`
+
+	StoreFinalHtlcResolutions bool `long:"store-final-htlc-resolutions" description:"Persistently store the final resolution of incoming htlcs."`
 
 	DefaultRemoteMaxHtlcs uint16 `long:"default-remote-max-htlcs" description:"The default max_htlc applied when opening or accepting channels. This value limits the number of concurrent HTLCs that the remote party can add to the commitment. The maximum possible value is 483."`
 
@@ -440,6 +470,12 @@ type Config struct {
 
 	RemoteSigner *lncfg.RemoteSigner `group:"remotesigner" namespace:"remotesigner"`
 
+	Sweeper *lncfg.Sweeper `group:"sweeper" namespace:"sweeper"`
+
+	Htlcswitch *lncfg.Htlcswitch `group:"htlcswitch" namespace:"htlcswitch"`
+
+	GRPC *GRPCConfig `group:"grpc" namespace:"grpc"`
+
 	// LogWriter is the root logger that all of the daemon's subloggers are
 	// hooked up to.
 	LogWriter *build.RotatingLogWriter
@@ -455,9 +491,47 @@ type Config struct {
 
 	// ActiveNetParams contains parameters of the target chain.
 	ActiveNetParams chainreg.BitcoinNetParams
+
+	// Estimator is used to estimate routing probabilities.
+	Estimator routing.Estimator
+
+	// Dev specifies configs used for integration tests, which is always
+	// empty if not built with `integration` flag.
+	Dev *lncfg.DevConfig `group:"dev" namespace:"dev"`
+}
+
+// GRPCConfig holds the configuration options for the gRPC server.
+// See https://github.com/grpc/grpc-go/blob/v1.41.0/keepalive/keepalive.go#L50
+// for more details. Any value of 0 means we use the gRPC internal default
+// values.
+//
+//nolint:lll
+type GRPCConfig struct {
+	// ServerPingTime is a duration for the amount of time of no activity
+	// after which the server pings the client to see if the transport is
+	// still alive. If set below 1s, a minimum value of 1s will be used
+	// instead.
+	ServerPingTime time.Duration `long:"server-ping-time" description:"How long the server waits on a gRPC stream with no activity before pinging the client."`
+
+	// ServerPingTimeout is the duration the server waits after having
+	// pinged for keepalive check, and if no activity is seen even after
+	// that the connection is closed.
+	ServerPingTimeout time.Duration `long:"server-ping-timeout" description:"How long the server waits for the response from the client for the keepalive ping response."`
+
+	// ClientPingMinWait is the minimum amount of time a client should wait
+	// before sending a keepalive ping.
+	ClientPingMinWait time.Duration `long:"client-ping-min-wait" description:"The minimum amount of time the client should wait before sending a keepalive ping."`
+
+	// ClientAllowPingWithoutStream specifies whether pings from the client
+	// are allowed even if there are no active gRPC streams. This might be
+	// useful to keep the underlying HTTP/2 connection open for future
+	// requests.
+	ClientAllowPingWithoutStream bool `long:"client-allow-ping-without-stream" description:"If true, the server allows keepalive pings from the client even when there are no active gRPC streams. This might be useful to keep the underlying HTTP/2 connection open for future requests."`
 }
 
 // DefaultConfig returns all default values for the Config struct.
+//
+//nolint:lll
 func DefaultConfig() Config {
 	return Config{
 		LndDir:            DefaultLndDir,
@@ -573,9 +647,7 @@ func DefaultConfig() Config {
 			ChannelCacheSize: channeldb.DefaultChannelCacheSize,
 		},
 		Prometheus: lncfg.DefaultPrometheus(),
-		Watchtower: &lncfg.Watchtower{
-			TowerDir: defaultTowerDir,
-		},
+		Watchtower: lncfg.DefaultWatchtowerCfg(defaultTowerDir),
 		HealthChecks: &lncfg.HealthCheckConfig{
 			ChainCheck: &lncfg.CheckConfig{
 				Interval: defaultChainInterval,
@@ -614,6 +686,7 @@ func DefaultConfig() Config {
 		Gossip: &lncfg.Gossip{
 			MaxChannelUpdateBurst: discovery.DefaultMaxChannelUpdateBurst,
 			ChannelUpdateInterval: discovery.DefaultChannelUpdateInterval,
+			SubBatchDelay:         discovery.DefaultSubBatchDelay,
 		},
 		Invoices: &lncfg.Invoices{
 			HoldExpiryDelta: lncfg.DefaultHoldInvoiceExpiryDelta,
@@ -636,6 +709,18 @@ func DefaultConfig() Config {
 		RemoteSigner: &lncfg.RemoteSigner{
 			Timeout: lncfg.DefaultRemoteSignerRPCTimeout,
 		},
+		Sweeper: &lncfg.Sweeper{
+			BatchWindowDuration: sweep.DefaultBatchWindowDuration,
+		},
+		Htlcswitch: &lncfg.Htlcswitch{
+			MailboxDeliveryTimeout: htlcswitch.DefaultMailboxDeliveryTimeout,
+		},
+		GRPC: &GRPCConfig{
+			ServerPingTime:    defaultGrpcServerPingTime,
+			ServerPingTimeout: defaultGrpcServerPingTimeout,
+			ClientPingMinWait: defaultGrpcClientPingMinWait,
+		},
+		WtClient: lncfg.DefaultWtClientCfg(),
 	}
 }
 
@@ -643,10 +728,10 @@ func DefaultConfig() Config {
 // line options.
 //
 // The configuration proceeds as follows:
-// 	1) Start with a default config with sane settings
-// 	2) Pre-parse the command line to check for an alternative config file
-// 	3) Load configuration file overwriting defaults with any specified options
-// 	4) Parse CLI options and overwrite/add any specified options
+//  1. Start with a default config with sane settings
+//  2. Pre-parse the command line to check for an alternative config file
+//  3. Load configuration file overwriting defaults with any specified options
+//  4. Parse CLI options and overwrite/add any specified options
 func LoadConfig(interceptor signal.Interceptor) (*Config, error) {
 	// Pre-parse the command line options to pick up an alternative config
 	// file.
@@ -691,7 +776,7 @@ func LoadConfig(interceptor signal.Interceptor) (*Config, error) {
 	// User did specify an explicit --configfile, so we check that it does
 	// exist under that path to avoid surprises.
 	case configFilePath != DefaultConfigFile:
-		if !fileExists(configFilePath) {
+		if !lnrpc.FileExists(configFilePath) {
 			return nil, fmt.Errorf("specified config file does "+
 				"not exist in %s", configFilePath)
 		}
@@ -967,6 +1052,13 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 		)
 	}
 
+	// Ensure that the amount data for revoked commitment transactions is
+	// stored if the watchtower client is active.
+	if cfg.DB.NoRevLogAmtData && cfg.WtClient.Active {
+		return nil, mkErr("revocation log amount data must be stored " +
+			"if the watchtower client is active")
+	}
+
 	// Ensure a valid max channel fee allocation was set.
 	if cfg.MaxChannelFeeAllocation <= 0 || cfg.MaxChannelFeeAllocation > 1 {
 		return nil, mkErr("invalid max channel fee allocation: %v, "+
@@ -1205,6 +1297,15 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 		if cfg.Bitcoin.SimNet {
 			numNets++
 			cfg.ActiveNetParams = chainreg.BitcoinSimNetParams
+
+			// For simnet, the btcsuite chain params uses a
+			// cointype of 115. However, we override this in
+			// chainreg/chainparams.go, but the raw ChainParam
+			// field is used elsewhere. To ensure everything is
+			// consistent, we'll also override the cointype within
+			// the raw params.
+			targetCoinType := chainreg.BitcoinSigNetParams.CoinType
+			cfg.ActiveNetParams.Params.HDCoinType = targetCoinType
 		}
 		if cfg.Bitcoin.SigNet {
 			numNets++
@@ -1396,12 +1497,18 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 		)
 	}
 
+	towerDir := filepath.Join(
+		cfg.Watchtower.TowerDir,
+		cfg.registeredChains.PrimaryChain().String(),
+		lncfg.NormalizeNetwork(cfg.ActiveNetParams.Name),
+	)
+
 	// Create the lnd directory and all other sub-directories if they don't
 	// already exist. This makes sure that directory trees are also created
 	// for files that point to outside the lnddir.
 	dirs := []string{
 		lndDir, cfg.DataDir, cfg.networkDir,
-		cfg.LetsEncryptDir, cfg.Watchtower.TowerDir,
+		cfg.LetsEncryptDir, towerDir, cfg.graphDatabaseDir(),
 		filepath.Dir(cfg.TLSCertPath), filepath.Dir(cfg.TLSKeyPath),
 		filepath.Dir(cfg.AdminMacPath), filepath.Dir(cfg.ReadMacPath),
 		filepath.Dir(cfg.InvoiceMacPath),
@@ -1608,6 +1715,47 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 		cfg.DB.Bolt.NoFreelistSync = !cfg.SyncFreelist
 	}
 
+	// Parse any extra sqlite pragma options that may have been provided
+	// to determine if they override any of the defaults that we will
+	// otherwise add.
+	var (
+		defaultSynchronous = true
+		defaultAutoVacuum  = true
+		defaultFullfsync   = true
+	)
+	for _, option := range cfg.DB.Sqlite.PragmaOptions {
+		switch {
+		case strings.HasPrefix(option, "synchronous="):
+			defaultSynchronous = false
+
+		case strings.HasPrefix(option, "auto_vacuum="):
+			defaultAutoVacuum = false
+
+		case strings.HasPrefix(option, "fullfsync="):
+			defaultFullfsync = false
+
+		default:
+		}
+	}
+
+	if defaultSynchronous {
+		cfg.DB.Sqlite.PragmaOptions = append(
+			cfg.DB.Sqlite.PragmaOptions, "synchronous=full",
+		)
+	}
+
+	if defaultAutoVacuum {
+		cfg.DB.Sqlite.PragmaOptions = append(
+			cfg.DB.Sqlite.PragmaOptions, "auto_vacuum=incremental",
+		)
+	}
+
+	if defaultFullfsync {
+		cfg.DB.Sqlite.PragmaOptions = append(
+			cfg.DB.Sqlite.PragmaOptions, "fullfsync=true",
+		)
+	}
+
 	// Ensure that the user hasn't chosen a remote-max-htlc value greater
 	// than the protocol maximum.
 	maxRemoteHtlcs := uint16(input.MaxHTLCNumber / 2)
@@ -1649,6 +1797,17 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 			lncfg.DefaultIncomingBroadcastDelta)
 	}
 
+	// If the experimental protocol options specify any protocol messages
+	// that we want to handle as custom messages, set them now.
+	//nolint:lll
+	customMsg := cfg.ProtocolOptions.ExperimentalProtocol.CustomMessageOverrides()
+
+	// We can safely set our custom override values during startup because
+	// startup is blocked on config parsing.
+	if err := lnwire.SetCustomOverrides(customMsg); err != nil {
+		return nil, mkErr("custom-message: %v", err)
+	}
+
 	// Validate the subconfigs for workers, caches, and the tower client.
 	err = lncfg.Validate(
 		cfg.Workers,
@@ -1659,6 +1818,8 @@ func ValidateConfig(cfg Config, interceptor signal.Interceptor, fileParser,
 		cfg.HealthChecks,
 		cfg.RPCMiddleware,
 		cfg.RemoteSigner,
+		cfg.Sweeper,
+		cfg.Htlcswitch,
 	)
 	if err != nil {
 		return nil, err

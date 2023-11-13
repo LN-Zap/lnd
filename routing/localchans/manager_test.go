@@ -7,8 +7,8 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/discovery"
-	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -46,11 +46,11 @@ func TestManager(t *testing.T) {
 
 	currentPolicy := channeldb.ChannelEdgePolicy{
 		MinHTLC:      minHTLC,
-		MessageFlags: lnwire.ChanUpdateOptionMaxHtlc,
+		MessageFlags: lnwire.ChanUpdateRequiredMaxHtlc,
 	}
 
 	updateForwardingPolicies := func(
-		chanPolicies map[wire.OutPoint]htlcswitch.ForwardingPolicy) {
+		chanPolicies map[wire.OutPoint]models.ForwardingPolicy) {
 
 		if len(chanPolicies) == 0 {
 			return

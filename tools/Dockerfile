@@ -1,4 +1,4 @@
-FROM golang:1.18.2-buster
+FROM golang:1.21
 
 ARG TOKEN
 
@@ -12,8 +12,9 @@ RUN cd /tmp \
   && mkdir -p /tmp/build/.cache \
   && mkdir -p /tmp/build/.modcache \
   && cd /tmp/tools \
-  && go install -trimpath -tags=tools github.com/golangci/golangci-lint/cmd/golangci-lint \
-  && chmod -R 777 /tmp/build/
+  && go install -trimpath github.com/golangci/golangci-lint/cmd/golangci-lint \
+  && chmod -R 777 /tmp/build/ \
+  && git config --global --add safe.directory /build
 
 RUN git config --global url."https://zapci:${TOKEN}@github.com".insteadOf "https://github.com" \
   && go env -w GOPRIVATE=github.com/LN-Zap/btcwallet-strike

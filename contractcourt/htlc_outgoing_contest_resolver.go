@@ -38,12 +38,12 @@ func newOutgoingContestResolver(res lnwallet.OutgoingHtlcResolution,
 // Resolve commences the resolution of this contract. As this contract hasn't
 // yet timed out, we'll wait for one of two things to happen
 //
-//   1. The HTLC expires. In this case, we'll sweep the funds and send a clean
-//      up cancel message to outside sub-systems.
+//  1. The HTLC expires. In this case, we'll sweep the funds and send a clean
+//     up cancel message to outside sub-systems.
 //
-//   2. The remote party sweeps this HTLC on-chain, in which case we'll add the
-//      pre-image to our global cache, then send a clean up settle message
-//      backwards.
+//  2. The remote party sweeps this HTLC on-chain, in which case we'll add the
+//     pre-image to our global cache, then send a clean up settle message
+//     backwards.
 //
 // When either of these two things happens, we'll create a new resolver which
 // is able to handle the final resolution of the contract. We're only the pivot
@@ -112,20 +112,18 @@ func (h *htlcOutgoingContestResolver) Resolve() (ContractResolver, error) {
 				return nil, errResolverShuttingDown
 			}
 
-			// If the current height is >= expiry-1, then a timeout
+			// If the current height is >= expiry, then a timeout
 			// path spend will be valid to be included in the next
 			// block, and we can immediately return the resolver.
 			//
-			// TODO(joostjager): Statement above may not be valid.
-			// For CLTV locks, the expiry value is the last
-			// _invalid_ block. The likely reason that this does not
-			// create a problem, is that utxonursery is checking the
-			// expiry again (in the proper way).
-			//
-			// Source:
-			// https://github.com/btcsuite/btcd/blob/991d32e72fe84d5fbf9c47cd604d793a0cd3a072/blockchain/validate.go#L154
+			// NOTE: when broadcasting this transaction, btcd will
+			// check the timelock in `CheckTransactionStandard`,
+			// which requires `expiry < currentHeight+1`. If the
+			// check doesn't pass, error `transaction is not
+			// finalized` will be returned and the broadcast will
+			// fail.
 			newHeight := uint32(newBlock.Height)
-			if newHeight >= h.htlcResolution.Expiry-1 {
+			if newHeight >= h.htlcResolution.Expiry {
 				log.Infof("%T(%v): HTLC has expired "+
 					"(height=%v, expiry=%v), transforming "+
 					"into timeout resolver", h,

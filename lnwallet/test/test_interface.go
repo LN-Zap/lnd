@@ -5,9 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"io/ioutil"
 	"net"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
@@ -929,7 +927,7 @@ func testSingleFunderReservationWorkflow(miner *rpctest.Harness,
 	// by having Alice immediately process his contribution.
 	err = aliceChanReservation.ProcessContribution(bobContribution)
 	if err != nil {
-		t.Fatalf("alice unable to process bob's contribution")
+		t.Fatalf("alice unable to process bob's contribution: %v", err)
 	}
 	assertContributionInitPopulated(t, bobChanReservation.TheirContribution())
 
@@ -2763,6 +2761,19 @@ var walletTests = []walletTestCase{
 		},
 	},
 	{
+		name: "single funding workflow musig2",
+		test: func(miner *rpctest.Harness, alice,
+			bob *lnwallet.LightningWallet, t *testing.T) {
+
+			testSingleFunderReservationWorkflow(
+				miner, alice, bob, t,
+				lnwallet.CommitmentTypeSimpleTaproot, nil,
+				nil, [32]byte{}, 0,
+			)
+		},
+	},
+	// TODO(roasbeef): add musig2 external funding
+	{
 		name: "single funding workflow external funding tx",
 		test: testSingleFunderExternalFundingTx,
 	},
@@ -2976,11 +2987,11 @@ func testSingleFunderExternalFundingTx(miner *rpctest.Harness,
 	thawHeight := uint32(200)
 	aliceExternalFunder := chanfunding.NewCannedAssembler(
 		thawHeight, *chanPoint, btcutil.Amount(chanAmt), &aliceFundingKey,
-		bobFundingKey.PubKey, true,
+		bobFundingKey.PubKey, true, false,
 	)
 	bobShimIntent, err := chanfunding.NewCannedAssembler(
 		thawHeight, *chanPoint, btcutil.Amount(chanAmt), &bobFundingKey,
-		aliceFundingKey.PubKey, false,
+		aliceFundingKey.PubKey, false, false,
 	).ProvisionChannel(&chanfunding.Request{
 		LocalAmt: btcutil.Amount(chanAmt),
 		MinConfs: 1,
@@ -3054,14 +3065,13 @@ func TestLightningWallet(t *testing.T, targetBackEnd string) {
 
 	rpcConfig := miningNode.RPCConfig()
 
-	tempDir, err := ioutil.TempDir("", "channeldb")
-	require.NoError(t, err, "unable to create temp dir")
+	tempDir := t.TempDir()
 	db, err := channeldb.Open(tempDir)
 	require.NoError(t, err, "unable to create db")
-	testCfg := chainntnfs.CacheConfig{
+	testCfg := channeldb.CacheConfig{
 		QueryDisable: false,
 	}
-	hintCache, err := chainntnfs.NewHeightHintCache(testCfg, db.Backend)
+	hintCache, err := channeldb.NewHeightHintCache(testCfg, db.Backend)
 	require.NoError(t, err, "unable to create height hint cache")
 	blockCache := blockcache.NewBlockCache(10000)
 	chainNotifier, err := btcdnotify.New(
@@ -3107,15 +3117,12 @@ func runTests(t *testing.T, walletDriver *lnwallet.WalletDriver,
 
 		aliceWalletController lnwallet.WalletController
 		bobWalletController   lnwallet.WalletController
+
+		err error
 	)
 
-	tempTestDirAlice, err := ioutil.TempDir("", "lnwallet")
-	require.NoError(t, err, "unable to create temp directory")
-	defer os.RemoveAll(tempTestDirAlice)
-
-	tempTestDirBob, err := ioutil.TempDir("", "lnwallet")
-	require.NoError(t, err, "unable to create temp directory")
-	defer os.RemoveAll(tempTestDirBob)
+	tempTestDirAlice := t.TempDir()
+	tempTestDirBob := t.TempDir()
 
 	blockCache := blockcache.NewBlockCache(10000)
 
@@ -3205,13 +3212,9 @@ func runTests(t *testing.T, walletDriver *lnwallet.WalletDriver,
 
 		case "bitcoind":
 			// Start a bitcoind instance.
-			tempBitcoindDir, err := ioutil.TempDir("", "bitcoind")
-			if err != nil {
-				t.Fatalf("unable to create temp directory: %v", err)
-			}
+			tempBitcoindDir := t.TempDir()
 			zmqBlockHost := "ipc:///" + tempBitcoindDir + "/blocks.socket"
 			zmqTxHost := "ipc:///" + tempBitcoindDir + "/tx.socket"
-			defer os.RemoveAll(tempBitcoindDir)
 			rpcPort := getFreePort()
 			bitcoind := exec.Command(
 				"bitcoind",
@@ -3283,11 +3286,7 @@ func runTests(t *testing.T, walletDriver *lnwallet.WalletDriver,
 
 		case "bitcoind-rpc-polling":
 			// Start a bitcoind instance.
-			tempBitcoindDir, err := ioutil.TempDir("", "bitcoind")
-			if err != nil {
-				t.Fatalf("unable to create temp directory: %v", err)
-			}
-			defer os.RemoveAll(tempBitcoindDir)
+			tempBitcoindDir := t.TempDir()
 			rpcPort := getFreePort()
 			bitcoind := exec.Command(
 				"bitcoind",

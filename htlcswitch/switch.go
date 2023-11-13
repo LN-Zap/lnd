@@ -15,6 +15,7 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/clock"
 	"github.com/lightningnetwork/lnd/contractcourt"
 	"github.com/lightningnetwork/lnd/htlcswitch/hop"
@@ -39,9 +40,9 @@ const (
 	// fails in a forwarding package.
 	DefaultAckInterval = 15 * time.Second
 
-	// DefaultHTLCExpiry is the duration after which Adds will be cancelled
-	// if they could not get added to an outgoing commitment.
-	DefaultHTLCExpiry = time.Minute
+	// DefaultMailboxDeliveryTimeout is the duration after which Adds will
+	// be cancelled if they could not get added to an outgoing commitment.
+	DefaultMailboxDeliveryTimeout = time.Minute
 )
 
 var (
@@ -145,6 +146,10 @@ type Config struct {
 	// channels from the channel database.
 	FetchAllOpenChannels func() ([]*channeldb.OpenChannel, error)
 
+	// FetchAllChannels is a function that fetches all pending open, open,
+	// and waiting close channels from the database.
+	FetchAllChannels func() ([]*channeldb.OpenChannel, error)
+
 	// FetchClosedChannels is a function that fetches all closed channels
 	// from the channel database.
 	FetchClosedChannels func(
@@ -198,11 +203,11 @@ type Config struct {
 	// Clock is a time source for the switch.
 	Clock clock.Clock
 
-	// HTLCExpiry is the interval after which Adds will be cancelled if they
-	// have not been yet been delivered to a link. The computed deadline
-	// will expiry this long after the Adds are added to a mailbox via
-	// AddPacket.
-	HTLCExpiry time.Duration
+	// MailboxDeliveryTimeout is the interval after which Adds will be
+	// cancelled if they have not been yet been delivered to a link. The
+	// computed deadline will expiry this long after the Adds are added to
+	// a mailbox via AddPacket.
+	MailboxDeliveryTimeout time.Duration
 
 	// DustThreshold is the threshold in milli-satoshis after which we'll
 	// fail incoming or outgoing dust payments for a particular channel.
@@ -382,7 +387,7 @@ func New(cfg Config, currentHeight uint32) (*Switch, error) {
 	s.mailOrchestrator = newMailOrchestrator(&mailOrchConfig{
 		forwardPackets:    s.ForwardPackets,
 		clock:             s.cfg.Clock,
-		expiry:            s.cfg.HTLCExpiry,
+		expiry:            s.cfg.MailboxDeliveryTimeout,
 		failMailboxUpdate: s.failMailboxUpdate,
 	})
 
@@ -423,16 +428,16 @@ func (s *Switch) ProcessContractResolution(msg contractcourt.ResolutionMsg) erro
 	}
 }
 
-// GetPaymentResult returns the the result of the payment attempt with the
-// given attemptID. The paymentHash should be set to the payment's overall
-// hash, or in case of AMP payments the payment's unique identifier.
+// GetAttemptResult returns the result of the payment attempt with the given
+// attemptID. The paymentHash should be set to the payment's overall hash, or
+// in case of AMP payments the payment's unique identifier.
 //
 // The method returns a channel where the payment result will be sent when
 // available, or an error is encountered during forwarding. When a result is
 // received on the channel, the HTLC is guaranteed to no longer be in flight.
 // The switch shutting down is signaled by closing the channel. If the
 // attemptID is unknown, ErrPaymentIDNotFound will be returned.
-func (s *Switch) GetPaymentResult(attemptID uint64, paymentHash lntypes.Hash,
+func (s *Switch) GetAttemptResult(attemptID uint64, paymentHash lntypes.Hash,
 	deobfuscator ErrorDecrypter) (<-chan *PaymentResult, error) {
 
 	var (
@@ -606,7 +611,7 @@ func (s *Switch) SendHTLC(firstHop lnwire.ShortChannelID, attemptID uint64,
 // forwarding policies for all links have been updated, or the switch shuts
 // down.
 func (s *Switch) UpdateForwardingPolicies(
-	chanPolicies map[wire.OutPoint]ForwardingPolicy) {
+	chanPolicies map[wire.OutPoint]models.ForwardingPolicy) {
 
 	log.Tracef("Updating link policies: %v", newLogClosure(func() string {
 		return spew.Sdump(chanPolicies)
@@ -636,7 +641,7 @@ func (s *Switch) UpdateForwardingPolicies(
 func (s *Switch) IsForwardedHTLC(chanID lnwire.ShortChannelID,
 	htlcIndex uint64) bool {
 
-	circuit := s.circuits.LookupOpenCircuit(channeldb.CircuitKey{
+	circuit := s.circuits.LookupOpenCircuit(models.CircuitKey{
 		ChanID: chanID,
 		HtlcID: htlcIndex,
 	})
@@ -1012,11 +1017,11 @@ func (s *Switch) extractResult(deobfuscator ErrorDecrypter, n *networkResult,
 
 // parseFailedPayment determines the appropriate failure message to return to
 // a user initiated payment. The three cases handled are:
-// 1) An unencrypted failure, which should already plaintext.
-// 2) A resolution from the chain arbitrator, which possibly has no failure
-//    reason attached.
-// 3) A failure from the remote party, which will need to be decrypted using
-//    the payment deobfuscator.
+//  1. An unencrypted failure, which should already plaintext.
+//  2. A resolution from the chain arbitrator, which possibly has no failure
+//     reason attached.
+//  3. A failure from the remote party, which will need to be decrypted using
+//     the payment deobfuscator.
 func (s *Switch) parseFailedPayment(deobfuscator ErrorDecrypter,
 	attemptID uint64, paymentHash lntypes.Hash, unencrypted,
 	isResolution bool, htlc *lnwire.UpdateFailHTLC) error {
@@ -1738,6 +1743,7 @@ func (s *Switch) htlcForwarder() {
 			wg.Add(1)
 			go func(l ChannelLink) {
 				defer wg.Done()
+
 				l.Stop()
 			}(link)
 		}
@@ -2083,9 +2089,11 @@ func (s *Switch) reforwardResolutions() error {
 
 // reforwardResponses for every known, non-pending channel, loads all associated
 // forwarding packages and reforwards any Settle or Fail HTLCs found. This is
-// used to resurrect the switch's mailboxes after a restart.
+// used to resurrect the switch's mailboxes after a restart. This also runs for
+// waiting close channels since there may be settles or fails that need to be
+// reforwarded before they completely close.
 func (s *Switch) reforwardResponses() error {
-	openChannels, err := s.cfg.FetchAllOpenChannels()
+	openChannels, err := s.cfg.FetchAllChannels()
 	if err != nil {
 		return err
 	}
@@ -2285,6 +2293,8 @@ func (s *Switch) AddLink(link ChannelLink) error {
 	link.attachFailAliasUpdate(s.failAliasUpdate)
 
 	if err := link.Start(); err != nil {
+		log.Errorf("AddLink failed to start link with chanID=%v: %v",
+			chanID, err)
 		s.removeLink(chanID)
 		return err
 	}

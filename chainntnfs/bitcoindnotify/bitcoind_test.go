@@ -5,7 +5,7 @@ package bitcoindnotify
 
 import (
 	"bytes"
-	"io/ioutil"
+	"fmt"
 	"testing"
 	"time"
 
@@ -15,6 +15,7 @@ import (
 	"github.com/lightningnetwork/lnd/blockcache"
 	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/lntest/wait"
 	"github.com/stretchr/testify/require"
 )
 
@@ -32,17 +33,19 @@ var (
 	}
 )
 
-func initHintCache(t *testing.T) *chainntnfs.HeightHintCache {
+func initHintCache(t *testing.T) *channeldb.HeightHintCache {
 	t.Helper()
 
-	tempDir, err := ioutil.TempDir("", "kek")
-	require.NoError(t, err, "unable to create temp dir")
-	db, err := channeldb.Open(tempDir)
+	db, err := channeldb.Open(t.TempDir())
 	require.NoError(t, err, "unable to create db")
-	testCfg := chainntnfs.CacheConfig{
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+	})
+
+	testCfg := channeldb.CacheConfig{
 		QueryDisable: false,
 	}
-	hintCache, err := chainntnfs.NewHeightHintCache(testCfg, db.Backend)
+	hintCache, err := channeldb.NewHeightHintCache(testCfg, db.Backend)
 	require.NoError(t, err, "unable to create hint cache")
 
 	return hintCache
@@ -64,6 +67,9 @@ func setUpNotifier(t *testing.T, bitcoindConn *chain.BitcoindConn,
 	if err := notifier.Start(); err != nil {
 		t.Fatalf("unable to start notifier: %v", err)
 	}
+	t.Cleanup(func() {
+		require.NoError(t, notifier.Stop())
+	})
 
 	return notifier
 }
@@ -101,20 +107,25 @@ func syncNotifierWithMiner(t *testing.T, notifier *BitcoindNotifier,
 // TestHistoricalConfDetailsTxIndex ensures that we correctly retrieve
 // historical confirmation details using the backend node's txindex.
 func TestHistoricalConfDetailsTxIndex(t *testing.T) {
-	testHistoricalConfDetailsTxIndex(t, true)
-	testHistoricalConfDetailsTxIndex(t, false)
+	t.Run("rpc polling enabled", func(st *testing.T) {
+		st.Parallel()
+		testHistoricalConfDetailsTxIndex(st, true)
+	})
+
+	t.Run("rpc polling disabled", func(st *testing.T) {
+		st.Parallel()
+		testHistoricalConfDetailsTxIndex(st, false)
+	})
 }
 
 func testHistoricalConfDetailsTxIndex(t *testing.T, rpcPolling bool) {
-	miner, tearDown := chainntnfs.NewMiner(
+	miner := chainntnfs.NewMiner(
 		t, []string{"--txindex"}, true, 25,
 	)
-	defer tearDown()
 
-	bitcoindConn, cleanUp := chainntnfs.NewBitcoindBackend(
+	bitcoindConn := chainntnfs.NewBitcoindBackend(
 		t, miner.P2PAddress(), true, rpcPolling,
 	)
-	defer cleanUp()
 
 	hintCache := initHintCache(t)
 	blockCache := blockcache.NewBlockCache(10000)
@@ -122,7 +133,6 @@ func testHistoricalConfDetailsTxIndex(t *testing.T, rpcPolling bool) {
 	notifier := setUpNotifier(
 		t, bitcoindConn, hintCache, hintCache, blockCache,
 	)
-	defer notifier.Stop()
 
 	syncNotifierWithMiner(t, notifier, miner)
 
@@ -154,18 +164,21 @@ func testHistoricalConfDetailsTxIndex(t *testing.T, rpcPolling bool) {
 	confReq, err := chainntnfs.NewConfRequest(txid, pkScript)
 	require.NoError(t, err, "unable to create conf request")
 
-	// The transaction should be found in the mempool at this point.
-	_, txStatus, err = notifier.historicalConfDetails(confReq, 0, 0)
-	require.NoError(t, err, "unable to retrieve historical conf details")
+	// The transaction should be found in the mempool at this point. We use
+	// wait here to give miner some time to propagate the tx to our node.
+	err = wait.NoError(func() error {
+		// The call should return no error.
+		_, txStatus, err = notifier.historicalConfDetails(confReq, 0, 0)
+		require.NoError(t, err)
 
-	// Since it has yet to be included in a block, it should have been found
-	// within the mempool.
-	switch txStatus {
-	case chainntnfs.TxFoundMempool:
-	default:
-		t.Fatalf("should have found the transaction within the "+
-			"mempool, but did not: %v", txStatus)
-	}
+		if txStatus != chainntnfs.TxFoundMempool {
+			return fmt.Errorf("cannot the tx in mempool, status "+
+				"is: %v", txStatus)
+		}
+
+		return nil
+	}, wait.DefaultTimeout)
+	require.NoError(t, err, "timeout waitinfg for historicalConfDetails")
 
 	if _, err := miner.Client.Generate(1); err != nil {
 		t.Fatalf("unable to generate block: %v", err)
@@ -192,26 +205,28 @@ func testHistoricalConfDetailsTxIndex(t *testing.T, rpcPolling bool) {
 // historical confirmation details using the set of fallback methods when the
 // backend node's txindex is disabled.
 func TestHistoricalConfDetailsNoTxIndex(t *testing.T) {
-	testHistoricalConfDetailsNoTxIndex(t, true)
-	testHistoricalConfDetailsNoTxIndex(t, false)
+	t.Run("rpc polling enabled", func(st *testing.T) {
+		st.Parallel()
+		testHistoricalConfDetailsNoTxIndex(st, true)
+	})
+
+	t.Run("rpc polling disabled", func(st *testing.T) {
+		st.Parallel()
+		testHistoricalConfDetailsNoTxIndex(st, false)
+	})
 }
 
 func testHistoricalConfDetailsNoTxIndex(t *testing.T, rpcpolling bool) {
-	miner, tearDown := chainntnfs.NewMiner(t, nil, true, 25)
-	defer tearDown()
+	miner := chainntnfs.NewMiner(t, nil, true, 25)
 
-	bitcoindConn, cleanUp := chainntnfs.NewBitcoindBackend(
+	bitcoindConn := chainntnfs.NewBitcoindBackend(
 		t, miner.P2PAddress(), false, rpcpolling,
 	)
-	defer cleanUp()
 
 	hintCache := initHintCache(t)
 	blockCache := blockcache.NewBlockCache(10000)
 
-	notifier := setUpNotifier(
-		t, bitcoindConn, hintCache, hintCache, blockCache,
-	)
-	defer notifier.Stop()
+	notifier := setUpNotifier(t, bitcoindConn, hintCache, hintCache, blockCache)
 
 	// Since the node has its txindex disabled, we fall back to scanning the
 	// chain manually. A transaction unknown to the network should not be

@@ -183,6 +183,9 @@ func (m *SyncManager) Start() {
 // Stop stops the SyncManager from performing its duties.
 func (m *SyncManager) Stop() {
 	m.stop.Do(func() {
+		log.Debugf("SyncManager is stopping")
+		defer log.Debugf("SyncManager stopped")
+
 		close(m.quit)
 		m.wg.Wait()
 
@@ -202,8 +205,8 @@ func (m *SyncManager) Stop() {
 // 2. Finding new peers to receive graph updates from to ensure we don't only
 //    receive them from the same set of peers.
 
-// 3. Finding new peers to force a historical sync with to ensure we have as
-//    much of the public network as possible.
+//  3. Finding new peers to force a historical sync with to ensure we have as
+//     much of the public network as possible.
 //
 // NOTE: This must be run as a goroutine.
 func (m *SyncManager) syncerHandler() {
