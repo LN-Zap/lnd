@@ -243,12 +243,6 @@ func (w *WalletController) GetRecoveryInfo() (bool, float64, error) {
 	return true, float64(1), nil
 }
 
-// PrivKeyFromAddress looks up the associated private key for a P2PKH or P2PK
-// address.
-func (w *WalletController) PrivKeyForAddress(address btcutil.Address) (*btcec.PrivateKey, error) {
-	return nil, nil
-}
-
 // GetTransaction returns data for any transaction given its id, even if it is
 // not part of the internal wallet.
 func (w *WalletController) GetTransaction(hash *chainhash.Hash) (*lnwallet.TransactionDetail, bool, error) {

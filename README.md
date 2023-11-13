@@ -11,7 +11,6 @@
 - `/lnrpc.Lightning/GetTransaction` RPC to return data for any transaction given its id
   - Note: `btcwallet` dependency replaced with our own `btcwallet-strike` fork
   - See https://github.com/btcsuite/btcwallet/pull/779 for details
-- `/walletrpc.WalletKit/SignMessageFromAddress` RPC that signs a given message with the private key for the given address
 - `Dockerfile` customisations to allow fetching private fork of btcwallet dependency
 - `.github/workflows/codeql.yml` githib actions workflow added to check code ssecurity
 - `.github/workflows/automated-release.yml` github action added to create new releases for Strike

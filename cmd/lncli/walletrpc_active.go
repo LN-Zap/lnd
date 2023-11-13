@@ -67,7 +67,6 @@ func walletCommands() []cli.Command {
 				psbtCommand,
 				accountsCommand,
 				requiredReserveCommand,
-				signMessageFromAddressCommand,
 			},
 		},
 	}
@@ -1030,70 +1029,6 @@ func listLeases(ctx *cli.Context) error {
 	}
 
 	printJSON(marshallLocks(response.LockedUtxos))
-	return nil
-}
-
-var signMessageFromAddressCommand = cli.Command{
-	Name:  "signmessagefromaddress",
-	Usage: "Sign a message with an onchain address.",
-	Flags: []cli.Flag{
-		cli.StringFlag{
-			Name:  "address",
-			Usage: "the address to use",
-		},
-		cli.StringFlag{
-			Name:  "message",
-			Usage: "the message to use",
-		},
-	},
-	Action: actionDecorator(signMessageFromAddress),
-}
-
-func signMessageFromAddress(ctx *cli.Context) error {
-	ctxc := getContext()
-
-	// Display the command's help message if we do not have the expected
-	// number of arguments/flags.
-	if ctx.NArg() != 2 && ctx.NumFlags() != 2 {
-		return cli.ShowCommandHelp(ctx, "signmessagefromaddress")
-	}
-
-	var (
-		args    = ctx.Args()
-		address string
-		message string
-	)
-	switch {
-	case ctx.IsSet("address"):
-		address = ctx.String("address")
-	case args.Present():
-		address = args.First()
-		args = args.Tail()
-	default:
-		return fmt.Errorf("address argument missing")
-	}
-	switch {
-	case ctx.IsSet("message"):
-		message = ctx.String("message")
-	case args.Present():
-		message = args.First()
-	default:
-		return fmt.Errorf("message argument missing")
-	}
-
-	walletClient, cleanUp := getWalletClient(ctx)
-	defer cleanUp()
-
-	req := &walletrpc.SignMessageFromAddressRequest{
-		Address: address,
-		Message: message,
-	}
-	response, err := walletClient.SignMessageFromAddress(ctxc, req)
-	if err != nil {
-		return err
-	}
-
-	printRespJSON(response)
 	return nil
 }
 

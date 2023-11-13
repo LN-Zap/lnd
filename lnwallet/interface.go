@@ -466,10 +466,6 @@ type WalletController interface {
 	// recovery progress made so far.
 	GetRecoveryInfo() (bool, float64, error)
 
-	// PrivKeyForAddress looks up the associated private key for a P2PKH or P2PK
-	// address.
-	PrivKeyForAddress(address btcutil.Address) (*btcec.PrivateKey, error)
-
 	// GetTransaction returns data for any transaction given its id, even if
 	// it is not part of the internal wallet.
 	GetTransaction(hash *chainhash.Hash) (*TransactionDetail, bool, error)

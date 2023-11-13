@@ -1723,7 +1723,3 @@ func (b *BtcWallet) RemoveDescendants(tx *wire.MsgTx) error {
 		return b.wallet.TxStore.RemoveUnminedTx(wtxmgrNs, txRecord)
 	})
 }
-
-func (b *BtcWallet) PrivKeyForAddress(address btcutil.Address) (*btcec.PrivateKey, error) {
-	return b.wallet.PrivKeyForAddress(address)
-}
