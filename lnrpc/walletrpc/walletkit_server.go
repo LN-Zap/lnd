@@ -6,7 +6,6 @@ package walletrpc
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -17,7 +16,6 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/btcec/v2"
-	"github.com/btcsuite/btcd/btcec/v2/ecdsa"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/btcutil/hdkeychain"
 	"github.com/btcsuite/btcd/btcutil/psbt"
@@ -148,10 +146,6 @@ var (
 		}},
 		"/walletrpc.WalletKit/ImportPublicKey": {{
 			Entity: "onchain",
-			Action: "write",
-		}},
-		"/walletrpc.WalletKit/SignMessageFromAddress": {{
-			Entity: "message",
 			Action: "write",
 		}},
 	}
@@ -1628,38 +1622,4 @@ func (w *WalletKit) ImportPublicKey(ctx context.Context,
 	}
 
 	return &ImportPublicKeyResponse{}, nil
-}
-
-// SignMessageFromAddress signs the given message with the private key for the
-// given address.
-func (w *WalletKit) SignMessageFromAddress(ctx context.Context,
-	req *SignMessageFromAddressRequest) (
-	*SignMessageFromAddressResponse, error) {
-
-	addr, err := btcutil.DecodeAddress(
-		req.Address, w.cfg.ChainParams,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	privKey, err := w.cfg.Wallet.PrivKeyForAddress(addr)
-	if err != nil {
-		return nil, err
-	}
-
-	// Message signing according to Electrum's and Bitcoin Core's method by
-	// prepending with a magic string.
-	var buf bytes.Buffer
-	_ = wire.WriteVarString(&buf, 0, "Bitcoin Signed Message:\n")
-	_ = wire.WriteVarString(&buf, 0, req.Message)
-	messageHash := chainhash.DoubleHashB(buf.Bytes())
-	sigbytes, err := ecdsa.SignCompact(privKey, messageHash, true)
-	if err != nil {
-		return nil, err
-	}
-
-	return &SignMessageFromAddressResponse{
-		Signature: base64.StdEncoding.EncodeToString(sigbytes),
-	}, nil
 }

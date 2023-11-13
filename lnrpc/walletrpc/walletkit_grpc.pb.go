@@ -204,11 +204,6 @@ type WalletKitClient interface {
 	//caller's responsibility to either publish the transaction on success or
 	//unlock/release any locked UTXOs in case of an error in this method.
 	FinalizePsbt(ctx context.Context, in *FinalizePsbtRequest, opts ...grpc.CallOption) (*FinalizePsbtResponse, error)
-	//
-	//SignMessageFromAddress signs a message with the private key corresponding to
-	//the wallet address in the request. The returned signature string is
-	//`base64` encoded and adheres to Electrum's signing method.
-	SignMessageFromAddress(ctx context.Context, in *SignMessageFromAddressRequest, opts ...grpc.CallOption) (*SignMessageFromAddressResponse, error)
 }
 
 type walletKitClient struct {
@@ -408,15 +403,6 @@ func (c *walletKitClient) FinalizePsbt(ctx context.Context, in *FinalizePsbtRequ
 	return out, nil
 }
 
-func (c *walletKitClient) SignMessageFromAddress(ctx context.Context, in *SignMessageFromAddressRequest, opts ...grpc.CallOption) (*SignMessageFromAddressResponse, error) {
-	out := new(SignMessageFromAddressResponse)
-	err := c.cc.Invoke(ctx, "/walletrpc.WalletKit/SignMessageFromAddress", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // WalletKitServer is the server API for WalletKit service.
 // All implementations must embed UnimplementedWalletKitServer
 // for forward compatibility
@@ -606,11 +592,6 @@ type WalletKitServer interface {
 	//caller's responsibility to either publish the transaction on success or
 	//unlock/release any locked UTXOs in case of an error in this method.
 	FinalizePsbt(context.Context, *FinalizePsbtRequest) (*FinalizePsbtResponse, error)
-	//
-	//SignMessageFromAddress signs a message with the private key corresponding to
-	//the wallet address in the request. The returned signature string is
-	//`base64` encoded and adheres to Electrum's signing method.
-	SignMessageFromAddress(context.Context, *SignMessageFromAddressRequest) (*SignMessageFromAddressResponse, error)
 	mustEmbedUnimplementedWalletKitServer()
 }
 
@@ -680,9 +661,6 @@ func (UnimplementedWalletKitServer) SignPsbt(context.Context, *SignPsbtRequest) 
 }
 func (UnimplementedWalletKitServer) FinalizePsbt(context.Context, *FinalizePsbtRequest) (*FinalizePsbtResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method FinalizePsbt not implemented")
-}
-func (UnimplementedWalletKitServer) SignMessageFromAddress(context.Context, *SignMessageFromAddressRequest) (*SignMessageFromAddressResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method SignMessageFromAddress not implemented")
 }
 func (UnimplementedWalletKitServer) mustEmbedUnimplementedWalletKitServer() {}
 
@@ -1075,24 +1053,6 @@ func _WalletKit_FinalizePsbt_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
-func _WalletKit_SignMessageFromAddress_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SignMessageFromAddressRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(WalletKitServer).SignMessageFromAddress(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/walletrpc.WalletKit/SignMessageFromAddress",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(WalletKitServer).SignMessageFromAddress(ctx, req.(*SignMessageFromAddressRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // WalletKit_ServiceDesc is the grpc.ServiceDesc for WalletKit service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -1183,10 +1143,6 @@ var WalletKit_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FinalizePsbt",
 			Handler:    _WalletKit_FinalizePsbt_Handler,
-		},
-		{
-			MethodName: "SignMessageFromAddress",
-			Handler:    _WalletKit_SignMessageFromAddress_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

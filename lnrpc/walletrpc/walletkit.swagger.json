@@ -130,39 +130,6 @@
         ]
       }
     },
-    "/v2/wallet/address/signmessage": {
-      "post": {
-        "summary": "SignMessageFromAddress signs a message with the private key corresponding to\nthe wallet address in the request. The returned signature string is\n`base64` encoded and adheres to Electrum's signing method.",
-        "operationId": "WalletKit_SignMessageFromAddress",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/walletrpcSignMessageFromAddressResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "body",
-            "in": "body",
-            "required": true,
-            "schema": {
-              "$ref": "#/definitions/walletrpcSignMessageFromAddressRequest"
-            }
-          }
-        ],
-        "tags": [
-          "WalletKit"
-        ]
-      }
-    },
     "/v2/wallet/bumpfee": {
       "post": {
         "summary": "BumpFee bumps the fee of an arbitrary input within a transaction. This RPC\ntakes a different approach than bitcoind's bumpfee command. lnd has a\ncentral batching engine in which inputs with similar fee rates are batched\ntogether to save on transaction fees. Due to this, we cannot rely on\nbumping the fee on a specific transaction, since transactions can change at\nany point with the addition of new inputs. The list of inputs that\ncurrently exist within lnd's central batching engine can be retrieved\nthrough the PendingSweeps RPC.",
@@ -1581,28 +1548,6 @@
           "type": "string",
           "format": "byte",
           "description": "The serialized transaction sent out on the network."
-        }
-      }
-    },
-    "walletrpcSignMessageFromAddressRequest": {
-      "type": "object",
-      "properties": {
-        "address": {
-          "type": "string",
-          "description": "The address used to determine which private key to use for signing."
-        },
-        "message": {
-          "type": "string",
-          "description": "The message to be signed. When using REST, this field must be encoded as\nbase64."
-        }
-      }
-    },
-    "walletrpcSignMessageFromAddressResponse": {
-      "type": "object",
-      "properties": {
-        "signature": {
-          "type": "string",
-          "title": "The signature to be verified over the given message"
         }
       }
     },

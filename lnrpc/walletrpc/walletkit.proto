@@ -239,14 +239,6 @@ service WalletKit {
     unlock/release any locked UTXOs in case of an error in this method.
     */
     rpc FinalizePsbt (FinalizePsbtRequest) returns (FinalizePsbtResponse);
-
-    /*
-    SignMessageFromAddress signs a message with the private key corresponding to
-    the wallet address in the request. The returned signature string is
-    `base64` encoded and adheres to Electrum's signing method.
-    */
-    rpc SignMessageFromAddress (SignMessageFromAddressRequest)
-        returns (SignMessageFromAddressResponse);
 }
 
 message ListUnspentRequest {
@@ -923,21 +915,4 @@ message ListLeasesRequest {
 message ListLeasesResponse {
     // The list of currently leased utxos.
     repeated UtxoLease locked_utxos = 1;
-}
-
-message SignMessageFromAddressRequest {
-    /*
-    The address used to determine which private key to use for signing.
-    */
-    string address = 1;
-    /*
-    The message to be signed. When using REST, this field must be encoded as
-    base64.
-    */
-    string message = 2;
-}
-
-message SignMessageFromAddressResponse {
-    // The signature to be verified over the given message
-    string signature = 1;
 }
