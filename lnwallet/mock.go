@@ -252,8 +252,8 @@ func (w *mockWalletController) LabelTransaction(chainhash.Hash, string,
 
 // SubscribeTransactions currently does nothing.
 func (w *mockWalletController) SubscribeTransactions(
-	channelRundown func() ([]ChannelRundown, error)) (TransactionSubscription,
-	error) {
+	channelRundown func() (
+		[]ChannelRundown, error)) (TransactionSubscription, error) {
 
 	return nil, nil
 }
@@ -270,7 +270,9 @@ func (w *mockWalletController) GetRecoveryInfo() (bool, float64, error) {
 
 // GetTransaction returns data for any transaction given its id, even if it is
 // not part of the internal wallet.
-func (w *mockWalletController) GetTransaction(hash *chainhash.Hash) (*TransactionDetail, bool, error) {
+func (w *mockWalletController) GetTransaction(
+	hash *chainhash.Hash) (*TransactionDetail, bool, error) {
+
 	return nil, false, nil
 }
 

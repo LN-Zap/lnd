@@ -1577,7 +1577,9 @@ func (t *txSubscriptionClient) Cancel() {
 // notificationProxier proxies the notifications received by the underlying
 // wallet's notification client to a higher-level TransactionSubscription
 // client.
-func (t *txSubscriptionClient) notificationProxier(channelRundown func() ([]lnwallet.ChannelRundown, error)) {
+func (t *txSubscriptionClient) notificationProxier(
+	channelRundown func() ([]lnwallet.ChannelRundown, error)) {
+
 	defer t.wg.Done()
 
 out:
@@ -1616,7 +1618,9 @@ out:
 			go func(txNtfn *wallet.TransactionNotifications) {
 				for _, tx := range txNtfn.UnminedTransactions {
 					detail, err := unminedTransactionsToDetail(
-						tx, t.w.ChainParams(), channelRundown,
+						tx,
+						t.w.ChainParams(),
+						channelRundown,
 					)
 					if err != nil {
 						continue
@@ -1635,10 +1639,12 @@ out:
 	}
 }
 
-// ensureCorrectLabel ensures that the correct label is set for the forwarded transaction.
-// It's possible that, during channel closure, the peer broadcasts the closure transaction
-// before us, therefore leading to us forwarding the transaction without the proper label.
-func ensureCorrectLabel(channelRundown func() ([]lnwallet.ChannelRundown, error),
+// ensureCorrectLabel ensures that the correct label is set for the forwarded
+// transaction. It's possible that, during channel closure, the peer broadcasts
+// the closure transaction before us, therefore leading to us forwarding the
+// transaction without the proper label.
+func ensureCorrectLabel(
+	channelRundown func() ([]lnwallet.ChannelRundown, error),
 	detail *lnwallet.TransactionDetail, tx *wire.MsgTx) error {
 
 	if len(detail.Label) != 0 {
@@ -1660,7 +1666,10 @@ func ensureCorrectLabel(channelRundown func() ([]lnwallet.ChannelRundown, error)
 	return nil
 }
 
-func findChannelClosedByTxn(channelRundown func() ([]lnwallet.ChannelRundown, error), msgTx *wire.MsgTx) (*lndwire.ShortChannelID, error) {
+func findChannelClosedByTxn(
+	channelRundown func() ([]lnwallet.ChannelRundown, error),
+	msgTx *wire.MsgTx) (*lndwire.ShortChannelID, error) {
+
 	if channelRundown == nil {
 		return nil, nil
 	}
@@ -1694,7 +1703,11 @@ func findChannelClosedByTxn(channelRundown func() ([]lnwallet.ChannelRundown, er
 // blocks.
 //
 // This is a part of the WalletController interface.
-func (b *BtcWallet) SubscribeTransactions(channelRundown func() ([]lnwallet.ChannelRundown, error)) (lnwallet.TransactionSubscription, error) {
+func (b *BtcWallet) SubscribeTransactions(
+	channelRundown func() (
+		[]lnwallet.ChannelRundown,
+		error)) (lnwallet.TransactionSubscription, error) {
+
 	walletClient := b.wallet.NtfnServer.TransactionNotifications()
 
 	txClient := &txSubscriptionClient{

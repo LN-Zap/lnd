@@ -106,14 +106,17 @@ func Version() string {
 // the semantic versioning 2.0.0 spec (http://semver.org/).
 func StrikeVersion() string {
 	// Start with the major, minor, and patch versions.
-	version := fmt.Sprintf("%d.%d.%d", StrikeMajor, StrikeMinor, StrikePatch)
+	version := fmt.Sprintf("%d.%d.%d", StrikeMajor, StrikeMinor,
+		StrikePatch)
 
 	// Append pre-release version if there is one. The hyphen called for by
 	// the semantic versioning spec is automatically appended and should not
 	// be contained in the pre-release string.
-	StrikePreRelease := fmt.Sprintf("lnd.%d.%d.%d", AppMajor, AppMinor, AppPatch)
+	StrikePreRelease := fmt.Sprintf("lnd.%d.%d.%d", AppMajor, AppMinor,
+		AppPatch)
 	if AppPreRelease != "" {
-		StrikePreRelease = fmt.Sprintf("%s.%s", StrikePreRelease, AppPreRelease)
+		StrikePreRelease = fmt.Sprintf("%s.%s", StrikePreRelease,
+			AppPreRelease)
 	}
 
 	version = fmt.Sprintf("%s-%s", version, StrikePreRelease)

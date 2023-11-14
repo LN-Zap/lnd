@@ -241,7 +241,8 @@ func (w *WalletController) LabelTransaction(chainhash.Hash, string,
 }
 
 // SubscribeTransactions currently does nothing.
-func (w *WalletController) SubscribeTransactions(channelRundown func() ([]lnwallet.ChannelRundown, error)) (lnwallet.TransactionSubscription,
+func (w *WalletController) SubscribeTransactions(channelRundown func() (
+	[]lnwallet.ChannelRundown, error)) (lnwallet.TransactionSubscription,
 	error) {
 
 	return nil, nil
@@ -259,7 +260,9 @@ func (w *WalletController) GetRecoveryInfo() (bool, float64, error) {
 
 // GetTransaction returns data for any transaction given its id, even if it is
 // not part of the internal wallet.
-func (w *WalletController) GetTransaction(hash *chainhash.Hash) (*lnwallet.TransactionDetail, bool, error) {
+func (w *WalletController) GetTransaction(
+	hash *chainhash.Hash) (*lnwallet.TransactionDetail, bool, error) {
+
 	return nil, false, nil
 }
 

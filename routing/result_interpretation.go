@@ -314,9 +314,10 @@ func (i *interpretedResult) processPaymentOutcomeIntermediate(
 	switch failure.(type) {
 
 	// If FailIncorrectPaymentAmount or FailIncorrectDetails is received it
-	// indicates we are using wrong payment hash or amount. Generally this error
-	// is expected to originate from the destination although this may not
-	// always be the case, for example if an interceptor node is proxying htlcs.
+	// indicates we are using wrong payment hash or amount. Generally this
+	// error is expected to originate from the destination although this may
+	// not always be the case, for example if an interceptor node is
+	// proxying htlcs.
 	case *lnwire.FailIncorrectPaymentAmount,
 		*lnwire.FailIncorrectDetails:
 		reportSuccess()

@@ -506,7 +506,8 @@ type WalletController interface {
 	// supported.
 	//
 	// TODO(roasbeef): make distinct interface?
-	SubscribeTransactions(channelRundown func() ([]ChannelRundown, error)) (TransactionSubscription, error)
+	SubscribeTransactions(channelRundown func() ([]ChannelRundown,
+		error)) (TransactionSubscription, error)
 
 	// IsSynced returns a boolean indicating if from the PoV of the wallet,
 	// it has fully synced to the current best block in the main chain.

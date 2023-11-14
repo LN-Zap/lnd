@@ -4183,7 +4183,7 @@ func (r *rpcServer) ListChannels(ctx context.Context,
 
 // IsOurAddress returns whether the provided address is controlled by the
 // node's wallet or not.
-func (r *rpcServer) IsOurAddress(ctx context.Context,
+func (r *rpcServer) IsOurAddress(_ context.Context,
 	in *lnrpc.IsOurAddressRequest) (*lnrpc.IsOurAddressResponse, error) {
 
 	// Decode the address. We further need to check whether the address is
@@ -4192,10 +4192,11 @@ func (r *rpcServer) IsOurAddress(ctx context.Context,
 		in.Address, r.cfg.ActiveNetParams.Params,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("invalid address: %v", err)
+		return nil, fmt.Errorf("invalid address: %w", err)
 	}
 
-	// Make the check on the decoded address according to the active network.
+	// Make the check on the decoded address according to the
+	// active network.
 	if !address.IsForNet(r.cfg.ActiveNetParams.Params) {
 		return nil, fmt.Errorf("address: %v is not valid for this "+
 			"network: %v", address.String(),
@@ -5853,7 +5854,8 @@ func (r *rpcServer) SubscribeTransactions(req *lnrpc.GetTransactionsRequest,
 	updateStream lnrpc.Lightning_SubscribeTransactionsServer) error {
 
 	channelRundown := func() ([]lnwallet.ChannelRundown, error) {
-		channels, err := r.server.chanStateDB.FetchWaitingCloseChannels()
+		channels, err :=
+			r.server.chanStateDB.FetchWaitingCloseChannels()
 		if err != nil {
 			return nil, err
 		}
@@ -5865,10 +5867,12 @@ func (r *rpcServer) SubscribeTransactions(req *lnrpc.GetTransactionsRequest,
 				ShortChanID: channel.ShortChannelID,
 			})
 		}
+
 		return result, nil
 	}
 
-	txClient, err := r.server.cc.Wallet.SubscribeTransactions(channelRundown)
+	txClient, err :=
+		r.server.cc.Wallet.SubscribeTransactions(channelRundown)
 	if err != nil {
 		return err
 	}
@@ -5910,7 +5914,7 @@ func (r *rpcServer) SubscribeTransactions(req *lnrpc.GetTransactionsRequest,
 // with relevant data for a confirmed or unconfirmed transaction. The is
 // relevant field denotes if the transaction is relevant to the internal wallet,
 // hence exists in the transactino store.
-func (r *rpcServer) GetTransaction(ctx context.Context,
+func (r *rpcServer) GetTransaction(_ context.Context,
 	req *lnrpc.GetTransactionRequest) (*lnrpc.GetTransactionResponse,
 	error) {
 
