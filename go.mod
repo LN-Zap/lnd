@@ -9,7 +9,7 @@ require (
 	github.com/btcsuite/btcd/btcutil/psbt v1.1.8
 	github.com/btcsuite/btcd/chaincfg/chainhash v1.0.2
 	github.com/btcsuite/btclog v0.0.0-20170628155309-84c8d2346e9f
-	github.com/btcsuite/btcwallet v0.16.10-0.20230804184612-07be54bc22cf
+	github.com/btcsuite/btcwallet v0.16.10-0.20231017144732-e3ff37491e9c
 	github.com/btcsuite/btcwallet/wallet/txauthor v1.3.2
 	github.com/btcsuite/btcwallet/wallet/txrules v1.2.0
 	github.com/btcsuite/btcwallet/walletdb v1.4.0
@@ -60,7 +60,7 @@ require (
 	golang.org/x/sync v0.2.0
 	golang.org/x/term v0.8.0
 	golang.org/x/time v0.0.0-20220224211638-0e9765cccd65
-	google.golang.org/grpc v1.53.0
+	google.golang.org/grpc v1.56.3
 	google.golang.org/protobuf v1.30.0
 	gopkg.in/macaroon-bakery.v2 v2.0.1
 	gopkg.in/macaroon.v2 v2.0.0
@@ -98,7 +98,7 @@ require (
 	github.com/fsnotify/fsnotify v1.5.4 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt/v4 v4.4.2 // indirect
-	github.com/golang/protobuf v1.5.2 // indirect
+	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/golang/snappy v0.0.4 // indirect
 	github.com/google/btree v1.0.1 // indirect
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510 // indirect
@@ -180,7 +180,7 @@ require (
 	golang.org/x/sys v0.8.0 // indirect
 	golang.org/x/text v0.9.0 // indirect
 	golang.org/x/tools v0.9.1 // indirect
-	google.golang.org/genproto v0.0.0-20230110181048-76db0878b65f // indirect
+	google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1 // indirect
 	gopkg.in/errgo.v1 v1.0.1 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.0.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
@@ -209,7 +209,7 @@ replace github.com/gogo/protobuf => github.com/gogo/protobuf v1.3.2
 replace google.golang.org/protobuf => github.com/lightninglabs/protobuf-go-hex-display v1.30.0-hex-display
 
 // This replace is for making use of our private btcwallet fork.
-replace github.com/btcsuite/btcwallet => github.com/LN-Zap/btcwallet-strike v0.16.10-strike
+replace github.com/btcsuite/btcwallet => github.com/LN-Zap/btcwallet-strike v0.16.10-e3ff37491e9c-strike
 
 // If you change this please also update .github/pull_request_template.md and
 // docs/INSTALL.md.
