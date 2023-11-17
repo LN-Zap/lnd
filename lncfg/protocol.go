@@ -1,11 +1,12 @@
-//go:build !rpctest
-// +build !rpctest
+//go:build !integration
 
 package lncfg
 
 // ProtocolOptions is a struct that we use to be able to test backwards
 // compatibility of protocol additions, while defaulting to the latest within
 // lnd, or to enable experimental protocol changes.
+//
+//nolint:lll
 type ProtocolOptions struct {
 	// LegacyProtocol is a sub-config that houses all the legacy protocol
 	// options.  These are mostly used for integration tests as most modern
@@ -20,6 +21,10 @@ type ProtocolOptions struct {
 	// (channels larger than 0.16 BTC) channels, which is the opposite of
 	// mini.
 	WumboChans bool `long:"wumbo-channels" description:"if set, then lnd will create and accept requests for channels larger chan 0.16 BTC"`
+
+	// TaprootChans should be set if we want to enable support for the
+	// experimental simple taproot chans commitment type.
+	TaprootChans bool `long:"simple-taproot-chans" description:"if set, then lnd will create and accept requests for channels using the simple taproot commitment type"`
 
 	// NoAnchors should be set if we don't want to support opening or accepting
 	// channels having the anchor commitment type.

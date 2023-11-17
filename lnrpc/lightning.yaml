@@ -162,9 +162,11 @@ http:
       post: "/v1/custommessage"
       body: "*"
     - selector: lnrpc.Lightning.SubscribeCustomMessages
-      get: "/v1/custommessage/subscribe"
+      get: "/v1/custommessage/subscribe"      
     - selector: lnrpc.Lightning.ListAliases
       get: "/v1/aliases/list"
+    - selector: lnrpc.Lightning.LookupHtlcResolution
+      get: "/v1/htlc-resolution/{chan_id}/{htlc_index}"
     - selector: lnrpc.Lightning.IsOurAddress
       get: "/v1/isouraddress/{address}"
     - selector: lnrpc.Lightning.GetTransaction

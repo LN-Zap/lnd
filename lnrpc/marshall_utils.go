@@ -8,6 +8,7 @@ import (
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/txscript"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/lightningnetwork/lnd/lnwallet"
 	"github.com/lightningnetwork/lnd/lnwire"
 )
@@ -106,11 +107,7 @@ func MarshalUtxos(utxos []*lnwallet.Utxo, activeNetParams *chaincfg.Params) (
 
 		// Now that we know we have a proper mapping to an address,
 		// we'll convert the regular outpoint to an lnrpc variant.
-		outpoint := &OutPoint{
-			TxidBytes:   utxo.OutPoint.Hash[:],
-			TxidStr:     utxo.OutPoint.Hash.String(),
-			OutputIndex: utxo.OutPoint.Index,
-		}
+		outpoint := MarshalOutPoint(&utxo.OutPoint)
 
 		utxoResp := Utxo{
 			AddressType:   addrType,
@@ -151,8 +148,6 @@ func MarshallOutputType(o txscript.ScriptClass) OutputScriptType {
 	// Translate txscript ScriptClass type to the proper gRPC proto
 	// output script type.
 	switch o {
-	case txscript.PubKeyHashTy:
-		return OutputScriptType_SCRIPT_TYPE_PUBKEY_HASH
 	case txscript.ScriptHashTy:
 		return OutputScriptType_SCRIPT_TYPE_SCRIPT_HASH
 	case txscript.WitnessV0PubKeyHashTy:
@@ -167,9 +162,20 @@ func MarshallOutputType(o txscript.ScriptClass) OutputScriptType {
 		return OutputScriptType_SCRIPT_TYPE_NULLDATA
 	case txscript.NonStandardTy:
 		return OutputScriptType_SCRIPT_TYPE_NON_STANDARD
+	case txscript.WitnessUnknownTy:
+		return OutputScriptType_SCRIPT_TYPE_WITNESS_UNKNOWN
 	case txscript.WitnessV1TaprootTy:
 		return OutputScriptType_SCRIPT_TYPE_WITNESS_V1_TAPROOT
 	default:
-		return OutputScriptType_SCRIPT_TYPE_WITNESS_UNKNOWN
+		return OutputScriptType_SCRIPT_TYPE_PUBKEY_HASH
+	}
+}
+
+// MarshalOutPoint converts a wire.OutPoint to its proto counterpart.
+func MarshalOutPoint(op *wire.OutPoint) *OutPoint {
+	return &OutPoint{
+		TxidBytes:   op.Hash[:],
+		TxidStr:     op.Hash.String(),
+		OutputIndex: op.Index,
 	}
 }

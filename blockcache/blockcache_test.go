@@ -9,6 +9,7 @@ import (
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/lightninglabs/neutrino"
 	"github.com/lightninglabs/neutrino/cache"
 	"github.com/stretchr/testify/require"
 )
@@ -20,16 +21,18 @@ type mockChainBackend struct {
 	sync.RWMutex
 }
 
-func (m *mockChainBackend) addBlock(block *wire.MsgBlock, nonce uint32) {
+func newMockChain() *mockChainBackend {
+	return &mockChainBackend{
+		blocks: make(map[chainhash.Hash]*wire.MsgBlock),
+	}
+}
+
+// GetBlock is a mock implementation of block fetching that tracks the number
+// of backend calls and returns the block found for the given hash or an error.
+func (m *mockChainBackend) GetBlock(blockHash *chainhash.Hash) (*wire.MsgBlock, error) {
 	m.Lock()
 	defer m.Unlock()
-	block.Header.Nonce = nonce
-	hash := block.Header.BlockHash()
-	m.blocks[hash] = block
-}
-func (m *mockChainBackend) GetBlock(blockHash *chainhash.Hash) (*wire.MsgBlock, error) {
-	m.RLock()
-	defer m.RUnlock()
+
 	m.chainCallCount++
 
 	block, ok := m.blocks[*blockHash]
@@ -40,15 +43,25 @@ func (m *mockChainBackend) GetBlock(blockHash *chainhash.Hash) (*wire.MsgBlock, 
 	return block, nil
 }
 
-func newMockChain() *mockChainBackend {
-	return &mockChainBackend{
-		blocks: make(map[chainhash.Hash]*wire.MsgBlock),
-	}
+func (m *mockChainBackend) getChainCallCount() int {
+	m.RLock()
+	defer m.RUnlock()
+
+	return m.chainCallCount
+}
+
+func (m *mockChainBackend) addBlock(block *wire.MsgBlock, nonce uint32) {
+	m.Lock()
+	defer m.Unlock()
+
+	block.Header.Nonce = nonce
+	hash := block.Header.BlockHash()
+	m.blocks[hash] = block
 }
 
 func (m *mockChainBackend) resetChainCallCount() {
-	m.RLock()
-	defer m.RUnlock()
+	m.Lock()
+	defer m.Unlock()
 
 	m.chainCallCount = 0
 }
@@ -72,7 +85,9 @@ func TestBlockCacheGetBlock(t *testing.T) {
 	inv3 := wire.NewInvVect(wire.InvTypeWitnessBlock, &blockhash3)
 
 	// Determine the size of one of the blocks.
-	sz, _ := (&cache.CacheableBlock{Block: btcutil.NewBlock(block1)}).Size()
+	sz, _ := (&neutrino.CacheableBlock{
+		Block: btcutil.NewBlock(block1),
+	}).Size()
 
 	// A new Cache is set up with a capacity of 2 blocks
 	bc := NewBlockCache(2 * sz)
@@ -90,7 +105,7 @@ func TestBlockCacheGetBlock(t *testing.T) {
 	_, err := bc.GetBlock(&blockhash1, getBlockImpl)
 	require.NoError(t, err)
 	require.Equal(t, 1, bc.Cache.Len())
-	require.Equal(t, 1, mc.chainCallCount)
+	require.Equal(t, 1, mc.getChainCallCount())
 	mc.resetChainCallCount()
 
 	_, err = bc.Cache.Get(*inv1)
@@ -102,7 +117,7 @@ func TestBlockCacheGetBlock(t *testing.T) {
 	_, err = bc.GetBlock(&blockhash2, getBlockImpl)
 	require.NoError(t, err)
 	require.Equal(t, 2, bc.Cache.Len())
-	require.Equal(t, 1, mc.chainCallCount)
+	require.Equal(t, 1, mc.getChainCallCount())
 	mc.resetChainCallCount()
 
 	_, err = bc.Cache.Get(*inv1)
@@ -117,7 +132,7 @@ func TestBlockCacheGetBlock(t *testing.T) {
 	_, err = bc.GetBlock(&blockhash1, getBlockImpl)
 	require.NoError(t, err)
 	require.Equal(t, 2, bc.Cache.Len())
-	require.Equal(t, 0, mc.chainCallCount)
+	require.Equal(t, 0, mc.getChainCallCount())
 	mc.resetChainCallCount()
 
 	// Since the Cache is now at its max capacity, it is expected that when
@@ -128,7 +143,7 @@ func TestBlockCacheGetBlock(t *testing.T) {
 	_, err = bc.GetBlock(&blockhash3, getBlockImpl)
 	require.NoError(t, err)
 	require.Equal(t, 2, bc.Cache.Len())
-	require.Equal(t, 1, mc.chainCallCount)
+	require.Equal(t, 1, mc.getChainCallCount())
 	mc.resetChainCallCount()
 
 	_, err = bc.Cache.Get(*inv1)
@@ -155,7 +170,9 @@ func TestBlockCacheMutexes(t *testing.T) {
 	blockhash2 := block2.BlockHash()
 
 	// Determine the size of the block.
-	sz, _ := (&cache.CacheableBlock{Block: btcutil.NewBlock(block1)}).Size()
+	sz, _ := (&neutrino.CacheableBlock{
+		Block: btcutil.NewBlock(block1),
+	}).Size()
 
 	// A new Cache is set up with a capacity of 2 blocks
 	bc := NewBlockCache(2 * sz)
@@ -183,5 +200,5 @@ func TestBlockCacheMutexes(t *testing.T) {
 	}
 
 	wg.Wait()
-	require.Equal(t, 2, mc.chainCallCount)
+	require.Equal(t, 2, mc.getChainCallCount())
 }

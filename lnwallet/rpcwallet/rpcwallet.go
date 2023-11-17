@@ -159,6 +159,10 @@ func (r *RPCKeyRing) SendOutputs(outputs []*wire.TxOut,
 			return nil, fmt.Errorf("error looking up utxo: %v", err)
 		}
 
+		if txscript.IsPayToTaproot(info.PkScript) {
+			signDesc.HashType = txscript.SigHashDefault
+		}
+
 		// Now that we know the input is ours, we'll populate the
 		// signDesc with the per input unique information.
 		signDesc.Output = &wire.TxOut{
@@ -191,13 +195,13 @@ func (r *RPCKeyRing) SendOutputs(outputs []*wire.TxOut,
 // perform any other tasks (such as coin selection, UTXO locking or
 // input/output/fee value validation, PSBT finalization). Any input that is
 // incomplete will be skipped.
-func (r *RPCKeyRing) SignPsbt(packet *psbt.Packet) error {
+func (r *RPCKeyRing) SignPsbt(packet *psbt.Packet) ([]uint32, error) {
 	ctxt, cancel := context.WithTimeout(context.Background(), r.rpcTimeout)
 	defer cancel()
 
 	var buf bytes.Buffer
 	if err := packet.Serialize(&buf); err != nil {
-		return fmt.Errorf("error serializing PSBT: %v", err)
+		return nil, fmt.Errorf("error serializing PSBT: %v", err)
 	}
 
 	resp, err := r.walletClient.SignPsbt(ctxt, &walletrpc.SignPsbtRequest{
@@ -205,7 +209,7 @@ func (r *RPCKeyRing) SignPsbt(packet *psbt.Packet) error {
 	})
 	if err != nil {
 		considerShutdown(err)
-		return fmt.Errorf("error signing PSBT in remote signer "+
+		return nil, fmt.Errorf("error signing PSBT in remote signer "+
 			"instance: %v", err)
 	}
 
@@ -213,7 +217,7 @@ func (r *RPCKeyRing) SignPsbt(packet *psbt.Packet) error {
 		bytes.NewReader(resp.SignedPsbt), false,
 	)
 	if err != nil {
-		return fmt.Errorf("error parsing signed PSBT: %v", err)
+		return nil, fmt.Errorf("error parsing signed PSBT: %v", err)
 	}
 
 	// The caller expects the packet to be modified instead of a new
@@ -224,7 +228,7 @@ func (r *RPCKeyRing) SignPsbt(packet *psbt.Packet) error {
 	packet.Outputs = signedPacket.Outputs
 	packet.Unknowns = signedPacket.Unknowns
 
-	return nil
+	return resp.SignedInputs, nil
 }
 
 // FinalizePsbt expects a partial transaction with all inputs and outputs fully
@@ -251,8 +255,9 @@ func (r *RPCKeyRing) SignPsbt(packet *psbt.Packet) error {
 // parameter in FinalizePsbt so we can get rid of this code duplication.
 func (r *RPCKeyRing) FinalizePsbt(packet *psbt.Packet, _ string) error {
 	// Let's check that this is actually something we can and want to sign.
-	// We need at least one input and one output.
-	err := psbt.VerifyInputOutputLen(packet, true, true)
+	// We need at least one input and one output. In addition each
+	// input needs nonWitness Utxo or witness Utxo data specified.
+	err := psbt.InputsReadyToSign(packet)
 	if err != nil {
 		return err
 	}
@@ -387,8 +392,8 @@ func (r *RPCKeyRing) DeriveKey(
 // sha256 of the resulting shared point serialized in compressed format. If k is
 // our private key, and P is the public key, we perform the following operation:
 //
-//  sx := k*P
-//  s := sha256(sx.SerializeCompressed())
+//	sx := k*P
+//	s := sha256(sx.SerializeCompressed())
 //
 // NOTE: This method is part of the keychain.ECDHRing interface.
 func (r *RPCKeyRing) ECDH(keyDesc keychain.KeyDescriptor,
@@ -449,11 +454,20 @@ func (r *RPCKeyRing) SignMessage(keyLoc keychain.KeyLocator,
 			"signer instance: %v", err)
 	}
 
-	wireSig, err := lnwire.NewSigFromRawSignature(resp.Signature)
+	wireSig, err := lnwire.NewSigFromECDSARawSignature(resp.Signature)
 	if err != nil {
-		return nil, fmt.Errorf("error parsing raw signature: %v", err)
+		return nil, fmt.Errorf("unable to create sig: %w", err)
 	}
-	return wireSig.ToSignature()
+	sig, err := wireSig.ToSignature()
+	if err != nil {
+		return nil, fmt.Errorf("unable to parse sig: %w", err)
+	}
+	ecdsaSig, ok := sig.(*ecdsa.Signature)
+	if !ok {
+		return nil, fmt.Errorf("unexpected signature type: %T", sig)
+	}
+
+	return ecdsaSig, nil
 }
 
 // SignMessageCompact signs the given message, single or double SHA256 hashing
@@ -593,7 +607,7 @@ func (r *RPCKeyRing) ComputeInputScript(tx *wire.MsgTx,
 		signDesc.SignMethod = input.TaprootKeySpendBIP0086SignMethod
 		signDesc.WitnessScript = nil
 
-		sig, err := r.remoteSign(tx, signDesc, sigScript)
+		sig, err := r.remoteSign(tx, signDesc, nil)
 		if err != nil {
 			return nil, fmt.Errorf("error signing with remote"+
 				"instance: %v", err)
@@ -617,7 +631,7 @@ func (r *RPCKeyRing) ComputeInputScript(tx *wire.MsgTx,
 
 	// Let's give the TX to the remote instance now, so it can sign the
 	// input.
-	sig, err := r.remoteSign(tx, signDesc, sigScript)
+	sig, err := r.remoteSign(tx, signDesc, witnessProgram)
 	if err != nil {
 		return nil, fmt.Errorf("error signing with remote instance: %v",
 			err)
@@ -640,10 +654,15 @@ func (r *RPCKeyRing) ComputeInputScript(tx *wire.MsgTx,
 // all signing parties must be provided, including the public key of the local
 // signing key. If nonces of other parties are already known, they can be
 // submitted as well to reduce the number of method calls necessary later on.
-func (r *RPCKeyRing) MuSig2CreateSession(keyLoc keychain.KeyLocator,
-	pubKeys []*btcec.PublicKey, tweaks *input.MuSig2Tweaks,
-	otherNonces [][musig2.PubNonceSize]byte) (*input.MuSig2SessionInfo,
-	error) {
+func (r *RPCKeyRing) MuSig2CreateSession(bipVersion input.MuSig2Version,
+	keyLoc keychain.KeyLocator, pubKeys []*btcec.PublicKey,
+	tweaks *input.MuSig2Tweaks, otherNonces [][musig2.PubNonceSize]byte,
+	localNonces *musig2.Nonces) (*input.MuSig2SessionInfo, error) {
+
+	apiVersion, err := signrpc.MarshalMuSig2Version(bipVersion)
+	if err != nil {
+		return nil, err
+	}
 
 	// We need to serialize all data for the RPC call. We can do that by
 	// putting everything directly into the request struct.
@@ -657,9 +676,18 @@ func (r *RPCKeyRing) MuSig2CreateSession(keyLoc keychain.KeyLocator,
 			[]*signrpc.TweakDesc, len(tweaks.GenericTweaks),
 		),
 		OtherSignerPublicNonces: make([][]byte, len(otherNonces)),
+		Version:                 apiVersion,
 	}
 	for idx, pubKey := range pubKeys {
-		req.AllSignerPubkeys[idx] = schnorr.SerializePubKey(pubKey)
+		switch bipVersion {
+		case input.MuSig2Version040:
+			req.AllSignerPubkeys[idx] = schnorr.SerializePubKey(
+				pubKey,
+			)
+
+		case input.MuSig2Version100RC2:
+			req.AllSignerPubkeys[idx] = pubKey.SerializeCompressed()
+		}
 	}
 	for idx, genericTweak := range tweaks.GenericTweaks {
 		req.Tweaks[idx] = &signrpc.TweakDesc{
@@ -678,6 +706,10 @@ func (r *RPCKeyRing) MuSig2CreateSession(keyLoc keychain.KeyLocator,
 		}
 	}
 
+	if localNonces != nil {
+		req.PregeneratedLocalNonce = localNonces.SecNonce[:]
+	}
+
 	ctxt, cancel := context.WithTimeout(context.Background(), r.rpcTimeout)
 	defer cancel()
 
@@ -690,6 +722,7 @@ func (r *RPCKeyRing) MuSig2CreateSession(keyLoc keychain.KeyLocator,
 
 	// De-Serialize all the info back into our native struct.
 	info := &input.MuSig2SessionInfo{
+		Version:       bipVersion,
 		TaprootTweak:  tweaks.HasTaprootTweak(),
 		HaveAllNonces: resp.HaveAllNonces,
 	}

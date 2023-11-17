@@ -11,7 +11,6 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/lightningnetwork/lnd/channeldb"
 )
 
 const (
@@ -201,21 +200,6 @@ func (r ConfRequest) String() string {
 	return fmt.Sprintf("script=%v", r.PkScript)
 }
 
-// ConfHintKey returns the key that will be used to index the confirmation
-// request's hint within the height hint cache.
-func (r ConfRequest) ConfHintKey() ([]byte, error) {
-	if r.TxID == ZeroHash {
-		return r.PkScript.Script(), nil
-	}
-
-	var txid bytes.Buffer
-	if err := channeldb.WriteElement(&txid, r.TxID); err != nil {
-		return nil, err
-	}
-
-	return txid.Bytes(), nil
-}
-
 // MatchesTx determines whether the given transaction satisfies the confirmation
 // request. If the confirmation request is for a script, then we'll check all of
 // the outputs of the transaction to determine if it matches. Otherwise, we'll
@@ -265,6 +249,10 @@ type ConfNtfn struct {
 
 	// dispatched is false if the confirmed notification has not been sent yet.
 	dispatched bool
+
+	// includeBlock is true if the dispatched notification should also have
+	// the block included with it.
+	includeBlock bool
 }
 
 // HistoricalConfDispatch parametrizes a manual rescan for a particular
@@ -363,22 +351,6 @@ func (r SpendRequest) String() string {
 			r.PkScript)
 	}
 	return fmt.Sprintf("outpoint=<zero>, script=%v", r.PkScript)
-}
-
-// SpendHintKey returns the key that will be used to index the spend request's
-// hint within the height hint cache.
-func (r SpendRequest) SpendHintKey() ([]byte, error) {
-	if r.OutPoint == ZeroOutPoint {
-		return r.PkScript.Script(), nil
-	}
-
-	var outpoint bytes.Buffer
-	err := channeldb.WriteElement(&outpoint, r.OutPoint)
-	if err != nil {
-		return nil, err
-	}
-
-	return outpoint.Bytes(), nil
 }
 
 // MatchesTx determines whether the given transaction satisfies the spend
@@ -576,7 +548,8 @@ func NewTxNotifier(startHeight uint32, reorgSafetyLimit uint32,
 // newConfNtfn validates all of the parameters required to successfully create
 // and register a confirmation notification.
 func (n *TxNotifier) newConfNtfn(txid *chainhash.Hash,
-	pkScript []byte, numConfs, heightHint uint32) (*ConfNtfn, error) {
+	pkScript []byte, numConfs, heightHint uint32,
+	opts *notifierOptions) (*ConfNtfn, error) {
 
 	// An accompanying output script must always be provided.
 	if len(pkScript) == 0 {
@@ -609,7 +582,8 @@ func (n *TxNotifier) newConfNtfn(txid *chainhash.Hash,
 		Event: NewConfirmationEvent(numConfs, func() {
 			n.CancelConf(confRequest, confID)
 		}),
-		HeightHint: heightHint,
+		HeightHint:   heightHint,
+		includeBlock: opts.includeBlock,
 	}, nil
 }
 
@@ -622,7 +596,8 @@ func (n *TxNotifier) newConfNtfn(txid *chainhash.Hash,
 // UpdateConfDetails method, otherwise we will wait for the transaction/output
 // script to confirm even though it already has.
 func (n *TxNotifier) RegisterConf(txid *chainhash.Hash, pkScript []byte,
-	numConfs, heightHint uint32) (*ConfRegistration, error) {
+	numConfs, heightHint uint32,
+	optFuncs ...NotifierOption) (*ConfRegistration, error) {
 
 	select {
 	case <-n.quit:
@@ -630,8 +605,13 @@ func (n *TxNotifier) RegisterConf(txid *chainhash.Hash, pkScript []byte,
 	default:
 	}
 
+	opts := defaultNotifierOptions()
+	for _, optFunc := range optFuncs {
+		optFunc(opts)
+	}
+
 	// We'll start by performing a series of validation checks.
-	ntfn, err := n.newConfNtfn(txid, pkScript, numConfs, heightHint)
+	ntfn, err := n.newConfNtfn(txid, pkScript, numConfs, heightHint, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -682,7 +662,19 @@ func (n *TxNotifier) RegisterConf(txid *chainhash.Hash, pkScript []byte,
 			"registration since rescan has finished",
 			ntfn.ConfRequest)
 
-		err := n.dispatchConfDetails(ntfn, confSet.details)
+		// The default notification we assigned above includes the
+		// block along with the rest of the details. However not all
+		// clients want the block, so we make a copy here w/o the block
+		// if needed so we can give clients only what they ask for.
+		confDetails := confSet.details
+		if !ntfn.includeBlock && confDetails != nil {
+			confDetailsCopy := *confDetails
+			confDetailsCopy.Block = nil
+
+			confDetails = &confDetailsCopy
+		}
+
+		err := n.dispatchConfDetails(ntfn, confDetails)
 		if err != nil {
 			return nil, err
 		}
@@ -888,7 +880,16 @@ func (n *TxNotifier) UpdateConfDetails(confRequest ConfRequest,
 	// notifications that have not yet been delivered.
 	confSet.details = details
 	for _, ntfn := range confSet.ntfns {
-		err = n.dispatchConfDetails(ntfn, details)
+		// The default notification we assigned above includes the
+		// block along with the rest of the details. However not all
+		// clients want the block, so we make a copy here w/o the block
+		// if needed so we can give clients only what they ask for.
+		confDetails := *details
+		if !ntfn.includeBlock {
+			confDetails.Block = nil
+		}
+
+		err = n.dispatchConfDetails(ntfn, &confDetails)
 		if err != nil {
 			return err
 		}
@@ -1207,7 +1208,7 @@ func (n *TxNotifier) ProcessRelevantSpendTx(tx *btcutil.Tx,
 	onSpend := func(request SpendRequest, details *SpendDetail) {
 		spends = append(spends, spend{&request, details})
 	}
-	n.filterTx(tx, nil, blockHeight, nil, onSpend)
+	n.filterTx(nil, tx, blockHeight, nil, onSpend)
 
 	// After the transaction has been filtered, we can finally dispatch
 	// notifications for each request.
@@ -1376,11 +1377,11 @@ func (n *TxNotifier) dispatchSpendDetails(ntfn *SpendNtfn, details *SpendDetail)
 // through every transaction and determine if it is relevant to any of its
 // clients. A transaction can be relevant in either of the following two ways:
 //
-//   1. One of the inputs in the transaction spends an outpoint/output script
-//   for which we currently have an active spend registration for.
+//  1. One of the inputs in the transaction spends an outpoint/output script
+//     for which we currently have an active spend registration for.
 //
-//   2. The transaction has a txid or output script for which we currently have
-//   an active confirmation registration for.
+//  2. The transaction has a txid or output script for which we currently have
+//     an active confirmation registration for.
 //
 // In the event that the transaction is relevant, a confirmation/spend
 // notification will be queued for dispatch to the relevant clients.
@@ -1391,8 +1392,8 @@ func (n *TxNotifier) dispatchSpendDetails(ntfn *SpendNtfn, details *SpendDetail)
 // NOTE: In order to actually dispatch the relevant transaction notifications to
 // clients, NotifyHeight must be called with the same block height in order to
 // maintain correctness.
-func (n *TxNotifier) ConnectTip(blockHash *chainhash.Hash, blockHeight uint32,
-	txns []*btcutil.Tx) error {
+func (n *TxNotifier) ConnectTip(block *btcutil.Block,
+	blockHeight uint32) error {
 
 	select {
 	case <-n.quit:
@@ -1413,13 +1414,18 @@ func (n *TxNotifier) ConnectTip(blockHash *chainhash.Hash, blockHeight uint32,
 
 	// First, we'll iterate over all the transactions found in this block to
 	// determine if it includes any relevant transactions to the TxNotifier.
-	Log.Debugf("Filtering %d txns for %d spend requests at height %d",
-		len(txns), len(n.spendNotifications), blockHeight)
-	for _, tx := range txns {
-		n.filterTx(
-			tx, blockHash, blockHeight, n.handleConfDetailsAtTip,
-			n.handleSpendDetailsAtTip,
-		)
+	if block != nil {
+		Log.Debugf("Filtering %d txns for %d spend requests at "+
+			"height %d", len(block.Transactions()),
+			len(n.spendNotifications), blockHeight)
+
+		for _, tx := range block.Transactions() {
+			n.filterTx(
+				block, tx, blockHeight,
+				n.handleConfDetailsAtTip,
+				n.handleSpendDetailsAtTip,
+			)
+		}
 	}
 
 	// Now that we've determined which requests were confirmed and spent
@@ -1469,7 +1475,7 @@ func (n *TxNotifier) ConnectTip(blockHash *chainhash.Hash, blockHeight uint32,
 // filterTx determines whether the transaction spends or confirms any
 // outstanding pending requests. The onConf and onSpend callbacks can be used to
 // retrieve all the requests fulfilled by this transaction as they occur.
-func (n *TxNotifier) filterTx(tx *btcutil.Tx, blockHash *chainhash.Hash,
+func (n *TxNotifier) filterTx(block *btcutil.Block, tx *btcutil.Tx,
 	blockHeight uint32, onConf func(ConfRequest, *TxConfirmation),
 	onSpend func(SpendRequest, *SpendDetail)) {
 
@@ -1548,13 +1554,14 @@ func (n *TxNotifier) filterTx(tx *btcutil.Tx, blockHash *chainhash.Hash,
 		notifyDetails := func(confRequest ConfRequest) {
 			Log.Debugf("Found initial confirmation of %v: "+
 				"height=%d, hash=%v", confRequest,
-				blockHeight, blockHash)
+				blockHeight, block.Hash())
 
 			details := &TxConfirmation{
 				Tx:          tx.MsgTx(),
-				BlockHash:   blockHash,
+				BlockHash:   block.Hash(),
 				BlockHeight: blockHeight,
 				TxIndex:     uint32(tx.Index()),
+				Block:       block.MsgBlock(),
 			}
 
 			onConf(confRequest, details)
@@ -1721,8 +1728,17 @@ func (n *TxNotifier) NotifyHeight(height uint32) error {
 		Log.Infof("Dispatching %v confirmation notification for %v",
 			ntfn.NumConfirmations, ntfn.ConfRequest)
 
+		// The default notification we assigned above includes the
+		// block along with the rest of the details. However not all
+		// clients want the block, so we make a copy here w/o the block
+		// if needed so we can give clients only what they ask for.
+		confDetails := *confSet.details
+		if !ntfn.includeBlock {
+			confDetails.Block = nil
+		}
+
 		select {
-		case ntfn.Event.Confirmed <- confSet.details:
+		case ntfn.Event.Confirmed <- &confDetails:
 			ntfn.dispatched = true
 		case <-n.quit:
 			return ErrTxNotifierExiting

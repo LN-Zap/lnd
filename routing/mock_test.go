@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/btcsuite/btcd/btcec/v2"
+	"github.com/btcsuite/btcd/btcutil"
 	"github.com/go-errors/errors"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/htlcswitch"
@@ -56,7 +57,7 @@ func (m *mockPaymentAttemptDispatcherOld) SendHTLC(
 	return nil
 }
 
-func (m *mockPaymentAttemptDispatcherOld) GetPaymentResult(paymentID uint64,
+func (m *mockPaymentAttemptDispatcherOld) GetAttemptResult(paymentID uint64,
 	_ lntypes.Hash, _ htlcswitch.ErrorDecrypter) (
 	<-chan *htlcswitch.PaymentResult, error) {
 
@@ -139,7 +140,7 @@ func (m *mockMissionControlOld) ReportPaymentSuccess(paymentID uint64,
 }
 
 func (m *mockMissionControlOld) GetProbability(fromNode, toNode route.Vertex,
-	amt lnwire.MilliSatoshi) float64 {
+	amt lnwire.MilliSatoshi, capacity btcutil.Amount) float64 {
 
 	return 0
 }
@@ -205,7 +206,7 @@ func (m *mockPayerOld) SendHTLC(_ lnwire.ShortChannelID,
 
 }
 
-func (m *mockPayerOld) GetPaymentResult(paymentID uint64, _ lntypes.Hash,
+func (m *mockPayerOld) GetAttemptResult(paymentID uint64, _ lntypes.Hash,
 	_ htlcswitch.ErrorDecrypter) (<-chan *htlcswitch.PaymentResult, error) {
 
 	select {
@@ -469,7 +470,7 @@ func (m *mockControlTowerOld) FailAttempt(phash lntypes.Hash, pid uint64,
 	return nil, fmt.Errorf("pid not found")
 }
 
-func (m *mockControlTowerOld) Fail(phash lntypes.Hash,
+func (m *mockControlTowerOld) FailPayment(phash lntypes.Hash,
 	reason channeldb.FailureReason) error {
 
 	m.Lock()
@@ -552,7 +553,13 @@ func (m *mockControlTowerOld) FetchInFlightPayments() (
 }
 
 func (m *mockControlTowerOld) SubscribePayment(paymentHash lntypes.Hash) (
-	*ControlTowerSubscriber, error) {
+	ControlTowerSubscriber, error) {
+
+	return nil, errors.New("not implemented")
+}
+
+func (m *mockControlTowerOld) SubscribeAllPayments() (
+	ControlTowerSubscriber, error) {
 
 	return nil, errors.New("not implemented")
 }
@@ -572,7 +579,7 @@ func (m *mockPaymentAttemptDispatcher) SendHTLC(firstHop lnwire.ShortChannelID,
 	return args.Error(0)
 }
 
-func (m *mockPaymentAttemptDispatcher) GetPaymentResult(attemptID uint64,
+func (m *mockPaymentAttemptDispatcher) GetAttemptResult(attemptID uint64,
 	paymentHash lntypes.Hash, deobfuscator htlcswitch.ErrorDecrypter) (
 	<-chan *htlcswitch.PaymentResult, error) {
 
@@ -644,9 +651,9 @@ func (m *mockMissionControl) ReportPaymentSuccess(paymentID uint64,
 }
 
 func (m *mockMissionControl) GetProbability(fromNode, toNode route.Vertex,
-	amt lnwire.MilliSatoshi) float64 {
+	amt lnwire.MilliSatoshi, capacity btcutil.Amount) float64 {
 
-	args := m.Called(fromNode, toNode, amt)
+	args := m.Called(fromNode, toNode, amt, capacity)
 	return args.Get(0).(float64)
 }
 
@@ -727,7 +734,7 @@ func (m *mockControlTower) FailAttempt(phash lntypes.Hash, pid uint64,
 	return args.Get(0).(*channeldb.HTLCAttempt), args.Error(1)
 }
 
-func (m *mockControlTower) Fail(phash lntypes.Hash,
+func (m *mockControlTower) FailPayment(phash lntypes.Hash,
 	reason channeldb.FailureReason) error {
 
 	m.Lock()
@@ -752,6 +759,7 @@ func (m *mockControlTower) FetchPayment(phash lntypes.Hash) (
 	// Make a copy of the payment here to avoid data race.
 	p := args.Get(0).(*channeldb.MPPayment)
 	payment := &channeldb.MPPayment{
+		Info:          p.Info,
 		FailureReason: p.FailureReason,
 	}
 	payment.HTLCs = make([]channeldb.HTLCAttempt, len(p.HTLCs))
@@ -768,10 +776,17 @@ func (m *mockControlTower) FetchInFlightPayments() (
 }
 
 func (m *mockControlTower) SubscribePayment(paymentHash lntypes.Hash) (
-	*ControlTowerSubscriber, error) {
+	ControlTowerSubscriber, error) {
 
 	args := m.Called(paymentHash)
-	return args.Get(0).(*ControlTowerSubscriber), args.Error(1)
+	return args.Get(0).(ControlTowerSubscriber), args.Error(1)
+}
+
+func (m *mockControlTower) SubscribeAllPayments() (
+	ControlTowerSubscriber, error) {
+
+	args := m.Called()
+	return args.Get(0).(ControlTowerSubscriber), args.Error(1)
 }
 
 type mockLink struct {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/btcsuite/btcd/btcec/v2"
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/lnwire"
@@ -13,7 +14,12 @@ import (
 
 // createPubkey return a new test pubkey.
 func createPubkey(id byte) route.Vertex {
-	pubkey := route.Vertex{id}
+	_, secpPub := btcec.PrivKeyFromBytes([]byte{id})
+
+	var bytes [33]byte
+	copy(bytes[:], secpPub.SerializeCompressed()[:33])
+
+	pubkey := route.Vertex(bytes)
 	return pubkey
 }
 
@@ -218,6 +224,31 @@ func (m *mockGraph) fetchNodeFeatures(nodePub route.Vertex) (
 	*lnwire.FeatureVector, error) {
 
 	return lnwire.EmptyFeatureVector(), nil
+}
+
+// FetchAmountPairCapacity returns the maximal capacity between nodes in the
+// graph.
+//
+// NOTE: Part of the routingGraph interface.
+func (m *mockGraph) FetchAmountPairCapacity(nodeFrom, nodeTo route.Vertex,
+	amount lnwire.MilliSatoshi) (btcutil.Amount, error) {
+
+	var capacity btcutil.Amount
+
+	cb := func(channel *channeldb.DirectedChannel) error {
+		if channel.OtherNode == nodeTo {
+			capacity = channel.Capacity
+		}
+
+		return nil
+	}
+
+	err := m.forEachNodeChannel(nodeFrom, cb)
+	if err != nil {
+		return 0, err
+	}
+
+	return capacity, nil
 }
 
 // htlcResult describes the resolution of an htlc. If failure is nil, the htlc

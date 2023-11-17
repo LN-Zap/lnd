@@ -107,20 +107,20 @@ const (
 	sendToSwitchResultFailure = "SendToSwitch:failure"
 
 	// getPaymentResultSuccess is a test step where we expect the
-	// router to call the GetPaymentResult method, and we will
+	// router to call the GetAttemptResult method, and we will
 	// respond with a successful payment result.
-	getPaymentResultSuccess = "GetPaymentResult:success"
+	getPaymentResultSuccess = "GetAttemptResult:success"
 
 	// getPaymentResultTempFailure is a test step where we expect the
-	// router to call the GetPaymentResult method, and we will
+	// router to call the GetAttemptResult method, and we will
 	// respond with a forwarding error, expecting the router to retry.
-	getPaymentResultTempFailure = "GetPaymentResult:temp-failure"
+	getPaymentResultTempFailure = "GetAttemptResult:temp-failure"
 
 	// getPaymentResultTerminalFailure is a test step where we
-	// expect the router to call the GetPaymentResult method, and
+	// expect the router to call the GetAttemptResult method, and
 	// we will respond with a terminal error, expecting the router
 	// to stop making payment attempts.
-	getPaymentResultTerminalFailure = "GetPaymentResult:terminal-failure"
+	getPaymentResultTerminalFailure = "GetAttemptResult:terminal-failure"
 
 	// resendPayment is a test step where we manually try to resend
 	// the same payment, making sure the router responds with an
@@ -180,9 +180,8 @@ func TestRouterPaymentStateMachine(t *testing.T) {
 		}, 2),
 	}
 
-	testGraph, err := createTestGraphFromChannels(true, testChannels, "a")
+	testGraph, err := createTestGraphFromChannels(t, true, testChannels, "a")
 	require.NoError(t, err, "unable to create graph")
-	defer testGraph.cleanUp()
 
 	paymentAmt := lnwire.NewMSatFromSatoshis(1000)
 
@@ -512,11 +511,9 @@ func testPaymentLifecycle(t *testing.T, test paymentLifecycleTestCase,
 	}
 
 	router, sendResult, getPaymentResult := setupRouter()
-	defer func() {
-		if err := router.Stop(); err != nil {
-			t.Fatal(err)
-		}
-	}()
+	t.Cleanup(func() {
+		require.NoError(t, router.Stop())
+	})
 
 	// Craft a LightningPayment struct.
 	var preImage lntypes.Preimage
@@ -655,7 +652,7 @@ func testPaymentLifecycle(t *testing.T, test paymentLifecycleTestCase,
 				fatal("unable to send result")
 			}
 
-		// In this step we expect the GetPaymentResult method
+		// In this step we expect the GetAttemptResult method
 		// to be called, and we respond with the preimage to
 		// complete the payment.
 		case getPaymentResultSuccess:
@@ -667,7 +664,7 @@ func testPaymentLifecycle(t *testing.T, test paymentLifecycleTestCase,
 				fatal("unable to send result")
 			}
 
-		// In this state we expect the GetPaymentResult method
+		// In this state we expect the GetAttemptResult method
 		// to be called, and we respond with a forwarding
 		// error, indicating that the router should retry.
 		case getPaymentResultTempFailure:
@@ -685,7 +682,7 @@ func testPaymentLifecycle(t *testing.T, test paymentLifecycleTestCase,
 			}
 
 		// In this state we expect the router to call the
-		// GetPaymentResult method, and we will respond with a
+		// GetAttemptResult method, and we will respond with a
 		// terminal error, indicating the router should stop
 		// making payment attempts.
 		case getPaymentResultTerminalFailure:
@@ -941,39 +938,13 @@ func TestUpdatePaymentState(t *testing.T) {
 
 	// paymentHash is the identifier on paymentLifecycle.
 	paymentHash := lntypes.Hash{}
+	preimage := lntypes.Preimage{}
+	failureReasonError := channeldb.FailureReasonError
 
 	// TODO(yy): make MPPayment into an interface so we can mock it. The
 	// current design implicitly tests the methods SendAmt, TerminalInfo,
 	// and InFlightHTLCs on channeldb.MPPayment, which is not good. Once
 	// MPPayment becomes an interface, we can then mock these methods here.
-
-	// SentAmt returns 90, 10
-	// TerminalInfo returns non-nil, nil
-	// InFlightHTLCs returns 0
-	var preimage lntypes.Preimage
-	paymentSettled := &channeldb.MPPayment{
-		HTLCs: []channeldb.HTLCAttempt{
-			makeSettledAttempt(100, 10, preimage),
-		},
-	}
-
-	// SentAmt returns 0, 0
-	// TerminalInfo returns nil, non-nil
-	// InFlightHTLCs returns 0
-	reason := channeldb.FailureReasonError
-	paymentFailed := &channeldb.MPPayment{
-		FailureReason: &reason,
-	}
-
-	// SentAmt returns 90, 10
-	// TerminalInfo returns nil, nil
-	// InFlightHTLCs returns 1
-	paymentActive := &channeldb.MPPayment{
-		HTLCs: []channeldb.HTLCAttempt{
-			makeActiveAttempt(100, 10),
-			makeFailedAttempt(100, 10),
-		},
-	}
 
 	testCases := []struct {
 		name     string
@@ -995,16 +966,31 @@ func TestUpdatePaymentState(t *testing.T) {
 		{
 			// Test that when the sentAmt exceeds totalAmount, the
 			// error is returned.
-			name:              "amount exceeded error",
-			payment:           paymentSettled,
+			name: "amount exceeded error",
+			// SentAmt returns 90, 10
+			// TerminalInfo returns non-nil, nil
+			// InFlightHTLCs returns 0
+			payment: &channeldb.MPPayment{
+				HTLCs: []channeldb.HTLCAttempt{
+					makeSettledAttempt(100, 10, preimage),
+				},
+			},
 			totalAmt:          1,
 			shouldReturnError: true,
 		},
 		{
 			// Test that when the fee budget is reached, the
 			// remaining fee should be zero.
-			name:     "fee budget reached",
-			payment:  paymentActive,
+			name: "fee budget reached",
+			payment: &channeldb.MPPayment{
+				// SentAmt returns 90, 10
+				// TerminalInfo returns nil, nil
+				// InFlightHTLCs returns 1
+				HTLCs: []channeldb.HTLCAttempt{
+					makeActiveAttempt(100, 10),
+					makeFailedAttempt(100, 10),
+				},
+			},
 			totalAmt: 1000,
 			feeLimit: 1,
 			expectedState: &paymentState{
@@ -1017,8 +1003,15 @@ func TestUpdatePaymentState(t *testing.T) {
 		{
 			// Test when the payment is settled, the state should
 			// be marked as terminated.
-			name:     "payment settled",
-			payment:  paymentSettled,
+			name: "payment settled",
+			// SentAmt returns 90, 10
+			// TerminalInfo returns non-nil, nil
+			// InFlightHTLCs returns 0
+			payment: &channeldb.MPPayment{
+				HTLCs: []channeldb.HTLCAttempt{
+					makeSettledAttempt(100, 10, preimage),
+				},
+			},
 			totalAmt: 1000,
 			feeLimit: 100,
 			expectedState: &paymentState{
@@ -1031,8 +1024,13 @@ func TestUpdatePaymentState(t *testing.T) {
 		{
 			// Test when the payment is failed, the state should be
 			// marked as terminated.
-			name:     "payment failed",
-			payment:  paymentFailed,
+			name: "payment failed",
+			// SentAmt returns 0, 0
+			// TerminalInfo returns nil, non-nil
+			// InFlightHTLCs returns 0
+			payment: &channeldb.MPPayment{
+				FailureReason: &failureReasonError,
+			},
 			totalAmt: 1000,
 			feeLimit: 100,
 			expectedState: &paymentState{
@@ -1055,10 +1053,9 @@ func TestUpdatePaymentState(t *testing.T) {
 			ct := &mockControlTower{}
 			rt := &ChannelRouter{cfg: &Config{Control: ct}}
 			pl := &paymentLifecycle{
-				router:      rt,
-				identifier:  paymentHash,
-				totalAmount: lnwire.MilliSatoshi(tc.totalAmt),
-				feeLimit:    lnwire.MilliSatoshi(tc.feeLimit),
+				router:     rt,
+				identifier: paymentHash,
+				feeLimit:   lnwire.MilliSatoshi(tc.feeLimit),
 			}
 
 			if tc.payment == nil {
@@ -1069,6 +1066,12 @@ func TestUpdatePaymentState(t *testing.T) {
 					nil, dummyErr,
 				)
 			} else {
+				// Attach the payment info.
+				info := &channeldb.PaymentCreationInfo{
+					Value: lnwire.MilliSatoshi(tc.totalAmt),
+				}
+				tc.payment.Info = info
+
 				// Otherwise we will return the payment.
 				ct.On("FetchPayment", paymentHash).Return(
 					tc.payment, nil,

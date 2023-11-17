@@ -17,6 +17,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/invoices"
 	"github.com/lightningnetwork/lnd/lntypes"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/netann"
@@ -46,7 +47,7 @@ const (
 // AddInvoiceConfig contains dependencies for invoice creation.
 type AddInvoiceConfig struct {
 	// AddInvoice is called to add the invoice to the registry.
-	AddInvoice func(invoice *channeldb.Invoice, paymentHash lntypes.Hash) (
+	AddInvoice func(invoice *invoices.Invoice, paymentHash lntypes.Hash) (
 		uint64, error)
 
 	// IsChannelActive is used to generate valid hop hints.
@@ -234,7 +235,7 @@ func (d *AddInvoiceData) mppPaymentHashAndPreimage() (*lntypes.Preimage,
 // duplicated invoices are rejected, therefore all invoices *must* have a
 // unique payment preimage.
 func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
-	invoice *AddInvoiceData) (*lntypes.Hash, *channeldb.Invoice, error) {
+	invoice *AddInvoiceData) (*lntypes.Hash, *invoices.Invoice, error) {
 
 	paymentPreimage, paymentHash, err := invoice.paymentHashAndPreimage()
 	if err != nil {
@@ -243,10 +244,10 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 
 	// The size of the memo, receipt and description hash attached must not
 	// exceed the maximum values for either of the fields.
-	if len(invoice.Memo) > channeldb.MaxMemoSize {
+	if len(invoice.Memo) > invoices.MaxMemoSize {
 		return nil, nil, fmt.Errorf("memo too large: %v bytes "+
 			"(maxsize=%v)", len(invoice.Memo),
-			channeldb.MaxMemoSize)
+			invoices.MaxMemoSize)
 	}
 	if len(invoice.DescriptionHash) > 0 &&
 		len(invoice.DescriptionHash) != 32 {
@@ -284,19 +285,26 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 
 	// We only include the amount in the invoice if it is greater than 0.
 	// By not including the amount, we enable the creation of invoices that
-	// allow the payee to specify the amount of satoshis they wish to send.
+	// allow the payer to specify the amount of satoshis they wish to send.
 	if amtMSat > 0 {
 		options = append(options, zpay32.Amount(amtMSat))
 	}
 
 	// If specified, add a fallback address to the payment request.
 	if len(invoice.FallbackAddr) > 0 {
-		addr, err := btcutil.DecodeAddress(invoice.FallbackAddr,
-			cfg.ChainParams)
+		addr, err := btcutil.DecodeAddress(
+			invoice.FallbackAddr, cfg.ChainParams,
+		)
 		if err != nil {
 			return nil, nil, fmt.Errorf("invalid fallback "+
 				"address: %v", err)
 		}
+
+		if !addr.IsForNet(cfg.ChainParams) {
+			return nil, nil, fmt.Errorf("fallback address is not "+
+				"for %s", cfg.ChainParams.Name)
+		}
+
 		options = append(options, zpay32.FallbackAddr(addr))
 	}
 
@@ -347,7 +355,7 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 	// We'll use our current default CLTV value unless one was specified as
 	// an option on the command line when creating an invoice.
 	switch {
-	case invoice.CltvExpiry > math.MaxUint16:
+	case invoice.CltvExpiry > routing.MaxCLTVDelta:
 		return nil, nil, fmt.Errorf("CLTV delta of %v is too large, "+
 			"max accepted is: %v", invoice.CltvExpiry,
 			math.MaxUint16)
@@ -448,11 +456,11 @@ func AddInvoice(ctx context.Context, cfg *AddInvoiceConfig,
 		return nil, nil, err
 	}
 
-	newInvoice := &channeldb.Invoice{
+	newInvoice := &invoices.Invoice{
 		CreationDate:   creationDate,
 		Memo:           []byte(invoice.Memo),
 		PaymentRequest: []byte(payReqString),
-		Terms: channeldb.ContractTerm{
+		Terms: invoices.ContractTerm{
 			FinalCltvDelta:  int32(payReq.MinFinalCLTVExpiry()),
 			Expiry:          payReq.Expiry(),
 			Value:           amtMSat,
@@ -655,9 +663,9 @@ func newSelectHopHintsCfg(invoicesCfg *AddInvoiceConfig,
 // sufficientHints checks whether we have sufficient hop hints, based on the
 // any of the following criteria:
 //   - Hop hint count: the number of hints have reach our max target.
-//   - Total incoming capacity: the sum of the remote balance amount in the
-//     hints is bigger of equal than our target (currently twice the invoice
-//     amount)
+//   - Total incoming capacity (for non-zero invoice amounts): the sum of the
+//     remote balance amount in the hints is bigger of equal than our target
+//     (currently twice the invoice amount)
 //
 // We limit our number of hop hints like this to keep our invoice size down,
 // and to avoid leaking all our private channels when we don't need to.
@@ -669,7 +677,7 @@ func sufficientHints(nHintsLeft int, currentAmount,
 		return true
 	}
 
-	if currentAmount >= targetAmount {
+	if targetAmount != 0 && currentAmount >= targetAmount {
 		log.Debugf("Total hint amount: %v has reached target hint "+
 			"bandwidth: %v", currentAmount, targetAmount)
 		return true

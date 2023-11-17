@@ -7,6 +7,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/btcsuite/btcd/btcutil"
 	sphinx "github.com/lightningnetwork/lightning-onion"
 	"github.com/lightningnetwork/lnd/channeldb"
 	"github.com/lightningnetwork/lnd/feature"
@@ -36,15 +37,24 @@ const (
 	// to avoid resizing and copies. It should be number on the same order as
 	// the number of active nodes in the network.
 	estimatedNodeCount = 10000
+
+	// fakeHopHintCapacity is the capacity we assume for hop hint channels.
+	// This is a high number, which expresses that a hop hint channel should
+	// be able to route payments.
+	fakeHopHintCapacity = btcutil.Amount(10 * btcutil.SatoshiPerBitcoin)
 )
 
 // pathFinder defines the interface of a path finding algorithm.
 type pathFinder = func(g *graphParams, r *RestrictParams,
 	cfg *PathFindingConfig, source, target route.Vertex,
 	amt lnwire.MilliSatoshi, timePref float64, finalHtlcExpiry int32) (
-	[]*channeldb.CachedEdgePolicy, error)
+	[]*channeldb.CachedEdgePolicy, float64, error)
 
 var (
+	// DefaultEstimator is the default estimator used for computing
+	// probabilities in pathfinding.
+	DefaultEstimator = AprioriEstimatorName
+
 	// DefaultAttemptCost is the default fixed virtual cost in path finding
 	// of a failed payment attempt. It is used to trade off potentially
 	// better routes against their probability of succeeding.
@@ -306,7 +316,7 @@ type RestrictParams struct {
 	// ProbabilitySource is a callback that is expected to return the
 	// success probability of traversing the channel from the node.
 	ProbabilitySource func(route.Vertex, route.Vertex,
-		lnwire.MilliSatoshi) float64
+		lnwire.MilliSatoshi, btcutil.Amount) float64
 
 	// FeeLimit is a maximum fee amount allowed to be used on the path from
 	// the source to the target.
@@ -426,7 +436,7 @@ func getOutgoingBalance(node route.Vertex, outgoingChans map[uint64]struct{},
 // available bandwidth.
 func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 	source, target route.Vertex, amt lnwire.MilliSatoshi, timePref float64,
-	finalHtlcExpiry int32) ([]*channeldb.CachedEdgePolicy, error) {
+	finalHtlcExpiry int32) ([]*channeldb.CachedEdgePolicy, float64, error) {
 
 	// Pathfinding can be a significant portion of the total payment
 	// latency, especially on low-powered devices. Log several metrics to
@@ -447,7 +457,7 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 		var err error
 		features, err = g.graph.fetchNodeFeatures(target)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 
@@ -456,14 +466,14 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 	err := feature.ValidateRequired(features)
 	if err != nil {
 		log.Warnf("Pathfinding destination node features: %v", err)
-		return nil, errUnknownRequiredFeature
+		return nil, 0, errUnknownRequiredFeature
 	}
 
 	// Ensure that all transitive dependencies are set.
 	err = feature.ValidateDeps(features)
 	if err != nil {
 		log.Warnf("Pathfinding destination node features: %v", err)
-		return nil, errMissingDependentFeature
+		return nil, 0, errMissingDependentFeature
 	}
 
 	// Now that we know the feature vector is well formed, we'll proceed in
@@ -475,7 +485,7 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 	if len(r.DestCustomRecords) > 0 &&
 		!features.HasFeature(lnwire.TLVOnionPayloadOptional) {
 
-		return nil, errNoTlvPayload
+		return nil, 0, errNoTlvPayload
 	}
 
 	// If the caller has a payment address to attach, check that our
@@ -483,7 +493,7 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 	if r.PaymentAddr != nil &&
 		!features.HasFeature(lnwire.PaymentAddrOptional) {
 
-		return nil, errNoPaymentAddr
+		return nil, 0, errNoPaymentAddr
 	}
 
 	// If the caller needs to send custom records, check that our
@@ -491,7 +501,7 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 	if r.Metadata != nil &&
 		!features.HasFeature(lnwire.TLVOnionPayloadOptional) {
 
-		return nil, errNoTlvPayload
+		return nil, 0, errNoTlvPayload
 	}
 
 	// Set up outgoing channel map for quicker access.
@@ -512,19 +522,19 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 			self, outgoingChanMap, g.bandwidthHints, g.graph,
 		)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 
 		// If the total outgoing balance isn't sufficient, it will be
 		// impossible to complete the payment.
 		if total < amt {
-			return nil, errInsufficientBalance
+			return nil, 0, errInsufficientBalance
 		}
 
 		// If there is only not enough capacity on a single route, it
 		// may still be possible to complete the payment by splitting.
 		if max < amt {
-			return nil, errNoPathFound
+			return nil, 0, errNoPathFound
 		}
 	}
 
@@ -538,10 +548,18 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 
 	additionalEdgesWithSrc := make(map[route.Vertex][]*edgePolicyWithSource)
 	for vertex, outgoingEdgePolicies := range g.additionalEdges {
+		// Edges connected to self are always included in the graph,
+		// therefore can be skipped. This prevents us from trying
+		// routes to malformed hop hints.
+		if vertex == self {
+			continue
+		}
+
 		// Build reverse lookup to find incoming edges. Needed because
 		// search is taken place from target to source.
 		for _, outgoingEdgePolicy := range outgoingEdgePolicies {
 			toVertex := outgoingEdgePolicy.ToNodePubKey()
+
 			incomingEdgePolicy := &edgePolicyWithSource{
 				sourceNode: vertex,
 				edge:       outgoingEdgePolicy,
@@ -602,8 +620,8 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 
 	// Validate time preference value.
 	if math.Abs(timePref) > 1 {
-		return nil, fmt.Errorf("time preference %v out of range [-1, 1]",
-			timePref)
+		return nil, 0, fmt.Errorf("time preference %v out of range "+
+			"[-1, 1]", timePref)
 	}
 
 	// Scale to avoid the extremes -1 and 1 which run into infinity issues.
@@ -620,7 +638,7 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 	// satisfy our specific requirements.
 	processEdge := func(fromVertex route.Vertex,
 		fromFeatures *lnwire.FeatureVector,
-		edge *channeldb.CachedEdgePolicy, toNodeDist *nodeWithDist) {
+		edge *unifiedEdge, toNodeDist *nodeWithDist) {
 
 		edgesExpanded++
 
@@ -631,13 +649,14 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 		// Request the success probability for this edge.
 		edgeProbability := r.ProbabilitySource(
 			fromVertex, toNodeDist.node, amountToSend,
+			edge.capacity,
 		)
 
 		log.Trace(newLogClosure(func() string {
 			return fmt.Sprintf("path finding probability: fromnode=%v,"+
-				" tonode=%v, amt=%v, probability=%v",
+				" tonode=%v, amt=%v, cap=%v, probability=%v",
 				fromVertex, toNodeDist.node, amountToSend,
-				edgeProbability)
+				edge.capacity, edgeProbability)
 		}))
 
 		// If the probability is zero, there is no point in trying.
@@ -658,8 +677,8 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 		var fee lnwire.MilliSatoshi
 		var timeLockDelta uint16
 		if fromVertex != source {
-			fee = edge.ComputeFee(amountToSend)
-			timeLockDelta = edge.TimeLockDelta
+			fee = edge.policy.ComputeFee(amountToSend)
+			timeLockDelta = edge.policy.TimeLockDelta
 		}
 
 		incomingCltv := toNodeDist.incomingCltv + int32(timeLockDelta)
@@ -736,9 +755,9 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 
 		// Every edge should have a positive time lock delta. If we
 		// encounter a zero delta, log a warning line.
-		if edge.TimeLockDelta == 0 {
+		if edge.policy.TimeLockDelta == 0 {
 			log.Warnf("Channel %v has zero cltv delta",
-				edge.ChannelID)
+				edge.policy.ChannelID)
 		}
 
 		// Calculate the total routing info size if this hop were to be
@@ -759,7 +778,7 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 				LegacyPayload: !supportsTlv,
 			}
 
-			payloadSize = hop.PayloadSize(edge.ChannelID)
+			payloadSize = hop.PayloadSize(edge.policy.ChannelID)
 		}
 
 		routingInfoSize := toNodeDist.routingInfoSize + payloadSize
@@ -780,7 +799,7 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 			amountToReceive: amountToReceive,
 			incomingCltv:    incomingCltv,
 			probability:     probability,
-			nextHop:         edge,
+			nextHop:         edge.policy,
 			routingInfoSize: routingInfoSize,
 		}
 		distance[fromVertex] = withDist
@@ -841,23 +860,32 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 
 		pivot := partialPath.node
 
-		// Create unified policies for all incoming connections.
-		u := newUnifiedPolicies(self, pivot, outgoingChanMap)
+		// Create unified edges for all incoming connections.
+		u := newNodeEdgeUnifier(self, pivot, outgoingChanMap)
 
 		err := u.addGraphPolicies(g.graph)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 
+		// We add hop hints that were supplied externally.
 		for _, reverseEdge := range additionalEdgesWithSrc[pivot] {
-			u.addPolicy(reverseEdge.sourceNode, reverseEdge.edge, 0)
+			// Hop hints don't contain a capacity. We set one here,
+			// since a capacity is needed for probability
+			// calculations. We set a high capacity to act as if
+			// there is enough liquidity, otherwise the hint would
+			// not have been added by a wallet.
+			u.addPolicy(
+				reverseEdge.sourceNode, reverseEdge.edge,
+				fakeHopHintCapacity,
+			)
 		}
 
 		amtToSend := partialPath.amountToReceive
 
 		// Expand all connections using the optimal policy for each
 		// connection.
-		for fromNode, unifiedPolicy := range u.policies {
+		for fromNode, edgeUnifier := range u.edgeUnifiers {
 			// The target node is not recorded in the distance map.
 			// Therefore we need to have this check to prevent
 			// creating a cycle. Only when we intend to route to
@@ -874,18 +902,18 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 				continue
 			}
 
-			policy := unifiedPolicy.getPolicy(
+			edge := edgeUnifier.getEdge(
 				amtToSend, g.bandwidthHints,
 			)
 
-			if policy == nil {
+			if edge == nil {
 				continue
 			}
 
 			// Get feature vector for fromNode.
 			fromFeatures, err := getGraphFeatures(fromNode)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 
 			// If there are no valid features, skip this node.
@@ -895,7 +923,7 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 
 			// Check if this candidate node is better than what we
 			// already have.
-			processEdge(fromNode, fromFeatures, policy, partialPath)
+			processEdge(fromNode, fromFeatures, edge, partialPath)
 		}
 
 		if nodeHeap.Len() == 0 {
@@ -924,7 +952,7 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 		if !ok {
 			// If the node doesn't have a next hop it means we
 			// didn't find a path.
-			return nil, errNoPathFound
+			return nil, 0, errNoPathFound
 		}
 
 		// Add the next hop to the list of path edges.
@@ -958,7 +986,7 @@ func findPath(g *graphParams, r *RestrictParams, cfg *PathFindingConfig,
 		distance[source].probability, len(pathEdges),
 		distance[source].amountToReceive-amt)
 
-	return pathEdges, nil
+	return pathEdges, distance[source].probability, nil
 }
 
 // getProbabilityBasedDist converts a weight into a distance that takes into

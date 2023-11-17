@@ -64,6 +64,10 @@ type Options struct {
 	// applications that use the channeldb package as a library.
 	NoMigration bool
 
+	// NoRevLogAmtData when set to true, indicates that amount data should
+	// not be stored in the revocation log.
+	NoRevLogAmtData bool
+
 	// clock is the time source used by the database.
 	clock clock.Clock
 
@@ -74,6 +78,10 @@ type Options struct {
 	// keepFailedPaymentAttempts determines whether failed htlc attempts
 	// are kept on disk or removed to save space.
 	keepFailedPaymentAttempts bool
+
+	// storeFinalHtlcResolutions determines whether to persistently store
+	// the final resolution of incoming htlcs.
+	storeFinalHtlcResolutions bool
 }
 
 // DefaultOptions returns an Options populated with default values.
@@ -123,6 +131,14 @@ func OptionSetPreAllocCacheNumNodes(n int) OptionModifier {
 func OptionSetUseGraphCache(use bool) OptionModifier {
 	return func(o *Options) {
 		o.UseGraphCache = use
+	}
+}
+
+// OptionNoRevLogAmtData sets the NoRevLogAmtData option to the given value. If
+// it is set to true then amount data will not be stored in the revocation log.
+func OptionNoRevLogAmtData(noAmtData bool) OptionModifier {
+	return func(o *Options) {
+		o.NoRevLogAmtData = noAmtData
 	}
 }
 
@@ -184,6 +200,16 @@ func OptionDryRunMigration(dryRun bool) OptionModifier {
 func OptionKeepFailedPaymentAttempts(keepFailedPaymentAttempts bool) OptionModifier {
 	return func(o *Options) {
 		o.keepFailedPaymentAttempts = keepFailedPaymentAttempts
+	}
+}
+
+// OptionStoreFinalHtlcResolutions controls whether to persistently store the
+// final resolution of incoming htlcs.
+func OptionStoreFinalHtlcResolutions(
+	storeFinalHtlcResolutions bool) OptionModifier {
+
+	return func(o *Options) {
+		o.storeFinalHtlcResolutions = storeFinalHtlcResolutions
 	}
 }
 

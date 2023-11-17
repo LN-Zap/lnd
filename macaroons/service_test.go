@@ -3,8 +3,6 @@ package macaroons_test
 import (
 	"context"
 	"encoding/hex"
-	"io/ioutil"
-	"os"
 	"path"
 	"testing"
 
@@ -14,6 +12,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"gopkg.in/macaroon-bakery.v2/bakery"
 	"gopkg.in/macaroon-bakery.v2/bakery/checkers"
+	macaroon "gopkg.in/macaroon.v2"
 )
 
 var (
@@ -33,36 +32,41 @@ var (
 // default password of 'hello'. Only the path to the temporary
 // DB file is returned, because the service will open the file
 // and read the store on its own.
-func setupTestRootKeyStorage(t *testing.T) (string, kvdb.Backend) {
-	tempDir, err := ioutil.TempDir("", "macaroonstore-")
-	require.NoError(t, err, "Error creating temp dir")
+func setupTestRootKeyStorage(t *testing.T) kvdb.Backend {
 	db, err := kvdb.Create(
-		kvdb.BoltBackendName, path.Join(tempDir, "macaroons.db"), true,
+		kvdb.BoltBackendName, path.Join(t.TempDir(), "macaroons.db"), true,
 		kvdb.DefaultDBTimeout,
 	)
 	require.NoError(t, err, "Error opening store DB")
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+	})
+
 	store, err := macaroons.NewRootKeyStorage(db)
-	if err != nil {
-		db.Close()
-		t.Fatalf("Error creating root key store: %v", err)
-	}
-	defer store.Close()
+	require.NoError(t, err, "Error creating root key store")
+
 	err = store.CreateUnlock(&defaultPw)
+	require.NoError(t, store.Close())
 	require.NoError(t, err, "error creating unlock")
-	return tempDir, db
+
+	return db
 }
 
 // TestNewService tests the creation of the macaroon service.
 func TestNewService(t *testing.T) {
+	t.Parallel()
+
 	// First, initialize a dummy DB file with a store that the service
 	// can read from. Make sure the file is removed in the end.
-	tempDir, db := setupTestRootKeyStorage(t)
-	defer os.RemoveAll(tempDir)
+	db := setupTestRootKeyStorage(t)
+
+	rootKeyStore, err := macaroons.NewRootKeyStorage(db)
+	require.NoError(t, err)
 
 	// Second, create the new service instance, unlock it and pass in a
 	// checker that we expect it to add to the bakery.
 	service, err := macaroons.NewService(
-		db, "lnd", false, macaroons.IPLockChecker,
+		rootKeyStore, "lnd", false, macaroons.IPLockChecker,
 	)
 	require.NoError(t, err, "Error creating new service")
 	defer service.Close()
@@ -103,11 +107,14 @@ func TestNewService(t *testing.T) {
 // TestValidateMacaroon tests the validation of a macaroon that is in an
 // incoming context.
 func TestValidateMacaroon(t *testing.T) {
+	t.Parallel()
+
 	// First, initialize the service and unlock it.
-	tempDir, db := setupTestRootKeyStorage(t)
-	defer os.RemoveAll(tempDir)
+	db := setupTestRootKeyStorage(t)
+	rootKeyStore, err := macaroons.NewRootKeyStorage(db)
+	require.NoError(t, err)
 	service, err := macaroons.NewService(
-		db, "lnd", false, macaroons.IPLockChecker,
+		rootKeyStore, "lnd", false, macaroons.IPLockChecker,
 	)
 	require.NoError(t, err, "Error creating new service")
 	defer service.Close()
@@ -147,15 +154,18 @@ func TestValidateMacaroon(t *testing.T) {
 
 // TestListMacaroonIDs checks that ListMacaroonIDs returns the expected result.
 func TestListMacaroonIDs(t *testing.T) {
+	t.Parallel()
+
 	// First, initialize a dummy DB file with a store that the service
 	// can read from. Make sure the file is removed in the end.
-	tempDir, db := setupTestRootKeyStorage(t)
-	defer os.RemoveAll(tempDir)
+	db := setupTestRootKeyStorage(t)
 
 	// Second, create the new service instance, unlock it and pass in a
 	// checker that we expect it to add to the bakery.
+	rootKeyStore, err := macaroons.NewRootKeyStorage(db)
+	require.NoError(t, err)
 	service, err := macaroons.NewService(
-		db, "lnd", false, macaroons.IPLockChecker,
+		rootKeyStore, "lnd", false, macaroons.IPLockChecker,
 	)
 	require.NoError(t, err, "Error creating new service")
 	defer service.Close()
@@ -177,17 +187,20 @@ func TestListMacaroonIDs(t *testing.T) {
 
 // TestDeleteMacaroonID removes the specific root key ID.
 func TestDeleteMacaroonID(t *testing.T) {
+	t.Parallel()
+
 	ctxb := context.Background()
 
 	// First, initialize a dummy DB file with a store that the service
 	// can read from. Make sure the file is removed in the end.
-	tempDir, db := setupTestRootKeyStorage(t)
-	defer os.RemoveAll(tempDir)
+	db := setupTestRootKeyStorage(t)
 
 	// Second, create the new service instance, unlock it and pass in a
 	// checker that we expect it to add to the bakery.
+	rootKeyStore, err := macaroons.NewRootKeyStorage(db)
+	require.NoError(t, err)
 	service, err := macaroons.NewService(
-		db, "lnd", false, macaroons.IPLockChecker,
+		rootKeyStore, "lnd", false, macaroons.IPLockChecker,
 	)
 	require.NoError(t, err, "Error creating new service")
 	defer service.Close()
@@ -233,6 +246,8 @@ func TestDeleteMacaroonID(t *testing.T) {
 // TestCloneMacaroons tests that macaroons can be cloned correctly and that
 // modifications to the copy don't affect the original.
 func TestCloneMacaroons(t *testing.T) {
+	t.Parallel()
+
 	// Get a configured version of the constraint function.
 	constraintFunc := macaroons.TimeoutConstraint(3)
 
@@ -283,4 +298,65 @@ func TestCloneMacaroons(t *testing.T) {
 		"expected new caveat location to be empty, found: %s",
 		newMac.Caveats()[0].Location,
 	)
+}
+
+// TestMacaroonVersionDecode tests that we'll reject macaroons with an unknown
+// version.
+func TestMacaroonVersionDecode(t *testing.T) {
+	t.Parallel()
+
+	ctxb := context.Background()
+
+	// First, initialize a dummy DB file with a store that the service
+	// can read from. Make sure the file is removed in the end.
+	db := setupTestRootKeyStorage(t)
+
+	// Second, create the new service instance, unlock it and pass in a
+	// checker that we expect it to add to the bakery.
+	rootKeyStore, err := macaroons.NewRootKeyStorage(db)
+	require.NoError(t, err)
+
+	service, err := macaroons.NewService(
+		rootKeyStore, "lnd", false, macaroons.IPLockChecker,
+	)
+	require.NoError(t, err, "Error creating new service")
+
+	defer service.Close()
+
+	t.Run("invalid_version", func(t *testing.T) {
+		// Now that we have our sample service, we'll make a new custom
+		// macaroon with an unknown version.
+		testMac, err := macaroon.New(
+			testRootKey, testID, testLocation, 1,
+		)
+		require.NoError(t, err)
+
+		// Next, we'll serialize the macaroon to the binary form,
+		// modifying the first byte to signal an unknown version.
+		testMacBytes, err := testMac.MarshalBinary()
+		require.NoError(t, err)
+
+		// If we attempt to check the mac auth, then we should get a
+		// failure that the version is unknown.
+		err = service.CheckMacAuth(ctxb, testMacBytes, nil, "")
+		require.ErrorIs(t, err, macaroons.ErrUnknownVersion)
+	})
+
+	t.Run("invalid_id", func(t *testing.T) {
+		// We'll now make a macaroon with a valid version, but modify
+		// the ID to be rejected.
+		badID := []byte{}
+		testMac, err := macaroon.New(
+			testRootKey, badID, testLocation, testVersion,
+		)
+		require.NoError(t, err)
+
+		testMacBytes, err := testMac.MarshalBinary()
+		require.NoError(t, err)
+
+		// If we attempt to check the mac auth, then we should get a
+		// failure that the ID is bad.
+		err = service.CheckMacAuth(ctxb, testMacBytes, nil, "")
+		require.ErrorIs(t, err, macaroons.ErrInvalidID)
+	})
 }

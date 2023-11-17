@@ -69,10 +69,10 @@ To build a specific git tag of `lnd`, simply run the following steps (assuming
 `v0.x.y-beta` is the tagged version to build):
 
 ```shell
-⛰  git clone https://github.com/lightningnetwork/lnd
-⛰  cd lnd
-⛰  git checkout v0.x.y-beta
-⛰  make docker-release tag=v0.x.y-beta
+git clone https://github.com/lightningnetwork/lnd
+cd lnd
+git checkout v0.x.y-beta
+make docker-release tag=v0.x.y-beta
 ```
 
 This will create a directory called `lnd-v0.x.y-beta` that contains the release
@@ -93,23 +93,23 @@ following build dependencies are required:
 
 ### Installing Go
 
-`lnd` is written in Go, with a minimum version of 1.18. To install, run one of 
+`lnd` is written in Go, with a minimum version of 1.19. To install, run one of
 the following commands for your OS:
 
 <details>
   <summary>Linux (x86-64)</summary>
   
   ```
-  wget https://dl.google.com/go/go1.18.linux-amd64.tar.gz
-  sha256sum go1.18.linux-amd64.tar.gz | awk -F " " '{ print $1 }'
+  wget https://dl.google.com/go/go1.19.7.linux-amd64.tar.gz
+  sha256sum go1.19.7.linux-amd64.tar.gz | awk -F " " '{ print $1 }'
   ```
 
   The final output of the command above should be
-  `e85278e98f57cdb150fe8409e6e5df5343ecb13cebf03a5d5ff12bd55a80264f`. If it
+  `7a75720c9b066ae1750f6bcc7052aba70fa3813f4223199ee2a2315fd3eb533d`. If it
   isn't, then the target REPO HAS BEEN MODIFIED, and you shouldn't install
   this version of Go. If it matches, then proceed to install Go:
   ```
-  sudo tar -C /usr/local -xzf go1.18.linux-amd64.tar.gz
+  sudo tar -C /usr/local -xzf go1.19.7.linux-amd64.tar.gz
   export PATH=$PATH:/usr/local/go/bin
   ```
 </details>
@@ -118,16 +118,16 @@ the following commands for your OS:
   <summary>Linux (ARMv6)</summary>
   
   ```
-  wget https://dl.google.com/go/go1.18.linux-armv6l.tar.gz
-  sha256sum go1.18.linux-armv6l.tar.gz | awk -F " " '{ print $1 }'
+  wget https://dl.google.com/go/go1.19.7.linux-armv6l.tar.gz
+  sha256sum go1.19.7.linux-armv6l.tar.gz | awk -F " " '{ print $1 }'
   ```
 
   The final output of the command above should be
-  `a80fa43d1f4575fb030adbfbaa94acd860c6847820764eecb06c63b7c103612b`. If it
+  `93b1f621ddfc2c2b4e383e185fa7801e80f8b546918cb96afea2723677928312`. If it
   isn't, then the target REPO HAS BEEN MODIFIED, and you shouldn't install
   this version of Go. If it matches, then proceed to install Go:
   ```
-  tar -C /usr/local -xzf go1.18.linux-armv6l.tar.gz
+  tar -C /usr/local -xzf go1.19.7.linux-armv6l.tar.gz
   export PATH=$PATH:/usr/local/go/bin
   ```  
   
@@ -167,8 +167,8 @@ represents the path to your workspace. By default, `$GOPATH` is set to
 that your shell will be able to detect the binaries you install.
 
 ```shell
-⛰  export GOPATH=~/go
-⛰  export PATH=$PATH:$GOPATH/bin
+export GOPATH=~/go
+export PATH=$PATH:$GOPATH/bin
 ```
 
 --- 
@@ -198,9 +198,9 @@ documentation for [building mobile libraries](../mobile) to learn more.
 With the preliminary steps completed, to install `lnd`, `lncli`, and all
 related dependencies run the following commands:
 ```shell
-⛰  git clone https://github.com/lightningnetwork/lnd
-⛰  cd lnd
-⛰  make install
+git clone https://github.com/lightningnetwork/lnd
+cd lnd
+make install
 ```
 
 The command above will install the current _master_ branch of `lnd`. If you
@@ -210,10 +210,10 @@ release](https://github.com/lightningnetwork/lnd/releases). Assuming the name
 of the release is `v0.x.x`, then you can compile this release from source with
 a small modification to the above command: 
 ```shell
-⛰  git clone https://github.com/lightningnetwork/lnd
-⛰  cd lnd
-⛰  git checkout v0.x.x
-⛰  make install
+git clone https://github.com/lightningnetwork/lnd
+cd lnd
+git checkout v0.x.x
+make install
 ```
 
 **NOTE**: Our instructions still use the `$GOPATH` directory from prior
@@ -225,9 +225,9 @@ For Windows WSL users, make will need to be referenced directly via
 like so:
 
 ```shell
-⛰  /usr/bin/make && /usr/bin/make install
+/usr/bin/make && /usr/bin/make install
 
-⛰  "make" && "make" install
+"make" && "make" install
 ```
 
 On FreeBSD, use gmake instead of make.
@@ -235,7 +235,7 @@ On FreeBSD, use gmake instead of make.
 Alternatively, if one doesn't wish to use `make`, then the `go` commands can be
 used directly:
 ```shell
-⛰  go install -v ./...
+go install -v ./...
 ```
 
 **Tags**
@@ -254,6 +254,7 @@ will have the following tags:
 - [monitoring](/monitoring) (for Prometheus integration)
 - [peersrpc](/lnrpc/peersrpc/peers.proto)
 - [kvdb_postrgres](/docs/postgres.md)
+- [kvdb_sqlite](/docs/sqlite.md)
 - [kvdb_etcd](/docs/etcd.md)
 
 The `dev` tag is used for development builds, and is not included in the
@@ -270,9 +271,9 @@ make install tags="signrpc walletrpc routerrpc invoicesrpc"
 To update your version of `lnd` to the latest version run the following
 commands:
 ```shell
-⛰  cd $GOPATH/src/github.com/lightningnetwork/lnd
-⛰  git pull
-⛰  make clean && make && make install
+cd $GOPATH/src/github.com/lightningnetwork/lnd
+git pull
+make clean && make && make install
 ```
 
 On FreeBSD, use gmake instead of make.
@@ -280,16 +281,16 @@ On FreeBSD, use gmake instead of make.
 Alternatively, if one doesn't wish to use `make`, then the `go` commands can be
 used directly:
 ```shell
-⛰  cd $GOPATH/src/github.com/lightningnetwork/lnd
-⛰  git pull
-⛰  go install -v ./...
+cd $GOPATH/src/github.com/lightningnetwork/lnd
+git pull
+go install -v ./...
 ```
 
 **Tests**
 
 To check that `lnd` was installed properly run the following command:
 ```shell
-⛰   make check
+ make check
 ```
 
 This command requires `bitcoind` (almost any version should do) to be available
@@ -315,11 +316,11 @@ The set of arguments for each of the backend modes is as follows:
 ## btcd Options
 ```text
 btcd:
-      --btcd.dir=                                             The base directory that contains the node's data, logs, configuration file, etc. (default: /Users/roasbeef/Library/Application Support/Btcd)
+      --btcd.dir=                                             The base directory that contains the node's data, logs, configuration file, etc. (default: /Users/<username>/Library/Application Support/Btcd)
       --btcd.rpchost=                                         The daemon's rpc listening address. If a port is omitted, then the default port for the selected chain parameters will be used. (default: localhost)
       --btcd.rpcuser=                                         Username for RPC connections
       --btcd.rpcpass=                                         Password for RPC connections
-      --btcd.rpccert=                                         File containing the daemon's certificate file (default: /Users/roasbeef/Library/Application Support/Btcd/rpc.cert)
+      --btcd.rpccert=                                         File containing the daemon's certificate file (default: /Users/<username>/Library/Application Support/Btcd/rpc.cert)
       --btcd.rawrpccert=                                      The raw bytes of the daemon's PEM-encoded certificate chain which will be used to authenticate the RPC connection.
 ```
 
@@ -338,7 +339,7 @@ neutrino:
 ## Bitcoind Options
 ```text
 bitcoind:
-      --bitcoind.dir=                                         The base directory that contains the node's data, logs, configuration file, etc. (default: /Users/roasbeef/Library/Application Support/Bitcoin)
+      --bitcoind.dir=                                         The base directory that contains the node's data, logs, configuration file, etc. (default: /Users/<username>/Library/Application Support/Bitcoin)
       --bitcoind.rpchost=                                     The daemon's rpc listening address. If a port is omitted, then the default port for the selected chain parameters will be used. (default: localhost)
       --bitcoind.rpcuser=                                     Username for RPC connections
       --bitcoind.rpcpass=                                     Password for RPC connections
@@ -354,13 +355,13 @@ bitcoind:
 On FreeBSD, use gmake instead of make.
 
 In order to be able to utilize the latest Taproot features, [`btcd` version
-`v0.23.1`](https://github.com/btcsuite/btcd/releases/tag/v0.23.1) MUST be used.
+`v0.23.5`](https://github.com/btcsuite/btcd/releases/tag/v0.23.5) MUST be used.
 
 To install btcd, run the following commands:
 
 Install **btcd**:
 ```shell
-⛰   make btcd
+ make btcd
 ```
 
 Alternatively, you can install [`btcd` directly from its
@@ -371,7 +372,7 @@ repo](https://github.com/btcsuite/btcd).
 Running the following command will create `rpc.cert` and default `btcd.conf`.
 
 ```shell
-⛰   btcd --testnet --rpcuser=REPLACEME --rpcpass=REPLACEME
+ btcd --testnet --rpcuser=REPLACEME --rpcpass=REPLACEME
 ```
 If you want to use `lnd` on testnet, `btcd` needs to first fully sync the
 testnet blockchain. Depending on your hardware, this may take up to a few
@@ -384,7 +385,7 @@ directly, rather than scanning blocks or BIP 158 filters for relevant items.
 While `btcd` is syncing you can check on its progress using btcd's `getinfo`
 RPC command:
 ```shell
-⛰   btcctl --testnet --rpcuser=REPLACEME --rpcpass=REPLACEME getinfo
+ btcctl --testnet --rpcuser=REPLACEME --rpcpass=REPLACEME getinfo
 {
   "version": 120000,
   "protocolversion": 70002,
@@ -404,7 +405,7 @@ time.
 
 You can test your `btcd` node's connectivity using the `getpeerinfo` command:
 ```shell
-⛰   btcctl --testnet --rpcuser=REPLACEME --rpcpass=REPLACEME getpeerinfo | more
+ btcctl --testnet --rpcuser=REPLACEME --rpcpass=REPLACEME getpeerinfo | more
 ```
 
 ### Running lnd using the btcd backend
@@ -414,7 +415,7 @@ Otherwise, replace `--bitcoin.testnet` with `--bitcoin.simnet`. If you are
 installing `lnd` in preparation for the
 [tutorial](https://dev.lightning.community/tutorial), you may skip this step.
 ```shell
-⛰   lnd --bitcoin.active --bitcoin.testnet --debuglevel=debug \
+ lnd --bitcoin.active --bitcoin.testnet --debuglevel=debug \
        --btcd.rpcuser=kek --btcd.rpcpass=kek --externalip=X.X.X.X
 ```
 
@@ -430,7 +431,7 @@ mode.  A public instance of such a node can be found at
 To run lnd in neutrino mode, run `lnd` with the following arguments, (swapping
 in `--bitcoin.simnet` if needed), and also your own `btcd` node if available:
 ```shell
-⛰   lnd --bitcoin.active --bitcoin.testnet --debuglevel=debug \
+ lnd --bitcoin.active --bitcoin.testnet --debuglevel=debug \
        --bitcoin.node=neutrino --neutrino.connect=faucet.lightning.community
 ```
 
@@ -481,7 +482,7 @@ updated with the latest blocks on testnet, run the command below to launch
 below):
 
 ```shell
-⛰   lnd --bitcoin.active --bitcoin.testnet --debuglevel=debug \
+ lnd --bitcoin.active --bitcoin.testnet --debuglevel=debug \
        --bitcoin.node=bitcoind --bitcoind.rpcuser=REPLACEME \
        --bitcoind.rpcpass=REPLACEME \
        --bitcoind.zmqpubrawblock=tcp://127.0.0.1:28332 \
@@ -522,7 +523,7 @@ below):
 # Creating a wallet
 If `lnd` is being run for the first time, create a new wallet with:
 ```shell
-⛰   lncli create
+ lncli create
 ```
 This will prompt for a wallet password, and optionally a cipher seed
 passphrase.
@@ -582,6 +583,12 @@ There are currently two primary ways to run `lnd`: one requires a local `btcd`
 instance with the RPC service exposed, and the other uses a fully integrated
 light client powered by [neutrino](https://github.com/lightninglabs/neutrino).
 
+For testing scenarios like integration tests where wallet security is not
+important, the `itest/lnd-itest` binary can be used which uses very weak
+password stretching for the wallet encryption and therefore starts up faster
+than a production/mainnet/release build. The binary can be built by running
+`make build-itest`.
+
 # Creating an lnd.conf (Optional)
 
 Optionally, if you'd like to have a persistent configuration between `lnd`
@@ -589,7 +596,7 @@ launches, allowing you to simply type `lnd --bitcoin.testnet --bitcoin.active`
 at the command line, you can create an `lnd.conf`.
 
 **On MacOS, located at:**
-`/Users/[username]/Library/Application Support/Lnd/lnd.conf`
+`/Users/<username>/Library/Application Support/Lnd/lnd.conf`
 
 **On Linux, located at:**
 `~/.lnd/lnd.conf`

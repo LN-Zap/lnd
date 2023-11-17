@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"encoding/hex"
 	"fmt"
-	"io/ioutil"
 	prand "math/rand"
 	"net"
-	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -22,6 +20,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/go-errors/errors"
+	"github.com/lightninglabs/neutrino/cache"
 	"github.com/lightningnetwork/lnd/batch"
 	"github.com/lightningnetwork/lnd/chainntnfs"
 	"github.com/lightningnetwork/lnd/channeldb"
@@ -72,29 +71,19 @@ var (
 	rebroadcastInterval = time.Hour * 1000000
 )
 
-// makeTestDB creates a new instance of the ChannelDB for testing purposes. A
-// callback which cleans up the created temporary directories is also returned
-// and intended to be executed after the test completes.
-func makeTestDB() (*channeldb.DB, func(), error) {
-	// First, create a temporary directory to be used for the duration of
-	// this test.
-	tempDirName, err := ioutil.TempDir("", "channeldb")
+// makeTestDB creates a new instance of the ChannelDB for testing purposes.
+func makeTestDB(t *testing.T) (*channeldb.DB, error) {
+	// Create channeldb for the first time.
+	cdb, err := channeldb.Open(t.TempDir())
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
-	// Next, create channeldb for the first time.
-	cdb, err := channeldb.Open(tempDirName)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	cleanUp := func() {
+	t.Cleanup(func() {
 		cdb.Close()
-		os.RemoveAll(tempDirName)
-	}
+	})
 
-	return cdb, cleanUp, nil
+	return cdb, nil
 }
 
 type mockGraphSource struct {
@@ -420,7 +409,8 @@ func newMockNotifier() *mockNotifier {
 }
 
 func (m *mockNotifier) RegisterConfirmationsNtfn(txid *chainhash.Hash,
-	_ []byte, numConfs, _ uint32) (*chainntnfs.ConfirmationEvent, error) {
+	_ []byte, numConfs, _ uint32,
+	opts ...chainntnfs.NotifierOption) (*chainntnfs.ConfirmationEvent, error) {
 
 	return nil, nil
 }
@@ -593,7 +583,7 @@ func createUpdateAnnouncement(blockHeight uint32,
 			BlockHeight: blockHeight,
 		},
 		Timestamp:       timestamp,
-		MessageFlags:    lnwire.ChanUpdateOptionMaxHtlc,
+		MessageFlags:    lnwire.ChanUpdateRequiredMaxHtlc,
 		ChannelFlags:    flags,
 		TimeLockDelta:   uint16(prand.Int63()),
 		HtlcMinimumMsat: htlcMinMsat,
@@ -708,6 +698,12 @@ func createChannelAnnouncement(blockHeight uint32, key1, key2 *btcec.PrivateKey,
 	return a, nil
 }
 
+func mockFindChannel(node *btcec.PublicKey, chanID lnwire.ChannelID) (
+	*channeldb.OpenChannel, error) {
+
+	return nil, nil
+}
+
 type testCtx struct {
 	gossiper           *AuthenticatedGossiper
 	router             *mockGraphSource
@@ -715,7 +711,7 @@ type testCtx struct {
 	broadcastedMessage chan msgWithSenders
 }
 
-func createTestCtx(startHeight uint32) (*testCtx, func(), error) {
+func createTestCtx(t *testing.T, startHeight uint32) (*testCtx, error) {
 	// Next we'll initialize an instance of the channel router with mock
 	// versions of the chain and channel notifier. As we don't need to test
 	// any p2p functionality, the peer send and switch send,
@@ -723,15 +719,14 @@ func createTestCtx(startHeight uint32) (*testCtx, func(), error) {
 	notifier := newMockNotifier()
 	router := newMockRouter(startHeight)
 
-	db, cleanUpDb, err := makeTestDB()
+	db, err := makeTestDB(t)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	waitingProofStore, err := channeldb.NewWaitingProofStore(db)
 	if err != nil {
-		cleanUpDb()
-		return nil, nil, err
+		return nil, err
 	}
 
 	broadcastedMessage := make(chan msgWithSenders, 10)
@@ -780,7 +775,14 @@ func createTestCtx(startHeight uint32) (*testCtx, func(), error) {
 			c := make(chan struct{})
 			return c
 		},
-		SelfNodeAnnouncement: func(bool) (lnwire.NodeAnnouncement, error) {
+		FetchSelfAnnouncement: func() lnwire.NodeAnnouncement {
+			return lnwire.NodeAnnouncement{
+				Timestamp: testTimestamp,
+			}
+		},
+		UpdateSelfAnnouncement: func() (lnwire.NodeAnnouncement,
+			error) {
+
 			return lnwire.NodeAnnouncement{
 				Timestamp: testTimestamp,
 			}, nil
@@ -796,7 +798,7 @@ func createTestCtx(startHeight uint32) (*testCtx, func(), error) {
 		HistoricalSyncTicker:  ticker.NewForce(DefaultHistoricalSyncInterval),
 		NumActiveSyncers:      3,
 		AnnSigner:             &mock.SingleSigner{Privkey: selfKeyPriv},
-		SubBatchDelay:         time.Second * 5,
+		SubBatchDelay:         1 * time.Millisecond,
 		MinimumBatchSize:      10,
 		MaxChannelUpdateBurst: DefaultMaxChannelUpdateBurst,
 		ChannelUpdateInterval: DefaultChannelUpdateInterval,
@@ -804,28 +806,27 @@ func createTestCtx(startHeight uint32) (*testCtx, func(), error) {
 		SignAliasUpdate:       signAliasUpdate,
 		FindBaseByAlias:       findBaseByAlias,
 		GetAlias:              getAlias,
+		FindChannel:           mockFindChannel,
 	}, selfKeyDesc)
 
 	if err := gossiper.Start(); err != nil {
-		cleanUpDb()
-		return nil, nil, fmt.Errorf("unable to start router: %v", err)
+		return nil, fmt.Errorf("unable to start router: %v", err)
 	}
 
 	// Mark the graph as synced in order to allow the announcements to be
 	// broadcast.
 	gossiper.syncMgr.markGraphSynced()
 
-	cleanUp := func() {
+	t.Cleanup(func() {
 		gossiper.Stop()
-		cleanUpDb()
-	}
+	})
 
 	return &testCtx{
 		router:             router,
 		notifier:           notifier,
 		gossiper:           gossiper,
 		broadcastedMessage: broadcastedMessage,
-	}, cleanUp, nil
+	}, nil
 }
 
 // TestProcessAnnouncement checks that mature announcements are propagated to
@@ -834,11 +835,12 @@ func TestProcessAnnouncement(t *testing.T) {
 	t.Parallel()
 
 	timestamp := testTimestamp
-	ctx, cleanup, err := createTestCtx(0)
+	ctx, err := createTestCtx(t, 0)
 	require.NoError(t, err, "can't create context")
-	defer cleanup()
 
 	assertSenderExistence := func(sender *btcec.PublicKey, msg msgWithSenders) {
+		t.Helper()
+
 		if _, ok := msg.senders[route.NewVertex(sender)]; !ok {
 			t.Fatalf("sender=%x not present in %v",
 				sender.SerializeCompressed(), spew.Sdump(msg))
@@ -872,9 +874,30 @@ func TestProcessAnnouncement(t *testing.T) {
 		t.Fatalf("edge wasn't added to router: %v", err)
 	}
 
+	// We'll craft an invalid channel update, setting no message flags.
+	ua, err := createUpdateAnnouncement(0, 0, remoteKeyPriv1, timestamp)
+	require.NoError(t, err, "can't create update announcement")
+	ua.MessageFlags = 0
+
+	// We send an invalid channel update and expect it to fail.
+	select {
+	case err = <-ctx.gossiper.ProcessRemoteAnnouncement(ua, nodePeer):
+	case <-time.After(2 * time.Second):
+		t.Fatal("remote announcement not processed")
+	}
+	require.ErrorContains(t, err, "max htlc flag not set for channel "+
+		"update")
+
+	// We should not broadcast the channel update.
+	select {
+	case <-ctx.broadcastedMessage:
+		t.Fatal("gossiper should not have broadcast channel update")
+	case <-time.After(2 * trickleDelay):
+	}
+
 	// We'll then craft the channel policy of the remote party and also send
 	// it to the gossiper.
-	ua, err := createUpdateAnnouncement(0, 0, remoteKeyPriv1, timestamp)
+	ua, err = createUpdateAnnouncement(0, 0, remoteKeyPriv1, timestamp)
 	require.NoError(t, err, "can't create update announcement")
 
 	select {
@@ -928,9 +951,8 @@ func TestPrematureAnnouncement(t *testing.T) {
 
 	timestamp := testTimestamp
 
-	ctx, cleanup, err := createTestCtx(0)
+	ctx, err := createTestCtx(t, 0)
 	require.NoError(t, err, "can't create context")
-	defer cleanup()
 
 	_, err = createNodeAnnouncement(remoteKeyPriv1, timestamp)
 	require.NoError(t, err, "can't create node announcement")
@@ -960,9 +982,8 @@ func TestPrematureAnnouncement(t *testing.T) {
 func TestSignatureAnnouncementLocalFirst(t *testing.T) {
 	t.Parallel()
 
-	ctx, cleanup, err := createTestCtx(uint32(proofMatureDelta))
+	ctx, err := createTestCtx(t, proofMatureDelta)
 	require.NoError(t, err, "can't create context")
-	defer cleanup()
 
 	// Set up a channel that we can use to inspect the messages sent
 	// directly from the gossiper.
@@ -1133,9 +1154,8 @@ func TestSignatureAnnouncementLocalFirst(t *testing.T) {
 func TestOrphanSignatureAnnouncement(t *testing.T) {
 	t.Parallel()
 
-	ctx, cleanup, err := createTestCtx(uint32(proofMatureDelta))
+	ctx, err := createTestCtx(t, proofMatureDelta)
 	require.NoError(t, err, "can't create context")
-	defer cleanup()
 
 	// Set up a channel that we can use to inspect the messages sent
 	// directly from the gossiper.
@@ -1317,9 +1337,8 @@ func TestOrphanSignatureAnnouncement(t *testing.T) {
 func TestSignatureAnnouncementRetryAtStartup(t *testing.T) {
 	t.Parallel()
 
-	ctx, cleanup, err := createTestCtx(uint32(proofMatureDelta))
+	ctx, err := createTestCtx(t, proofMatureDelta)
 	require.NoError(t, err, "can't create context")
-	defer cleanup()
 
 	batch, err := createLocalAnnouncements(0)
 	require.NoError(t, err, "can't generate announcements")
@@ -1434,28 +1453,30 @@ func TestSignatureAnnouncementRetryAtStartup(t *testing.T) {
 		return lnwire.ShortChannelID{}, fmt.Errorf("no peer alias")
 	}
 
+	//nolint:lll
 	gossiper := New(Config{
-		Notifier:             ctx.gossiper.cfg.Notifier,
-		Broadcast:            ctx.gossiper.cfg.Broadcast,
-		NotifyWhenOnline:     ctx.gossiper.reliableSender.cfg.NotifyWhenOnline,
-		NotifyWhenOffline:    ctx.gossiper.reliableSender.cfg.NotifyWhenOffline,
-		SelfNodeAnnouncement: ctx.gossiper.cfg.SelfNodeAnnouncement,
-		Router:               ctx.gossiper.cfg.Router,
-		TrickleDelay:         trickleDelay,
-		RetransmitTicker:     ticker.NewForce(retransmitDelay),
-		RebroadcastInterval:  rebroadcastInterval,
-		ProofMatureDelta:     proofMatureDelta,
-		WaitingProofStore:    ctx.gossiper.cfg.WaitingProofStore,
-		MessageStore:         ctx.gossiper.cfg.MessageStore,
-		RotateTicker:         ticker.NewForce(DefaultSyncerRotationInterval),
-		HistoricalSyncTicker: ticker.NewForce(DefaultHistoricalSyncInterval),
-		NumActiveSyncers:     3,
-		MinimumBatchSize:     10,
-		SubBatchDelay:        time.Second * 5,
-		IsAlias:              isAlias,
-		SignAliasUpdate:      signAliasUpdate,
-		FindBaseByAlias:      findBaseByAlias,
-		GetAlias:             getAlias,
+		Notifier:               ctx.gossiper.cfg.Notifier,
+		Broadcast:              ctx.gossiper.cfg.Broadcast,
+		NotifyWhenOnline:       ctx.gossiper.reliableSender.cfg.NotifyWhenOnline,
+		NotifyWhenOffline:      ctx.gossiper.reliableSender.cfg.NotifyWhenOffline,
+		FetchSelfAnnouncement:  ctx.gossiper.cfg.FetchSelfAnnouncement,
+		UpdateSelfAnnouncement: ctx.gossiper.cfg.UpdateSelfAnnouncement,
+		Router:                 ctx.gossiper.cfg.Router,
+		TrickleDelay:           trickleDelay,
+		RetransmitTicker:       ticker.NewForce(retransmitDelay),
+		RebroadcastInterval:    rebroadcastInterval,
+		ProofMatureDelta:       proofMatureDelta,
+		WaitingProofStore:      ctx.gossiper.cfg.WaitingProofStore,
+		MessageStore:           ctx.gossiper.cfg.MessageStore,
+		RotateTicker:           ticker.NewForce(DefaultSyncerRotationInterval),
+		HistoricalSyncTicker:   ticker.NewForce(DefaultHistoricalSyncInterval),
+		NumActiveSyncers:       3,
+		MinimumBatchSize:       10,
+		SubBatchDelay:          time.Second * 5,
+		IsAlias:                isAlias,
+		SignAliasUpdate:        signAliasUpdate,
+		FindBaseByAlias:        findBaseByAlias,
+		GetAlias:               getAlias,
 	}, &keychain.KeyDescriptor{
 		PubKey:     ctx.gossiper.selfKey,
 		KeyLocator: ctx.gossiper.selfKeyLoc,
@@ -1549,9 +1570,8 @@ out:
 func TestSignatureAnnouncementFullProofWhenRemoteProof(t *testing.T) {
 	t.Parallel()
 
-	ctx, cleanup, err := createTestCtx(uint32(proofMatureDelta))
+	ctx, err := createTestCtx(t, proofMatureDelta)
 	require.NoError(t, err, "can't create context")
-	defer cleanup()
 
 	batch, err := createLocalAnnouncements(0)
 	require.NoError(t, err, "can't generate announcements")
@@ -1930,31 +1950,37 @@ func TestDeDuplicatedAnnouncements(t *testing.T) {
 	// Ensure that announcement batch delivers channel announcements,
 	// channel updates, and node announcements in proper order.
 	batch := announcements.Emit()
-	if len(batch) != 4 {
+	if batch.length() != 4 {
 		t.Fatal("announcement batch incorrect length")
 	}
 
-	if !reflect.DeepEqual(batch[0].msg, ca2) {
+	if !reflect.DeepEqual(batch.localMsgs[0].msg, ca2) {
 		t.Fatalf("channel announcement not first in batch: got %v, "+
-			"expected %v", spew.Sdump(batch[0].msg), spew.Sdump(ca2))
+			"expected %v", spew.Sdump(batch.localMsgs[0].msg),
+			spew.Sdump(ca2))
 	}
 
-	if !reflect.DeepEqual(batch[1].msg, ua3) {
+	if !reflect.DeepEqual(batch.localMsgs[1].msg, ua3) {
 		t.Fatalf("channel update not next in batch: got %v, "+
-			"expected %v", spew.Sdump(batch[1].msg), spew.Sdump(ua2))
+			"expected %v", spew.Sdump(batch.localMsgs[1].msg),
+			spew.Sdump(ua2))
 	}
 
 	// We'll ensure that both node announcements are present. We check both
 	// indexes as due to the randomized order of map iteration they may be
 	// in either place.
-	if !reflect.DeepEqual(batch[2].msg, na) && !reflect.DeepEqual(batch[3].msg, na) {
+	if !reflect.DeepEqual(batch.localMsgs[2].msg, na) &&
+		!reflect.DeepEqual(batch.localMsgs[3].msg, na) {
+
 		t.Fatalf("first node announcement not in last part of batch: "+
-			"got %v, expected %v", batch[2].msg,
+			"got %v, expected %v", batch.localMsgs[2].msg,
 			na)
 	}
-	if !reflect.DeepEqual(batch[2].msg, na5) && !reflect.DeepEqual(batch[3].msg, na5) {
+	if !reflect.DeepEqual(batch.localMsgs[2].msg, na5) &&
+		!reflect.DeepEqual(batch.localMsgs[3].msg, na5) {
+
 		t.Fatalf("second node announcement not in last part of batch: "+
-			"got %v, expected %v", batch[3].msg,
+			"got %v, expected %v", batch.localMsgs[3].msg,
 			na5)
 	}
 
@@ -1982,9 +2008,8 @@ func TestForwardPrivateNodeAnnouncement(t *testing.T) {
 		timestamp      = 123456
 	)
 
-	ctx, cleanup, err := createTestCtx(startingHeight)
+	ctx, err := createTestCtx(t, startingHeight)
 	require.NoError(t, err, "can't create context")
-	defer cleanup()
 
 	// We'll start off by processing a channel announcement without a proof
 	// (i.e., an unadvertised channel), followed by a node announcement for
@@ -2082,9 +2107,8 @@ func TestRejectZombieEdge(t *testing.T) {
 
 	// We'll start by creating our test context with a batch of
 	// announcements.
-	ctx, cleanup, err := createTestCtx(0)
+	ctx, err := createTestCtx(t, 0)
 	require.NoError(t, err, "unable to create test context")
-	defer cleanup()
 
 	batch, err := createRemoteAnnouncements(0)
 	require.NoError(t, err, "unable to create announcements")
@@ -2184,9 +2208,8 @@ func TestProcessZombieEdgeNowLive(t *testing.T) {
 
 	// We'll start by creating our test context with a batch of
 	// announcements.
-	ctx, cleanup, err := createTestCtx(0)
+	ctx, err := createTestCtx(t, 0)
 	require.NoError(t, err, "unable to create test context")
-	defer cleanup()
 
 	batch, err := createRemoteAnnouncements(0)
 	require.NoError(t, err, "unable to create announcements")
@@ -2342,9 +2365,8 @@ func TestProcessZombieEdgeNowLive(t *testing.T) {
 func TestReceiveRemoteChannelUpdateFirst(t *testing.T) {
 	t.Parallel()
 
-	ctx, cleanup, err := createTestCtx(uint32(proofMatureDelta))
+	ctx, err := createTestCtx(t, proofMatureDelta)
 	require.NoError(t, err, "can't create context")
-	defer cleanup()
 
 	batch, err := createLocalAnnouncements(0)
 	require.NoError(t, err, "can't generate announcements")
@@ -2540,9 +2562,8 @@ func TestReceiveRemoteChannelUpdateFirst(t *testing.T) {
 func TestExtraDataChannelAnnouncementValidation(t *testing.T) {
 	t.Parallel()
 
-	ctx, cleanup, err := createTestCtx(0)
+	ctx, err := createTestCtx(t, 0)
 	require.NoError(t, err, "can't create context")
-	defer cleanup()
 
 	remotePeer := &mockPeer{remoteKeyPriv1.PubKey(), nil, nil}
 
@@ -2572,9 +2593,8 @@ func TestExtraDataChannelUpdateValidation(t *testing.T) {
 	t.Parallel()
 
 	timestamp := testTimestamp
-	ctx, cleanup, err := createTestCtx(0)
+	ctx, err := createTestCtx(t, 0)
 	require.NoError(t, err, "can't create context")
-	defer cleanup()
 
 	remotePeer := &mockPeer{remoteKeyPriv1.PubKey(), nil, nil}
 
@@ -2624,9 +2644,8 @@ func TestExtraDataChannelUpdateValidation(t *testing.T) {
 func TestExtraDataNodeAnnouncementValidation(t *testing.T) {
 	t.Parallel()
 
-	ctx, cleanup, err := createTestCtx(0)
+	ctx, err := createTestCtx(t, 0)
 	require.NoError(t, err, "can't create context")
-	defer cleanup()
 
 	remotePeer := &mockPeer{remoteKeyPriv1.PubKey(), nil, nil}
 	timestamp := testTimestamp
@@ -2693,9 +2712,8 @@ func assertProcessAnnouncement(t *testing.T, result chan error) {
 func TestRetransmit(t *testing.T) {
 	t.Parallel()
 
-	ctx, cleanup, err := createTestCtx(proofMatureDelta)
+	ctx, err := createTestCtx(t, proofMatureDelta)
 	require.NoError(t, err, "can't create context")
-	defer cleanup()
 
 	batch, err := createLocalAnnouncements(0)
 	require.NoError(t, err, "can't generate announcements")
@@ -2800,9 +2818,8 @@ func TestRetransmit(t *testing.T) {
 func TestNodeAnnouncementNoChannels(t *testing.T) {
 	t.Parallel()
 
-	ctx, cleanup, err := createTestCtx(0)
+	ctx, err := createTestCtx(t, 0)
 	require.NoError(t, err, "can't create context")
-	defer cleanup()
 
 	batch, err := createRemoteAnnouncements(0)
 	require.NoError(t, err, "can't generate announcements")
@@ -2882,25 +2899,26 @@ func TestNodeAnnouncementNoChannels(t *testing.T) {
 }
 
 // TestOptionalFieldsChannelUpdateValidation tests that we're able to properly
-// validate the msg flags and optional max HTLC field of a ChannelUpdate.
+// validate the msg flags and max HTLC field of a ChannelUpdate.
 func TestOptionalFieldsChannelUpdateValidation(t *testing.T) {
 	t.Parallel()
 
-	ctx, cleanup, err := createTestCtx(0)
+	ctx, err := createTestCtx(t, 0)
 	require.NoError(t, err, "can't create context")
-	defer cleanup()
+
+	processRemoteAnnouncement := ctx.gossiper.ProcessRemoteAnnouncement
 
 	chanUpdateHeight := uint32(0)
 	timestamp := uint32(123456)
 	nodePeer := &mockPeer{remoteKeyPriv1.PubKey(), nil, nil}
 
-	// In this scenario, we'll test whether the message flags field in a channel
-	// update is properly handled.
+	// In this scenario, we'll test whether the message flags field in a
+	// channel update is properly handled.
 	chanAnn, err := createRemoteChannelAnnouncement(chanUpdateHeight)
 	require.NoError(t, err, "can't create channel announcement")
 
 	select {
-	case err = <-ctx.gossiper.ProcessRemoteAnnouncement(chanAnn, nodePeer):
+	case err = <-processRemoteAnnouncement(chanAnn, nodePeer):
 	case <-time.After(2 * time.Second):
 		t.Fatal("did not process remote announcement")
 	}
@@ -2908,7 +2926,9 @@ func TestOptionalFieldsChannelUpdateValidation(t *testing.T) {
 
 	// The first update should fail from an invalid max HTLC field, which is
 	// less than the min HTLC.
-	chanUpdAnn, err := createUpdateAnnouncement(0, 0, remoteKeyPriv1, timestamp)
+	chanUpdAnn, err := createUpdateAnnouncement(
+		0, 0, remoteKeyPriv1, timestamp,
+	)
 	require.NoError(t, err, "unable to create channel update")
 
 	chanUpdAnn.HtlcMinimumMsat = 5000
@@ -2918,7 +2938,7 @@ func TestOptionalFieldsChannelUpdateValidation(t *testing.T) {
 	}
 
 	select {
-	case err = <-ctx.gossiper.ProcessRemoteAnnouncement(chanUpdAnn, nodePeer):
+	case err = <-processRemoteAnnouncement(chanUpdAnn, nodePeer):
 	case <-time.After(2 * time.Second):
 		t.Fatal("did not process remote announcement")
 	}
@@ -2935,7 +2955,7 @@ func TestOptionalFieldsChannelUpdateValidation(t *testing.T) {
 	}
 
 	select {
-	case err = <-ctx.gossiper.ProcessRemoteAnnouncement(chanUpdAnn, nodePeer):
+	case err = <-processRemoteAnnouncement(chanUpdAnn, nodePeer):
 	case <-time.After(2 * time.Second):
 		t.Fatal("did not process remote announcement")
 	}
@@ -2943,19 +2963,36 @@ func TestOptionalFieldsChannelUpdateValidation(t *testing.T) {
 		t.Fatalf("expected chan update to error, instead got %v", err)
 	}
 
-	// The final update should succeed, since setting the flag 0 means the
-	// nonsense max_htlc field will just be ignored.
+	// The third update should not succeed, a channel update with no message
+	// flag set is invalid.
 	chanUpdAnn.MessageFlags = 0
 	if err := signUpdate(remoteKeyPriv1, chanUpdAnn); err != nil {
 		t.Fatalf("unable to sign channel update: %v", err)
 	}
 
 	select {
-	case err = <-ctx.gossiper.ProcessRemoteAnnouncement(chanUpdAnn, nodePeer):
+	case err = <-processRemoteAnnouncement(chanUpdAnn, nodePeer):
 	case <-time.After(2 * time.Second):
 		t.Fatal("did not process remote announcement")
 	}
-	require.NoError(t, err, "unable to process announcement")
+	require.ErrorContains(t, err, "max htlc flag not set")
+
+	// The final update should succeed.
+	chanUpdAnn, err = createUpdateAnnouncement(
+		0, 0, remoteKeyPriv1, timestamp,
+	)
+	require.NoError(t, err, "unable to create channel update")
+
+	if err := signUpdate(remoteKeyPriv1, chanUpdAnn); err != nil {
+		t.Fatalf("unable to sign channel update: %v", err)
+	}
+
+	select {
+	case err = <-processRemoteAnnouncement(chanUpdAnn, nodePeer):
+	case <-time.After(2 * time.Second):
+		t.Fatal("did not process remote announcement")
+	}
+	require.NoError(t, err, "expected update to be processed")
 }
 
 // TestSendChannelUpdateReliably ensures that the latest channel update for a
@@ -2965,9 +3002,8 @@ func TestSendChannelUpdateReliably(t *testing.T) {
 
 	// We'll start by creating our test context and a batch of
 	// announcements.
-	ctx, cleanup, err := createTestCtx(uint32(proofMatureDelta))
+	ctx, err := createTestCtx(t, proofMatureDelta)
 	require.NoError(t, err, "unable to create test context")
-	defer cleanup()
 
 	batch, err := createLocalAnnouncements(0)
 	require.NoError(t, err, "can't generate announcements")
@@ -3318,9 +3354,8 @@ func TestPropagateChanPolicyUpdate(t *testing.T) {
 	// First, we'll make out test context and add 3 random channels to the
 	// graph.
 	startingHeight := uint32(10)
-	ctx, cleanup, err := createTestCtx(startingHeight)
+	ctx, err := createTestCtx(t, startingHeight)
 	require.NoError(t, err, "unable to create test context")
-	defer cleanup()
 
 	const numChannels = 3
 	channelsToAnnounce := make([]*annBatch, 0, numChannels)
@@ -3395,7 +3430,9 @@ out:
 		case <-sentMsgs:
 		case err := <-notifyErr:
 			t.Fatal(err)
-		default:
+
+		// Give it 5 seconds to drain out.
+		case <-time.After(5 * time.Second):
 			break out
 		}
 	}
@@ -3496,9 +3533,8 @@ func TestProcessChannelAnnouncementOptionalMsgFields(t *testing.T) {
 
 	// We'll start by creating our test context and a set of test channel
 	// announcements.
-	ctx, cleanup, err := createTestCtx(0)
+	ctx, err := createTestCtx(t, 0)
 	require.NoError(t, err, "unable to create test context")
-	defer cleanup()
 
 	chanAnn1 := createAnnouncementWithoutProof(
 		100, selfKeyDesc.PubKey, remoteKeyPub1,
@@ -3556,7 +3592,10 @@ func assertMessage(t *testing.T, expected, got lnwire.Message) {
 // TestSplitAnnouncementsCorrectSubBatches checks that we split a given
 // sizes of announcement list into the correct number of batches.
 func TestSplitAnnouncementsCorrectSubBatches(t *testing.T) {
-	t.Parallel()
+	// Create our test harness.
+	const blockHeight = 100
+	ctx, err := createTestCtx(t, blockHeight)
+	require.NoError(t, err, "can't create context")
 
 	const subBatchSize = 10
 
@@ -3565,6 +3604,12 @@ func TestSplitAnnouncementsCorrectSubBatches(t *testing.T) {
 
 	lengthAnnouncementBatchSizes := len(announcementBatchSizes)
 	lengthExpectedNumberMiniBatches := len(expectedNumberMiniBatches)
+
+	batchSizeCalculator = func(totalDelay, subBatchDelay time.Duration,
+		minimumBatchSize, batchSize int) int {
+
+		return subBatchSize
+	}
 
 	if lengthAnnouncementBatchSizes != lengthExpectedNumberMiniBatches {
 		t.Fatal("Length of announcementBatchSizes and " +
@@ -3575,15 +3620,16 @@ func TestSplitAnnouncementsCorrectSubBatches(t *testing.T) {
 		var batchSize = announcementBatchSizes[testIndex]
 		announcementBatch := make([]msgWithSenders, batchSize)
 
-		splitAnnouncementBatch := splitAnnouncementBatches(
-			subBatchSize, announcementBatch,
+		splitAnnouncementBatch := ctx.gossiper.splitAnnouncementBatches(
+			announcementBatch,
 		)
 
 		lengthMiniBatches := len(splitAnnouncementBatch)
 
 		if lengthMiniBatches != expectedNumberMiniBatches[testIndex] {
 			t.Fatalf("Expecting %d mini batches, actual %d",
-				expectedNumberMiniBatches[testIndex], lengthMiniBatches)
+				expectedNumberMiniBatches[testIndex],
+				lengthMiniBatches)
 		}
 	}
 }
@@ -3660,9 +3706,8 @@ func (m *SyncManager) markGraphSyncing() {
 func TestBroadcastAnnsAfterGraphSynced(t *testing.T) {
 	t.Parallel()
 
-	ctx, cleanup, err := createTestCtx(10)
+	ctx, err := createTestCtx(t, 10)
 	require.NoError(t, err, "can't create context")
-	defer cleanup()
 
 	// We'll mark the graph as not synced. This should prevent us from
 	// broadcasting any messages we've received as part of our initial
@@ -3734,9 +3779,8 @@ func TestRateLimitChannelUpdates(t *testing.T) {
 
 	// Create our test harness.
 	const blockHeight = 100
-	ctx, cleanup, err := createTestCtx(blockHeight)
+	ctx, err := createTestCtx(t, blockHeight)
 	require.NoError(t, err, "can't create context")
-	defer cleanup()
 	ctx.gossiper.cfg.RebroadcastInterval = time.Hour
 	ctx.gossiper.cfg.MaxChannelUpdateBurst = 5
 	ctx.gossiper.cfg.ChannelUpdateInterval = 5 * time.Second
@@ -3881,9 +3925,8 @@ func TestRateLimitChannelUpdates(t *testing.T) {
 func TestIgnoreOwnAnnouncement(t *testing.T) {
 	t.Parallel()
 
-	ctx, cleanup, err := createTestCtx(proofMatureDelta)
+	ctx, err := createTestCtx(t, proofMatureDelta)
 	require.NoError(t, err, "can't create context")
-	defer cleanup()
 
 	batch, err := createLocalAnnouncements(0)
 	require.NoError(t, err, "can't generate announcements")
@@ -4026,9 +4069,8 @@ func TestIgnoreOwnAnnouncement(t *testing.T) {
 func TestRejectCacheChannelAnn(t *testing.T) {
 	t.Parallel()
 
-	ctx, cleanup, err := createTestCtx(proofMatureDelta)
+	ctx, err := createTestCtx(t, proofMatureDelta)
 	require.NoError(t, err, "can't create context")
-	defer cleanup()
 
 	// First, we create a channel announcement to send over to our test
 	// peer.
@@ -4065,4 +4107,39 @@ func TestRejectCacheChannelAnn(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("did not process remote announcement")
 	}
+}
+
+// TestFutureMsgCacheEviction checks that when the cache's capacity is reached,
+// saving one more item will evict the oldest item.
+func TestFutureMsgCacheEviction(t *testing.T) {
+	t.Parallel()
+
+	// Create a future message cache with size 1.
+	c := newFutureMsgCache(1)
+
+	// Send two messages to the cache, which ends in the first message
+	// being evicted.
+	//
+	// Put the first item.
+	id := c.nextMsgID()
+	evicted, err := c.Put(id, &cachedFutureMsg{height: uint32(id)})
+	require.NoError(t, err)
+	require.False(t, evicted, "should not be evicted")
+
+	// Put the second item.
+	id = c.nextMsgID()
+	evicted, err = c.Put(id, &cachedFutureMsg{height: uint32(id)})
+	require.NoError(t, err)
+	require.True(t, evicted, "should be evicted")
+
+	// The first item should have been evicted.
+	//
+	// NOTE: msg ID starts at 1, not 0.
+	_, err = c.Get(1)
+	require.ErrorIs(t, err, cache.ErrElementNotFound)
+
+	// The second item should be found.
+	item, err := c.Get(2)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, item.height, "should be the second item")
 }

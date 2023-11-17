@@ -20,7 +20,9 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/lightningnetwork/lnd/aliasmgr"
 	"github.com/lightningnetwork/lnd/batch"
+	"github.com/lightningnetwork/lnd/input"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/lightningnetwork/lnd/lnwire"
 	"github.com/lightningnetwork/lnd/routing/route"
@@ -1525,12 +1527,10 @@ func (c *ChannelGraph) DisconnectBlockAtHeight(height uint32) ([]*ChannelEdgeInf
 		BlockHeight: height,
 	}
 
-	// Delete everything after this height from the db.
-	endShortChanID := lnwire.ShortChannelID{
-		BlockHeight: math.MaxUint32 & 0x00ffffff,
-		TxIndex:     math.MaxUint32 & 0x00ffffff,
-		TxPosition:  math.MaxUint16,
-	}
+	// Delete everything after this height from the db up until the
+	// SCID alias range.
+	endShortChanID := aliasmgr.StartingAlias
+
 	// The block height will be the 3 first bytes of the channel IDs.
 	var chanIDStart [8]byte
 	byteOrder.PutUint64(chanIDStart[:], startShortChanID.ToUint64())
@@ -1569,11 +1569,14 @@ func (c *ChannelGraph) DisconnectBlockAtHeight(height uint32) ([]*ChannelEdgeInf
 		// found edge.
 		// NOTE: we must delete the edges after the cursor loop, since
 		// modifying the bucket while traversing is not safe.
+		// NOTE: We use a < comparison in bytes.Compare instead of <=
+		// so that the StartingAlias itself isn't deleted.
 		var keys [][]byte
 		cursor := edgeIndex.ReadWriteCursor()
-		for k, v := cursor.Seek(chanIDStart[:]); k != nil &&
-			bytes.Compare(k, chanIDEnd[:]) <= 0; k, v = cursor.Next() {
 
+		//nolint:lll
+		for k, v := cursor.Seek(chanIDStart[:]); k != nil &&
+			bytes.Compare(k, chanIDEnd[:]) < 0; k, v = cursor.Next() {
 			edgeInfoReader := bytes.NewReader(v)
 			edgeInfo, err := deserializeChanEdgeInfo(edgeInfoReader)
 			if err != nil {
@@ -2724,7 +2727,7 @@ func (l *LightningNode) NodeAnnouncement(signed bool) (*lnwire.NodeAnnouncement,
 		return nodeAnn, nil
 	}
 
-	sig, err := lnwire.NewSigFromRawSignature(l.AuthSigBytes)
+	sig, err := lnwire.NewSigFromECDSARawSignature(l.AuthSigBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -3729,35 +3732,17 @@ func (c *ChannelGraph) IsPublicNode(pubKey [33]byte) (bool, error) {
 
 // genMultiSigP2WSH generates the p2wsh'd multisig script for 2 of 2 pubkeys.
 func genMultiSigP2WSH(aPub, bPub []byte) ([]byte, error) {
-	if len(aPub) != 33 || len(bPub) != 33 {
-		return nil, fmt.Errorf("pubkey size error. Compressed " +
-			"pubkeys only")
-	}
-
-	// Swap to sort pubkeys if needed. Keys are sorted in lexicographical
-	// order. The signatures within the scriptSig must also adhere to the
-	// order, ensuring that the signatures for each public key appears in
-	// the proper order on the stack.
-	if bytes.Compare(aPub, bPub) == 1 {
-		aPub, bPub = bPub, aPub
-	}
-
-	// First, we'll generate the witness script for the multi-sig.
-	bldr := txscript.NewScriptBuilder()
-	bldr.AddOp(txscript.OP_2)
-	bldr.AddData(aPub) // Add both pubkeys (sorted).
-	bldr.AddData(bPub)
-	bldr.AddOp(txscript.OP_2)
-	bldr.AddOp(txscript.OP_CHECKMULTISIG)
-	witnessScript, err := bldr.Script()
+	witnessScript, err := input.GenMultiSigScript(aPub, bPub)
 	if err != nil {
 		return nil, err
 	}
 
-	// With the witness script generated, we'll now turn it into a p2sh
+	// With the witness script generated, we'll now turn it into a p2wsh
 	// script:
 	//  * OP_0 <sha256(script)>
-	bldr = txscript.NewScriptBuilder()
+	bldr := txscript.NewScriptBuilder(
+		txscript.WithScriptAllocSize(input.P2WSHSize),
+	)
 	bldr.AddOp(txscript.OP_0)
 	scriptHash := sha256.Sum256(witnessScript)
 	bldr.AddData(scriptHash[:])

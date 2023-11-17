@@ -175,43 +175,6 @@ func (r FailureReason) String() string {
 	return "unknown"
 }
 
-// PaymentStatus represent current status of payment
-type PaymentStatus byte
-
-const (
-	// StatusUnknown is the status where a payment has never been initiated
-	// and hence is unknown.
-	StatusUnknown PaymentStatus = 0
-
-	// StatusInFlight is the status where a payment has been initiated, but
-	// a response has not been received.
-	StatusInFlight PaymentStatus = 1
-
-	// StatusSucceeded is the status where a payment has been initiated and
-	// the payment was completed successfully.
-	StatusSucceeded PaymentStatus = 2
-
-	// StatusFailed is the status where a payment has been initiated and a
-	// failure result has come back.
-	StatusFailed PaymentStatus = 3
-)
-
-// String returns readable representation of payment status.
-func (ps PaymentStatus) String() string {
-	switch ps {
-	case StatusUnknown:
-		return "Unknown"
-	case StatusInFlight:
-		return "In Flight"
-	case StatusSucceeded:
-		return "Succeeded"
-	case StatusFailed:
-		return "Failed"
-	default:
-		return "Unknown"
-	}
-}
-
 // PaymentCreationInfo is the information necessary to have ready when
 // initiating a payment, moving it into state InFlight.
 type PaymentCreationInfo struct {
@@ -536,6 +499,14 @@ type PaymentsQuery struct {
 	// CountTotal indicates that all payments currently present in the
 	// payment index (complete and incomplete) should be counted.
 	CountTotal bool
+
+	// CreationDateStart, if set, filters out all payments with a creation
+	// date greater than or euqal to it.
+	CreationDateStart time.Time
+
+	// CreationDateEnd, if set, filters out all payments with a creation
+	// date less than or euqal to it.
+	CreationDateEnd time.Time
 }
 
 // PaymentsResponse contains the result of a query to the payments database.
@@ -570,7 +541,11 @@ type PaymentsResponse struct {
 // to a subset of payments by the payments query, containing an offset
 // index and a maximum number of returned payments.
 func (d *DB) QueryPayments(query PaymentsQuery) (PaymentsResponse, error) {
-	var resp PaymentsResponse
+	var (
+		resp         PaymentsResponse
+		startDateSet = !query.CreationDateStart.IsZero()
+		endDateSet   = !query.CreationDateEnd.IsZero()
+	)
 
 	if err := kvdb.View(d, func(tx kvdb.RTx) error {
 		// Get the root payments bucket.
@@ -613,6 +588,24 @@ func (d *DB) QueryPayments(query PaymentsQuery) (PaymentsResponse, error) {
 				!query.IncludeIncomplete {
 
 				return false, err
+			}
+
+			// Skip any payments that were created before the
+			// specified time.
+			if startDateSet && payment.Info.CreationTime.Before(
+				query.CreationDateStart,
+			) {
+
+				return false, nil
+			}
+
+			// Skip any payments that were created after the
+			// specified time.
+			if endDateSet && payment.Info.CreationTime.After(
+				query.CreationDateEnd,
+			) {
+
+				return false, nil
 			}
 
 			// At this point, we've exhausted the offset, so we'll

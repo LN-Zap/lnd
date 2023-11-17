@@ -38,7 +38,7 @@ var (
 	lastAliasKey = []byte("last-alias-key")
 
 	// invoiceAliasBucket is a root-level bucket that stores the alias
-	// SCIDs that our peers send us in the funding_locked TLV. The keys are
+	// SCIDs that our peers send us in the channel_ready TLV. The keys are
 	// the ChannelID generated from the FundingOutpoint and the values are
 	// the remote peer's alias SCID.
 	invoiceAliasBucket = []byte("invoice-alias-bucket")
@@ -53,10 +53,10 @@ var (
 	// endBlockHeight is the ending block height of the alias range.
 	endBlockHeight = 16_250_000
 
-	// startingAlias is the first alias ShortChannelID that will get
+	// StartingAlias is the first alias ShortChannelID that will get
 	// assigned by RequestAlias. The starting BlockHeight is chosen so that
 	// legitimate SCIDs in integration tests aren't mistaken for an alias.
-	startingAlias = lnwire.ShortChannelID{
+	StartingAlias = lnwire.ShortChannelID{
 		BlockHeight: uint32(startingBlockHeight),
 		TxIndex:     0,
 		TxPosition:  0,
@@ -88,7 +88,7 @@ type Manager struct {
 	aliasToBase map[lnwire.ShortChannelID]lnwire.ShortChannelID
 
 	// peerAlias is a cache for the alias SCIDs that our peers send us in
-	// the funding_locked TLV. The keys are the ChannelID generated from
+	// the channel_ready TLV. The keys are the ChannelID generated from
 	// the FundingOutpoint and the values are the remote peer's alias SCID.
 	// The values should match the ones stored in the "invoice-alias-bucket"
 	// bucket.
@@ -341,7 +341,7 @@ func (m *Manager) DeleteSixConfs(baseScid lnwire.ShortChannelID) error {
 }
 
 // PutPeerAlias stores the peer's alias SCID once we learn of it in the
-// funding_locked message.
+// channel_ready message.
 func (m *Manager) PutPeerAlias(chanID lnwire.ChannelID,
 	alias lnwire.ShortChannelID) error {
 
@@ -401,8 +401,8 @@ func (m *Manager) RequestAlias() (lnwire.ShortChannelID, error) {
 		lastBytes := bucket.Get(lastAliasKey)
 		if lastBytes == nil {
 			// If the key does not exist, then we can write the
-			// startingAlias to it.
-			nextAlias = startingAlias
+			// StartingAlias to it.
+			nextAlias = StartingAlias
 
 			var scratch [8]byte
 			byteOrder.PutUint64(scratch[:], nextAlias.ToUint64())

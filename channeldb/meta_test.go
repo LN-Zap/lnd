@@ -2,10 +2,9 @@ package channeldb
 
 import (
 	"bytes"
-	"io/ioutil"
-	"os"
 	"testing"
 
+	"github.com/btcsuite/btcwallet/walletdb"
 	"github.com/go-errors/errors"
 	"github.com/lightningnetwork/lnd/kvdb"
 	"github.com/stretchr/testify/require"
@@ -16,8 +15,7 @@ import (
 func applyMigration(t *testing.T, beforeMigration, afterMigration func(d *DB),
 	migrationFunc migration, shouldFail bool, dryRun bool) {
 
-	cdb, cleanUp, err := MakeTestDB()
-	defer cleanUp()
+	cdb, err := MakeTestDB(t)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,13 +85,12 @@ func applyMigration(t *testing.T, beforeMigration, afterMigration func(d *DB),
 func TestVersionFetchPut(t *testing.T) {
 	t.Parallel()
 
-	db, cleanUp, err := MakeTestDB()
-	defer cleanUp()
+	db, err := MakeTestDB(t)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	meta, err := db.FetchMeta(nil)
+	meta, err := db.FetchMeta()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +106,7 @@ func TestVersionFetchPut(t *testing.T) {
 		t.Fatalf("update of meta failed %v", err)
 	}
 
-	meta, err = db.FetchMeta(nil)
+	meta, err = db.FetchMeta()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +227,7 @@ func TestMigrationWithPanic(t *testing.T) {
 
 	// Check that version of database and data wasn't changed.
 	afterMigrationFunc := func(d *DB) {
-		meta, err := d.FetchMeta(nil)
+		meta, err := d.FetchMeta()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -305,7 +302,7 @@ func TestMigrationWithFatal(t *testing.T) {
 
 	// Check that version of database and initial data wasn't changed.
 	afterMigrationFunc := func(d *DB) {
-		meta, err := d.FetchMeta(nil)
+		meta, err := d.FetchMeta()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -379,7 +376,7 @@ func TestMigrationWithoutErrors(t *testing.T) {
 
 	// Check that version of database and data was properly changed.
 	afterMigrationFunc := func(d *DB) {
-		meta, err := d.FetchMeta(nil)
+		meta, err := d.FetchMeta()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -422,11 +419,7 @@ func TestMigrationWithoutErrors(t *testing.T) {
 func TestMigrationReversion(t *testing.T) {
 	t.Parallel()
 
-	tempDirName, err := ioutil.TempDir("", "channeldb")
-	defer func() {
-		os.RemoveAll(tempDirName)
-	}()
-	require.NoError(t, err, "unable to create temp dir")
+	tempDirName := t.TempDir()
 
 	backend, cleanup, err := kvdb.GetTestBackend(tempDirName, "cdb")
 	require.NoError(t, err, "unable to get test db backend")
@@ -455,7 +448,7 @@ func TestMigrationReversion(t *testing.T) {
 
 	backend, cleanup, err = kvdb.GetTestBackend(tempDirName, "cdb")
 	require.NoError(t, err, "unable to get test db backend")
-	defer cleanup()
+	t.Cleanup(cleanup)
 
 	_, err = CreateWithBackend(backend)
 	if err != ErrDBReversion {
@@ -475,7 +468,7 @@ func TestMigrationDryRun(t *testing.T) {
 	// Check that version of database version is not modified.
 	afterMigrationFunc := func(d *DB) {
 		err := kvdb.View(d, func(tx kvdb.RTx) error {
-			meta, err := d.FetchMeta(nil)
+			meta, err := d.FetchMeta()
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -503,8 +496,7 @@ func TestMigrationDryRun(t *testing.T) {
 func TestOptionalMeta(t *testing.T) {
 	t.Parallel()
 
-	db, cleanUp, err := MakeTestDB()
-	defer cleanUp()
+	db, err := MakeTestDB(t)
 	require.NoError(t, err)
 
 	// Test read an empty optional meta.
@@ -532,14 +524,15 @@ func TestOptionalMeta(t *testing.T) {
 func TestApplyOptionalVersions(t *testing.T) {
 	t.Parallel()
 
-	db, cleanUp, err := MakeTestDB()
-	defer cleanUp()
+	db, err := MakeTestDB(t)
 	require.NoError(t, err)
 
 	// Overwrite the migration function so we can count how many times the
 	// migration has happened.
 	migrateCount := 0
-	optionalVersions[0].migration = func(_ kvdb.Backend) error {
+	optionalVersions[0].migration = func(_ kvdb.Backend,
+		_ MigrationConfig) error {
+
 		migrateCount++
 		return nil
 	}
@@ -579,4 +572,114 @@ func TestApplyOptionalVersions(t *testing.T) {
 	err = db.applyOptionalVersions(cfg)
 	require.NoError(t, err, "failed to apply optional migration")
 	require.Equal(t, 1, migrateCount, "expected no migration")
+}
+
+// TestFetchMeta tests that the FetchMeta returns the latest DB version for a
+// freshly created DB instance.
+func TestFetchMeta(t *testing.T) {
+	t.Parallel()
+
+	db, err := MakeTestDB(t)
+	require.NoError(t, err)
+
+	meta := &Meta{}
+	err = db.View(func(tx walletdb.ReadTx) error {
+		return FetchMeta(meta, tx)
+	}, func() {
+		meta = &Meta{}
+	})
+	require.NoError(t, err)
+
+	require.Equal(t, LatestDBVersion(), meta.DbVersionNumber)
+}
+
+// TestMarkerAndTombstone tests that markers like a tombstone can be added to a
+// DB.
+func TestMarkerAndTombstone(t *testing.T) {
+	t.Parallel()
+
+	db, err := MakeTestDB(t)
+	require.NoError(t, err)
+
+	// Test that a generic marker is not present in a fresh DB.
+	var marker []byte
+	err = db.View(func(tx walletdb.ReadTx) error {
+		var err error
+		marker, err = CheckMarkerPresent(tx, []byte("foo"))
+		return err
+	}, func() {
+		marker = nil
+	})
+	require.ErrorIs(t, err, ErrMarkerNotPresent)
+	require.Nil(t, marker)
+
+	// Only adding the marker bucket should not be enough to be counted as
+	// a marker, we explicitly also want the value to be set.
+	err = db.Update(func(tx walletdb.ReadWriteTx) error {
+		_, err := tx.CreateTopLevelBucket([]byte("foo"))
+		return err
+	}, func() {})
+	require.NoError(t, err)
+
+	err = db.View(func(tx walletdb.ReadTx) error {
+		var err error
+		marker, err = CheckMarkerPresent(tx, []byte("foo"))
+		return err
+	}, func() {
+		marker = nil
+	})
+	require.ErrorIs(t, err, ErrMarkerNotPresent)
+	require.Nil(t, marker)
+
+	// Test that a tombstone marker is not present in a fresh DB.
+	err = db.View(EnsureNoTombstone, func() {})
+	require.NoError(t, err)
+
+	// Add a generic marker now and assert that it can be read.
+	err = db.Update(func(tx walletdb.ReadWriteTx) error {
+		return AddMarker(tx, []byte("foo"), []byte("bar"))
+	}, func() {})
+	require.NoError(t, err)
+
+	err = db.View(func(tx walletdb.ReadTx) error {
+		var err error
+		marker, err = CheckMarkerPresent(tx, []byte("foo"))
+		return err
+	}, func() {
+		marker = nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, []byte("bar"), marker)
+
+	// A tombstone should still not be present.
+	err = db.View(EnsureNoTombstone, func() {})
+	require.NoError(t, err)
+
+	// Finally, add a tombstone.
+	tombstoneText := []byte("RIP test DB")
+	err = db.Update(func(tx walletdb.ReadWriteTx) error {
+		return AddMarker(tx, TombstoneKey, tombstoneText)
+	}, func() {})
+	require.NoError(t, err)
+
+	// We can read it as a normal marker.
+	err = db.View(func(tx walletdb.ReadTx) error {
+		var err error
+		marker, err = CheckMarkerPresent(tx, TombstoneKey)
+		return err
+	}, func() {
+		marker = nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, tombstoneText, marker)
+
+	// But also as a tombstone, and now we should get an error that the DB
+	// cannot be used anymore.
+	err = db.View(EnsureNoTombstone, func() {})
+	require.ErrorContains(t, err, string(tombstoneText))
+
+	// Now that the DB has a tombstone, we should no longer be able to open
+	// it once we close it.
+	_, err = CreateWithBackend(db.Backend)
+	require.ErrorContains(t, err, string(tombstoneText))
 }

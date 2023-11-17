@@ -36,7 +36,11 @@ var (
 // fund the outputs specified in the passed in packet with the specified fee
 // rate. If there is change left, a change output from the internal wallet is
 // added and the index of the change output is returned. Otherwise no additional
-// output is created and the index -1 is returned.
+// output is created and the index -1 is returned. If no custom change
+// scope is specified, the BIP0084 will be used for default accounts and single
+// imported public keys. For custom account, no key scope should be provided
+// as the coin selection key scope will always be used to generate the change
+// address.
 //
 // NOTE: If the packet doesn't contain any inputs, coin selection is performed
 // automatically. The account parameter must be non-empty as it determines which
@@ -49,7 +53,8 @@ var (
 //
 // This is a part of the WalletController interface.
 func (b *BtcWallet) FundPsbt(packet *psbt.Packet, minConfs int32,
-	feeRate chainfee.SatPerKWeight, accountName string) (int32, error) {
+	feeRate chainfee.SatPerKWeight, accountName string,
+	changeScope *waddrmgr.KeyScope) (int32, error) {
 
 	// The fee rate is passed in using units of sat/kw, so we'll convert
 	// this to sat/KB as the CreateSimpleTx method requires this unit.
@@ -59,32 +64,58 @@ func (b *BtcWallet) FundPsbt(packet *psbt.Packet, minConfs int32,
 		keyScope   *waddrmgr.KeyScope
 		accountNum uint32
 	)
+
 	switch accountName {
-	// If the default/imported account name was specified, we'll provide a
-	// nil key scope to FundPsbt, allowing it to select inputs from both key
-	// scopes (NP2WKH, P2WKH).
+	// For default accounts and single imported public keys, we'll provide a
+	// nil key scope to FundPsbt, allowing it to select nputs from all
+	// scopes (NP2WKH, P2WKH, P2TR). By default, the change key scope for
+	// these accounts will be P2WKH.
 	case lnwallet.DefaultAccountName:
+		if changeScope == nil {
+			changeScope = &waddrmgr.KeyScopeBIP0084
+		}
+
 		accountNum = defaultAccount
 
 	case waddrmgr.ImportedAddrAccountName:
+		if changeScope == nil {
+			changeScope = &waddrmgr.KeyScopeBIP0084
+		}
+
 		accountNum = importedAccount
 
 	// Otherwise, map the account name to its key scope and internal account
-	// number to only select inputs from said account.
+	// number to only select inputs from said account. No change key scope
+	// should have been specified as a custom account should only have one
+	// key scope. Providing a change key scope would break this assumption
+	// and lead to non-deterministic behavior by using a different change
+	// key scope than the custom account key scope. The change key scope
+	// will always be the same as the coin selection.
 	default:
-		scope, account, err := b.wallet.LookupAccount(accountName)
+		if changeScope != nil {
+			return 0, fmt.Errorf("couldn't select a " +
+				"custom change type for custom accounts")
+		}
+
+		scope, account, err := b.lookupFirstCustomAccount(accountName)
 		if err != nil {
 			return 0, err
 		}
 		keyScope = &scope
+		changeScope = keyScope
 		accountNum = account
+	}
+
+	var opts []wallet.TxCreateOption
+	if changeScope != nil {
+		opts = append(opts, wallet.WithCustomChangeScope(changeScope))
 	}
 
 	// Let the wallet handle coin selection and/or fee estimation based on
 	// the partial TX information in the packet.
 	return b.wallet.FundPsbt(
 		packet, keyScope, minConfs, accountNum, feeSatPerKB,
-		b.cfg.CoinSelectionStrategy,
+		b.cfg.CoinSelectionStrategy, opts...,
 	)
 }
 
@@ -98,12 +129,17 @@ func (b *BtcWallet) FundPsbt(packet *psbt.Packet, minConfs int32,
 // perform any other tasks (such as coin selection, UTXO locking or
 // input/output/fee value validation, PSBT finalization). Any input that is
 // incomplete will be skipped.
-func (b *BtcWallet) SignPsbt(packet *psbt.Packet) error {
+func (b *BtcWallet) SignPsbt(packet *psbt.Packet) ([]uint32, error) {
+	// In signedInputs we return the indices of psbt inputs that were signed
+	// by our wallet. This way the caller can check if any inputs were signed.
+	var signedInputs []uint32
+
 	// Let's check that this is actually something we can and want to sign.
-	// We need at least one input and one output.
-	err := psbt.VerifyInputOutputLen(packet, true, true)
+	// We need at least one input and one output. In addition each
+	// input needs nonWitness Utxo or witness Utxo data specified.
+	err := psbt.InputsReadyToSign(packet)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	// Go through each input that doesn't have final witness data attached
@@ -173,7 +209,7 @@ func (b *BtcWallet) SignPsbt(packet *psbt.Packet) error {
 		// information we need?
 		signMethod, err := validateSigningMethod(in)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
 		switch signMethod {
@@ -211,11 +247,11 @@ func (b *BtcWallet) SignPsbt(packet *psbt.Packet) error {
 				"PSBT signing: %v", signMethod)
 		}
 		if err != nil {
-			return err
+			return nil, err
 		}
+		signedInputs = append(signedInputs, uint32(idx))
 	}
-
-	return nil
+	return signedInputs, nil
 }
 
 // validateSigningMethod attempts to detect the signing method that is required
@@ -476,7 +512,7 @@ func (b *BtcWallet) FinalizePsbt(packet *psbt.Packet, accountName string) error 
 	// number to determine if the inputs belonging to this account should be
 	// signed.
 	default:
-		scope, account, err := b.wallet.LookupAccount(accountName)
+		scope, account, err := b.lookupFirstCustomAccount(accountName)
 		if err != nil {
 			return err
 		}
@@ -485,4 +521,37 @@ func (b *BtcWallet) FinalizePsbt(packet *psbt.Packet, accountName string) error 
 	}
 
 	return b.wallet.FinalizePsbt(keyScope, accountNum, packet)
+}
+
+// lookupFirstCustomAccount returns the first custom account found. In theory,
+// there should be only one custom account for the given name. However, due to a
+// lack of check, users could have created custom accounts with various key
+// scopes. This behaviour has been fixed but, we still need to handle this
+// specific case to avoid non-deterministic behaviour implied by LookupAccount.
+func (b *BtcWallet) lookupFirstCustomAccount(
+	name string) (waddrmgr.KeyScope, uint32, error) {
+
+	var (
+		account  *waddrmgr.AccountProperties
+		keyScope waddrmgr.KeyScope
+	)
+	for _, scope := range waddrmgr.DefaultKeyScopes {
+		var err error
+		account, err = b.wallet.AccountPropertiesByName(scope, name)
+		if waddrmgr.IsError(err, waddrmgr.ErrAccountNotFound) {
+			continue
+		}
+		if err != nil {
+			return keyScope, 0, err
+		}
+
+		keyScope = scope
+
+		break
+	}
+	if account == nil {
+		return waddrmgr.KeyScope{}, 0, newAccountNotFoundError(name)
+	}
+
+	return keyScope, account.AccountNumber, nil
 }

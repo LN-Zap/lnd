@@ -3,8 +3,6 @@ package contractcourt
 import (
 	"errors"
 	"fmt"
-	"io/ioutil"
-	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
@@ -189,6 +187,10 @@ func (*mockChainIO) GetBlock(blockHash *chainhash.Hash) (*wire.MsgBlock, error) 
 	return nil, nil
 }
 
+func (*mockChainIO) GetBlockHeader(*chainhash.Hash) (*wire.BlockHeader, error) {
+	return nil, nil
+}
+
 type chanArbTestCtx struct {
 	t *testing.T
 
@@ -208,6 +210,8 @@ type chanArbTestCtx struct {
 
 	breachSubscribed     chan struct{}
 	breachResolutionChan chan struct{}
+
+	finalHtlcs map[uint64]bool
 }
 
 func (c *chanArbTestCtx) CleanUp() {
@@ -286,17 +290,32 @@ func (c *chanArbTestCtx) Restart(restartClosure func(*chanArbTestCtx)) (*chanArb
 	return newCtx, nil
 }
 
+// testChanArbOpts is a struct that contains options that can be used to
+// initialize the channel arbitrator test context.
+type testChanArbOpts struct {
+	forceCloseErr error
+	arbCfg        *ChannelArbitratorConfig
+}
+
 // testChanArbOption applies custom settings to a channel arbitrator config for
 // testing purposes.
-type testChanArbOption func(cfg *ChannelArbitratorConfig)
+type testChanArbOption func(cfg *testChanArbOpts)
 
-// remoteInitiatorOption sets the MarkChannelClosed function in the
-// Channel Arbitrator's config.
+// remoteInitiatorOption sets the MarkChannelClosed function in the Channel
+// Arbitrator's config.
 func withMarkClosed(markClosed func(*channeldb.ChannelCloseSummary,
 	...channeldb.ChannelStatus) error) testChanArbOption {
 
-	return func(cfg *ChannelArbitratorConfig) {
-		cfg.MarkChannelClosed = markClosed
+	return func(cfg *testChanArbOpts) {
+		cfg.arbCfg.MarkChannelClosed = markClosed
+	}
+}
+
+// withForceCloseErr is used to specify an error that should be returned when
+// the channel arb tries to force close a channel.
+func withForceCloseErr(err error) testChanArbOption {
+	return func(opts *testChanArbOpts) {
+		opts.forceCloseErr = err
 	}
 }
 
@@ -308,6 +327,7 @@ func createTestChannelArbitrator(t *testing.T, log ArbitratorLog,
 
 	chanArbCtx := &chanArbTestCtx{
 		breachSubscribed: make(chan struct{}),
+		finalHtlcs:       make(map[uint64]bool),
 	}
 
 	chanPoint := wire.OutPoint{}
@@ -360,8 +380,16 @@ func createTestChannelArbitrator(t *testing.T, log ArbitratorLog,
 			chanArbCtx.breachSubscribed <- struct{}{}
 			return false, nil
 		},
-		Clock:   clock.NewDefaultClock(),
-		Sweeper: mockSweeper,
+		Clock:        clock.NewDefaultClock(),
+		Sweeper:      mockSweeper,
+		HtlcNotifier: &mockHTLCNotifier{},
+		PutFinalHtlcOutcome: func(chanId lnwire.ShortChannelID,
+			htlcId uint64, settled bool) error {
+
+			chanArbCtx.finalHtlcs[htlcId] = settled
+
+			return nil
+		},
 	}
 
 	// We'll use the resolvedChan to synchronize on call to
@@ -377,7 +405,6 @@ func createTestChannelArbitrator(t *testing.T, log ArbitratorLog,
 			resolvedChan <- struct{}{}
 			return nil
 		},
-		Channel: &mockChannel{},
 		MarkCommitmentBroadcasted: func(_ *wire.MsgTx, _ bool) error {
 			return nil
 		},
@@ -399,18 +426,22 @@ func createTestChannelArbitrator(t *testing.T, log ArbitratorLog,
 		},
 	}
 
+	testOpts := &testChanArbOpts{
+		arbCfg: arbCfg,
+	}
+
 	// Apply all custom options to the config struct.
 	for _, option := range opts {
-		option(arbCfg)
+		option(testOpts)
+	}
+
+	arbCfg.Channel = &mockChannel{
+		forceCloseErr: testOpts.forceCloseErr,
 	}
 
 	var cleanUp func()
 	if log == nil {
-		dbDir, err := ioutil.TempDir("", "chanArb")
-		if err != nil {
-			return nil, err
-		}
-		dbPath := filepath.Join(dbDir, "testdb")
+		dbPath := filepath.Join(t.TempDir(), "testdb")
 		db, err := kvdb.Create(
 			kvdb.BoltBackendName, dbPath, true,
 			kvdb.DefaultDBTimeout,
@@ -427,7 +458,6 @@ func createTestChannelArbitrator(t *testing.T, log ArbitratorLog,
 		}
 		cleanUp = func() {
 			db.Close()
-			os.RemoveAll(dbDir)
 		}
 
 		log = &testArbLog{
@@ -467,11 +497,9 @@ func TestChannelArbitratorCooperativeClose(t *testing.T) {
 	if err := chanArbCtx.chanArb.Start(nil); err != nil {
 		t.Fatalf("unable to start ChannelArbitrator: %v", err)
 	}
-	defer func() {
-		if err := chanArbCtx.chanArb.Stop(); err != nil {
-			t.Fatalf("unable to stop chan arb: %v", err)
-		}
-	}()
+	t.Cleanup(func() {
+		require.NoError(t, chanArbCtx.chanArb.Stop())
+	})
 
 	// It should start out in the default state.
 	chanArbCtx.AssertState(StateDefault)
@@ -688,11 +716,9 @@ func TestChannelArbitratorBreachClose(t *testing.T) {
 	if err := chanArb.Start(nil); err != nil {
 		t.Fatalf("unable to start ChannelArbitrator: %v", err)
 	}
-	defer func() {
-		if err := chanArb.Stop(); err != nil {
-			t.Fatal(err)
-		}
-	}()
+	t.Cleanup(func() {
+		require.NoError(t, chanArb.Stop())
+	})
 
 	// It should start out in the default state.
 	chanArbCtx.AssertState(StateDefault)
@@ -976,6 +1002,12 @@ func TestChannelArbitratorLocalForceClosePendingHtlc(t *testing.T) {
 	if err := chanArb.Stop(); err != nil {
 		t.Fatalf("unable to stop chan arb: %v", err)
 	}
+
+	// Assert that a final resolution was stored for the incoming dust htlc.
+	expectedFinalHtlcs := map[uint64]bool{
+		incomingDustHtlc.HtlcIndex: false,
+	}
+	require.Equal(t, expectedFinalHtlcs, chanArbCtx.finalHtlcs)
 
 	// We'll no re-create the resolver, notice that we use the existing
 	// arbLog so it carries over the same on-disk state.
@@ -1997,11 +2029,9 @@ func TestChannelArbitratorPendingExpiredHTLC(t *testing.T) {
 	if err := chanArb.Start(nil); err != nil {
 		t.Fatalf("unable to start ChannelArbitrator: %v", err)
 	}
-	defer func() {
-		if err := chanArb.Stop(); err != nil {
-			t.Fatalf("unable to stop chan arb: %v", err)
-		}
-	}()
+	t.Cleanup(func() {
+		require.NoError(t, chanArb.Stop())
+	})
 
 	// Now that our channel arb has started, we'll set up
 	// its contract signals channel so we can send it
@@ -2105,14 +2135,13 @@ func TestRemoteCloseInitiator(t *testing.T) {
 			t.Parallel()
 
 			// First, create alice's channel.
-			alice, _, cleanUp, err := lnwallet.CreateTestChannels(
-				channeldb.SingleFunderTweaklessBit,
+			alice, _, err := lnwallet.CreateTestChannels(
+				t, channeldb.SingleFunderTweaklessBit,
 			)
 			if err != nil {
 				t.Fatalf("unable to create test channels: %v",
 					err)
 			}
-			defer cleanUp()
 
 			// Create a mock log which will not block the test's
 			// expected number of transitions transitions, and has
@@ -2155,11 +2184,9 @@ func TestRemoteCloseInitiator(t *testing.T) {
 				t.Fatalf("unable to start "+
 					"ChannelArbitrator: %v", err)
 			}
-			defer func() {
-				if err := chanArb.Stop(); err != nil {
-					t.Fatal(err)
-				}
-			}()
+			t.Cleanup(func() {
+				require.NoError(t, chanArb.Stop())
+			})
 
 			// It should start out in the default state.
 			chanArbCtx.AssertState(StateDefault)
@@ -2508,11 +2535,9 @@ func TestChannelArbitratorAnchors(t *testing.T) {
 	if err := chanArb.Start(nil); err != nil {
 		t.Fatalf("unable to start ChannelArbitrator: %v", err)
 	}
-	defer func() {
-		if err := chanArb.Stop(); err != nil {
-			t.Fatal(err)
-		}
-	}()
+	t.Cleanup(func() {
+		require.NoError(t, chanArb.Stop())
+	})
 
 	signals := &ContractSignals{
 		ShortChanID: lnwire.ShortChannelID{},
@@ -2687,6 +2712,130 @@ func TestChannelArbitratorAnchors(t *testing.T) {
 	)
 }
 
+// TestChannelArbitratorStartForceCloseFail tests that when we run into the
+// case where our commitment tx is rejected by our bitcoin backend, or we fail
+// to force close, we still continue to startup the arbitrator for a
+// specific set of errors.
+func TestChannelArbitratorStartForceCloseFail(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+
+		// The specific error during broadcasting the transaction.
+		broadcastErr error
+
+		// forceCloseErr is the error returned when we try to force the
+		// channel.
+		forceCloseErr error
+
+		// expected state when the startup of the arbitrator succeeds.
+		expectedState ArbitratorState
+
+		expectedStartup bool
+	}{
+		{
+			name: "Commitment is rejected because of low mempool " +
+				"fees",
+			broadcastErr:    lnwallet.ErrMempoolFee,
+			expectedState:   StateCommitmentBroadcasted,
+			expectedStartup: true,
+		},
+		{
+			// We map a rejected rbf transaction to ErrDoubleSpend
+			// in lnd.
+			name: "Commitment is rejected because of a " +
+				"rbf transaction not succeeding",
+			broadcastErr:    lnwallet.ErrDoubleSpend,
+			expectedState:   StateCommitmentBroadcasted,
+			expectedStartup: true,
+		},
+		{
+			name: "Commitment is rejected with an " +
+				"unmatched error",
+			broadcastErr:    fmt.Errorf("Reject Commitment Tx"),
+			expectedState:   StateBroadcastCommit,
+			expectedStartup: false,
+		},
+
+		// We started after the DLP was triggered, and try to force
+		// close. This is rejected as we can't force close with local
+		// data loss. We should still be able to start up however.
+		{
+			name:            "ignore force close local data loss",
+			forceCloseErr:   lnwallet.ErrForceCloseLocalDataLoss,
+			expectedState:   StateBroadcastCommit,
+			expectedStartup: true,
+		},
+	}
+
+	for _, test := range tests {
+		test := test
+
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			// We'll create the arbitrator and its backing log
+			// to signal that it's already in the process of being
+			// force closed.
+			log := &mockArbitratorLog{
+				newStates: make(chan ArbitratorState, 5),
+				state:     StateBroadcastCommit,
+			}
+
+			var testOpts []testChanArbOption
+			if test.forceCloseErr != nil {
+				testOpts = append(
+					testOpts,
+					withForceCloseErr(test.forceCloseErr),
+				)
+			}
+
+			chanArbCtx, err := createTestChannelArbitrator(
+				t, log, testOpts...,
+			)
+			require.NoError(
+				t, err, "unable to create ChannelArbitrator",
+			)
+
+			chanArb := chanArbCtx.chanArb
+
+			// Customize the PublishTx function of the arbitrator.
+			chanArb.cfg.PublishTx = func(*wire.MsgTx,
+				string) error {
+
+				return test.broadcastErr
+			}
+
+			err = chanArb.Start(nil)
+
+			if !test.expectedStartup {
+				require.ErrorIs(t, err, test.broadcastErr)
+				return
+			}
+
+			require.NoError(t, err)
+
+			t.Cleanup(func() {
+				require.NoError(t, chanArb.Stop())
+			})
+
+			// In case the startup succeeds we check that the state
+			// is as expected, we only check this if we didn't need
+			// to advance from StateBroadcastCommit.
+			if test.expectedState != StateBroadcastCommit {
+				chanArbCtx.AssertStateTransitions(
+					test.expectedState,
+				)
+			} else {
+				// Otherwise, we expect the state to stay the
+				// same.
+				chanArbCtx.AssertState(test.expectedState)
+			}
+		})
+	}
+}
+
 // putResolverReportInChannel returns a put report function which will pipe
 // reports into the channel provided.
 func putResolverReportInChannel(reports chan *channeldb.ResolverReport) func(
@@ -2716,6 +2865,8 @@ func assertResolverReport(t *testing.T, reports chan *channeldb.ResolverReport,
 
 type mockChannel struct {
 	anchorResolutions *lnwallet.AnchorResolutions
+
+	forceCloseErr error
 }
 
 func (m *mockChannel) NewAnchorResolutions() (*lnwallet.AnchorResolutions,
@@ -2729,6 +2880,10 @@ func (m *mockChannel) NewAnchorResolutions() (*lnwallet.AnchorResolutions,
 }
 
 func (m *mockChannel) ForceCloseChan() (*lnwallet.LocalForceCloseSummary, error) {
+	if m.forceCloseErr != nil {
+		return nil, m.forceCloseErr
+	}
+
 	summary := &lnwallet.LocalForceCloseSummary{
 		CloseTx:         &wire.MsgTx{},
 		HtlcResolutions: &lnwallet.HtlcResolutions{},

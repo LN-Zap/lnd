@@ -3,7 +3,7 @@ package routerrpc
 import (
 	"errors"
 
-	"github.com/lightningnetwork/lnd/channeldb"
+	"github.com/lightningnetwork/lnd/channeldb/models"
 	"github.com/lightningnetwork/lnd/htlcswitch"
 	"github.com/lightningnetwork/lnd/lnrpc"
 	"github.com/lightningnetwork/lnd/lntypes"
@@ -90,6 +90,7 @@ func (r *forwardInterceptor) onIntercept(
 		IncomingExpiry:          htlc.IncomingExpiry,
 		CustomRecords:           htlc.CustomRecords,
 		OnionBlob:               htlc.OnionBlob[:],
+		AutoFailHeight:          htlc.AutoFailHeight,
 	}
 
 	return r.stream.Send(interceptionRequest)
@@ -99,9 +100,14 @@ func (r *forwardInterceptor) onIntercept(
 func (r *forwardInterceptor) resolveFromClient(
 	in *ForwardHtlcInterceptResponse) error {
 
+	if in.IncomingCircuitKey == nil {
+		return status.Errorf(codes.InvalidArgument,
+			"CircuitKey missing from ForwardHtlcInterceptResponse")
+	}
+
 	log.Tracef("Resolving intercepted packet %v", in)
 
-	circuitKey := channeldb.CircuitKey{
+	circuitKey := models.CircuitKey{
 		ChanID: lnwire.NewShortChanIDFromInt(in.IncomingCircuitKey.ChanId),
 		HtlcID: in.IncomingCircuitKey.HtlcId,
 	}

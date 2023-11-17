@@ -13,6 +13,8 @@ partial signatures.
 some smaller details in the signing protocol could change in the future that
 might not be backward compatible. So this API must be seen as highly
 experimental and backward compatibility can't be guaranteed at this point.
+See the [versions and compatibility matrix](#versions-and-compatibility-matrix)
+below.
 
 ## References
  * [MuSig2 paper](https://eprint.iacr.org/2020/1261.pdf)
@@ -42,7 +44,7 @@ to test the RPCs and to showcase the different use cases.
 ### 3-of-3 Taproot key spend path (BIP-0086)
 
 See `testTaprootMuSig2KeySpendBip86` in
-[`lntest/itest/lnd_taproot_test.go`](../lntest/itest/lnd_taproot_test.go) to see
+[`itest/lnd_taproot_test.go`](../itest/lnd_taproot_test.go) to see
 the full code.
 
 This example uses combines the public keys of 3 participants into a shared
@@ -71,7 +73,7 @@ the `MuSig2CreateSession` RPC call:
 ### 3-of-3 Taproot key spend path with root hash commitment
 
 See `testTaprootMuSig2KeySpendRootHash` in
-[`lntest/itest/lnd_taproot_test.go`](../lntest/itest/lnd_taproot_test.go) to see
+[`itest/lnd_taproot_test.go`](../itest/lnd_taproot_test.go) to see
 the full code.
 
 This is very similar to the above example but with the main difference that the
@@ -99,7 +101,7 @@ the `MuSig2CreateSession` RPC call:
 ### 3-of-3 `OP_CHECKSIG` in Taproot script spend path
 
 See `testTaprootMuSig2CombinedLeafKeySpend` in
-[`lntest/itest/lnd_taproot_test.go`](../lntest/itest/lnd_taproot_test.go) to see
+[`itest/lnd_taproot_test.go`](../itest/lnd_taproot_test.go) to see
 the full code.
 
 This example is definitely the most involved one. To be able to use a MuSig2
@@ -115,3 +117,44 @@ combined key and then spend it through a Taproot script spend with an
    script and the control block (which contains the internal public key and the
    inclusion proof if there were any other script leaves).
 
+
+# Versions and compatibility matrix
+
+The [MuSig2 BIP
+draft](https://github.com/jonasnick/bips/blob/musig2/bip-musig2.mediawiki)
+underwent (and is likely still undergoing) multiple changes and is being
+versioned for that reason. Starting with `lnd v0.16.0-beta` the MuSig2 RPCs will
+offer backward compatibility in order to support applications that might already
+have created MuSig2 based outputs on chain with an earlier version of the
+protocol.
+
+## MuSig2 versions in lnd
+
+* `lnd v0.15.x-beta`: Uses MuSig2 `v0.4.0` exclusively.
+* `lnd v0.16.x-beta`: Supports MuSig2 `v0.4.0` and `v1.0.0rc2` by introducing a
+  new **mandatory version** enum `MuSig2Version` that must be specified for the
+  `MuSig2CombineKeys` and `MuSig2CreateSession` RPCs. A session created with a
+  specific version will use that version during its lifetime (e.g. calls to
+  RPCs that specify the `session_id` field automatically know what version of
+  the MuSig2 API to use under the hood).
+
+## Upgrading client applications
+
+Client software using the MuSig2 API (such as Loop or Pool) will stop working
+with `lnd v0.16.0-beta` if they aren't also updated because the added version
+enum mentioned above is mandatory. In order to prepare for the `lnd 0.16.0-beta`
+release such client software should use one of the following two strategies to
+make sure forward compatibility is ensured:
+ - Compile against `lnd` on `master` branch to pull in updated RPC definitions.
+   Use the `GetVersion` RPC in the `verrpc` package to determine what `lnd`
+   version the application is connected to. Expect MuSig2 `v0.4.0` to be used
+   for `lnd v0.15.x-beta` and expect to explicitly set the `version` field on
+   the `MuSig2CombineKeys` and `MuSig2CreateSession` RPCs for
+   `lnd-v0.16.x-beta`. This is the recommended approach.
+ - Compile against `lnd` on `master` branch to pull in updated RPC definitions.
+   Always set the `version` field on the `MuSig2CombineKeys` and
+   `MuSig2CreateSession` RPCs and check the `version` field in their respective
+   response messages. If the `version` in the response reflects the version
+   sent in the request, you're using `lnd v0.16.x-beta` or later. If the
+   `version` is returned as `MUSIG2_VERSION_UNDEFINED` you're using
+   `lnd v0.15.x-beta` and only `v0.4.0` is supported.
