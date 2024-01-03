@@ -6,8 +6,6 @@
 
 ## Customisations
 
-- `/lnrpc.Lightning/IsOurAddress` RPC to check whether an address is controlled by the node's wallet or not
-  - NOTE: Merged upstream in https://github.com/lightningnetwork/lnd/pull/5476
 - `/lnrpc.Lightning/GetTransaction` RPC to return data for any transaction given its id
   - Note: `btcwallet` dependency replaced with our own `btcwallet-strike` fork
   - See https://github.com/btcsuite/btcwallet/pull/779 for details
