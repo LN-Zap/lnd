@@ -1841,38 +1841,6 @@
         ]
       }
     },
-    "/v1/isouraddress/{address}": {
-      "get": {
-        "summary": "IsOurAddress returns whether the provided address is controlled by the\nnode's wallet or not. It will return an error if the address is invalid or\nfor a different network.",
-        "operationId": "Lightning_IsOurAddress",
-        "responses": {
-          "200": {
-            "description": "A successful response.",
-            "schema": {
-              "$ref": "#/definitions/lnrpcIsOurAddressResponse"
-            }
-          },
-          "default": {
-            "description": "An unexpected error response.",
-            "schema": {
-              "$ref": "#/definitions/rpcStatus"
-            }
-          }
-        },
-        "parameters": [
-          {
-            "name": "address",
-            "description": "The address to check.",
-            "in": "path",
-            "required": true,
-            "type": "string"
-          }
-        ],
-        "tags": [
-          "Lightning"
-        ]
-      }
-    },
     "/v1/macaroon": {
       "post": {
         "summary": "lncli: `bakemacaroon`\nBakeMacaroon allows the creation of a new macaroon with custom read and\nwrite permissions. No first-party caveats are added since this can be done\noffline.",
@@ -5398,15 +5366,6 @@
         "CANCELED"
       ],
       "default": "ACCEPTED"
-    },
-    "lnrpcIsOurAddressResponse": {
-      "type": "object",
-      "properties": {
-        "is_ours": {
-          "type": "boolean",
-          "description": "Denoting if the address is controlled by the node's wallet."
-        }
-      }
     },
     "lnrpcKeyDescriptor": {
       "type": "object",

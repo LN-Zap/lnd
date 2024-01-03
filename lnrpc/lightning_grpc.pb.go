@@ -408,10 +408,6 @@ type LightningClient interface {
 	// If the htlc has no final resolution yet, a NotFound grpc status code is
 	// returned.
 	LookupHtlcResolution(ctx context.Context, in *LookupHtlcResolutionRequest, opts ...grpc.CallOption) (*LookupHtlcResolutionResponse, error)
-	// IsOurAddress returns whether the provided address is controlled by the
-	// node's wallet or not. It will return an error if the address is invalid or
-	// for a different network.
-	IsOurAddress(ctx context.Context, in *IsOurAddressRequest, opts ...grpc.CallOption) (*IsOurAddressResponse, error)
 	GetTransaction(ctx context.Context, in *GetTransactionRequest, opts ...grpc.CallOption) (*GetTransactionResponse, error)
 }
 
@@ -1323,15 +1319,6 @@ func (c *lightningClient) LookupHtlcResolution(ctx context.Context, in *LookupHt
 	return out, nil
 }
 
-func (c *lightningClient) IsOurAddress(ctx context.Context, in *IsOurAddressRequest, opts ...grpc.CallOption) (*IsOurAddressResponse, error) {
-	out := new(IsOurAddressResponse)
-	err := c.cc.Invoke(ctx, "/lnrpc.Lightning/IsOurAddress", in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *lightningClient) GetTransaction(ctx context.Context, in *GetTransactionRequest, opts ...grpc.CallOption) (*GetTransactionResponse, error) {
 	out := new(GetTransactionResponse)
 	err := c.cc.Invoke(ctx, "/lnrpc.Lightning/GetTransaction", in, out, opts...)
@@ -1735,10 +1722,6 @@ type LightningServer interface {
 	// If the htlc has no final resolution yet, a NotFound grpc status code is
 	// returned.
 	LookupHtlcResolution(context.Context, *LookupHtlcResolutionRequest) (*LookupHtlcResolutionResponse, error)
-	// IsOurAddress returns whether the provided address is controlled by the
-	// node's wallet or not. It will return an error if the address is invalid or
-	// for a different network.
-	IsOurAddress(context.Context, *IsOurAddressRequest) (*IsOurAddressResponse, error)
 	GetTransaction(context.Context, *GetTransactionRequest) (*GetTransactionResponse, error)
 	mustEmbedUnimplementedLightningServer()
 }
@@ -1947,9 +1930,6 @@ func (UnimplementedLightningServer) ListAliases(context.Context, *ListAliasesReq
 }
 func (UnimplementedLightningServer) LookupHtlcResolution(context.Context, *LookupHtlcResolutionRequest) (*LookupHtlcResolutionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method LookupHtlcResolution not implemented")
-}
-func (UnimplementedLightningServer) IsOurAddress(context.Context, *IsOurAddressRequest) (*IsOurAddressResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method IsOurAddress not implemented")
 }
 func (UnimplementedLightningServer) GetTransaction(context.Context, *GetTransactionRequest) (*GetTransactionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetTransaction not implemented")
@@ -3232,24 +3212,6 @@ func _Lightning_LookupHtlcResolution_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Lightning_IsOurAddress_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(IsOurAddressRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(LightningServer).IsOurAddress(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/lnrpc.Lightning/IsOurAddress",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(LightningServer).IsOurAddress(ctx, req.(*IsOurAddressRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _Lightning_GetTransaction_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(GetTransactionRequest)
 	if err := dec(in); err != nil {
@@ -3490,10 +3452,6 @@ var Lightning_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "LookupHtlcResolution",
 			Handler:    _Lightning_LookupHtlcResolution_Handler,
-		},
-		{
-			MethodName: "IsOurAddress",
-			Handler:    _Lightning_IsOurAddress_Handler,
 		},
 		{
 			MethodName: "GetTransaction",
