@@ -547,10 +547,6 @@ func MainRPCServerPermissions() map[string][]bakery.Op {
 			Entity: "offchain",
 			Action: "read",
 		}},
-		"/lnrpc.Lightning/IsOurAddress": {{
-			Entity: "info",
-			Action: "read",
-		}},
 		"/lnrpc.Lightning/GetTransaction": {{
 			Entity: "info",
 			Action: "read",
@@ -4176,35 +4172,6 @@ func (r *rpcServer) ListChannels(ctx context.Context,
 		}
 
 		resp.Channels = append(resp.Channels, channel)
-	}
-
-	return resp, nil
-}
-
-// IsOurAddress returns whether the provided address is controlled by the
-// node's wallet or not.
-func (r *rpcServer) IsOurAddress(_ context.Context,
-	in *lnrpc.IsOurAddressRequest) (*lnrpc.IsOurAddressResponse, error) {
-
-	// Decode the address. We further need to check whether the address is
-	// valid for this network.
-	address, err := btcutil.DecodeAddress(
-		in.Address, r.cfg.ActiveNetParams.Params,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("invalid address: %w", err)
-	}
-
-	// Make the check on the decoded address according to the
-	// active network.
-	if !address.IsForNet(r.cfg.ActiveNetParams.Params) {
-		return nil, fmt.Errorf("address: %v is not valid for this "+
-			"network: %v", address.String(),
-			r.cfg.ActiveNetParams.Params.Name)
-	}
-
-	resp := &lnrpc.IsOurAddressResponse{
-		IsOurs: r.server.cc.Wallet.IsOurAddress(address),
 	}
 
 	return resp, nil

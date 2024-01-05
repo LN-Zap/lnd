@@ -167,7 +167,5 @@ http:
       get: "/v1/aliases/list"
     - selector: lnrpc.Lightning.LookupHtlcResolution
       get: "/v1/htlc-resolution/{chan_id}/{htlc_index}"
-    - selector: lnrpc.Lightning.IsOurAddress
-      get: "/v1/isouraddress/{address}"
     - selector: lnrpc.Lightning.GetTransaction
       get: "/v1/transaction/{txid}"
