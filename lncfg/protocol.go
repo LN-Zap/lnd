@@ -2,6 +2,11 @@
 
 package lncfg
 
+import (
+	"github.com/lightningnetwork/lnd/feature"
+	"github.com/lightningnetwork/lnd/lnwire"
+)
+
 // ProtocolOptions is a struct that we use to be able to test backwards
 // compatibility of protocol additions, while defaulting to the latest within
 // lnd, or to enable experimental protocol changes.
@@ -12,10 +17,6 @@ type ProtocolOptions struct {
 	// options.  These are mostly used for integration tests as most modern
 	// nodes should always run with them on by default.
 	LegacyProtocol `group:"legacy" namespace:"legacy"`
-
-	// ExperimentalProtocol is a sub-config that houses any experimental
-	// protocol features that also require a build-tag to activate.
-	ExperimentalProtocol
 
 	// WumboChans should be set if we want to enable support for wumbo
 	// (channels larger than 0.16 BTC) channels, which is the opposite of
@@ -47,6 +48,23 @@ type ProtocolOptions struct {
 	// NoOptionAnySegwit should be set to true if we don't want to use any
 	// Taproot (and beyond) addresses for co-op closing.
 	NoOptionAnySegwit bool `long:"no-any-segwit" description:"disallow using any segiwt witness version as a co-op close address"`
+
+	// CustomMessage allows the custom message APIs to handle messages with
+	// the provided protocol numbers, which fall outside the custom message
+	// number range.
+	CustomMessage []uint16 `long:"custom-message" description:"allows the custom message apis to send and report messages with the protocol number provided that fall outside of the custom message number range."`
+
+	// CustomInit specifies feature bits to advertise in the node's init
+	// message.
+	CustomInit []uint16 `long:"custom-init" description:"custom feature bits to advertise in the node's init message"`
+
+	// CustomNodeAnn specifies custom feature bits to advertise in the
+	// node's announcement message.
+	CustomNodeAnn []uint16 `long:"custom-nodeann" description:"custom feature bits to advertise in the node's announcement message"`
+
+	// CustomInvoice specifies custom feature bits to advertise in the
+	// node's invoices.
+	CustomInvoice []uint16 `long:"custom-invoice" description:"custom feature bits to advertise in the node's invoices"`
 }
 
 // Wumbo returns true if lnd should permit the creation and acceptance of wumbo
@@ -81,4 +99,32 @@ func (l *ProtocolOptions) ZeroConf() bool {
 // segwit witness versions for co-op close addresses.
 func (l *ProtocolOptions) NoAnySegwit() bool {
 	return l.NoOptionAnySegwit
+}
+
+// CustomMessageOverrides returns the set of protocol messages that we override
+// to allow custom handling.
+func (p ProtocolOptions) CustomMessageOverrides() []uint16 {
+	return p.CustomMessage
+}
+
+// CustomFeatures returns a custom set of feature bits to advertise.
+//
+//nolint:lll
+func (p ProtocolOptions) CustomFeatures() map[feature.Set][]lnwire.FeatureBit {
+	customFeatures := make(map[feature.Set][]lnwire.FeatureBit)
+
+	setFeatures := func(set feature.Set, bits []uint16) {
+		for _, customFeature := range bits {
+			customFeatures[set] = append(
+				customFeatures[set],
+				lnwire.FeatureBit(customFeature),
+			)
+		}
+	}
+
+	setFeatures(feature.SetInit, p.CustomInit)
+	setFeatures(feature.SetNodeAnn, p.CustomNodeAnn)
+	setFeatures(feature.SetInvoice, p.CustomInvoice)
+
+	return customFeatures
 }
