@@ -359,7 +359,23 @@ func (i *interpretedResult) processPaymentOutcomeIntermediate(
 		)
 	}
 
+	reportSuccess := func() {
+		// All nodes up to and including the reported failure must have
+		// forwarded successfully.
+		i.successPairRange(route, 0, errorSourceIdx-1)
+
+		i.finalFailureReason = &reasonIncorrectDetails
+	}
+
 	switch failure.(type) {
+
+	// If FailIncorrectPaymentAmount or FailIncorrectDetails is received it
+	// indicates we are using wrong payment hash or amount. Generally this error
+	// is expected to originate from the destination although this may not
+	// always be the case, for example if an interceptor node is proxying htlcs.
+	case *lnwire.FailIncorrectPaymentAmount,
+		*lnwire.FailIncorrectDetails:
+		reportSuccess()
 
 	// If a node reports onion payload corruption or an invalid version,
 	// that node may be responsible, but it could also be that it is just
